@@ -93,6 +93,9 @@ impl Caller {
 pub struct CommitTiming {
     /// Inside the commit lock, for the attempt that committed.
     pub held: Duration,
+    /// Waiting: for the commit lock, and for the gate (another command's run behind it, or
+    /// this one's turn to close it).
+    pub waited: Duration,
     /// From the first validate to the publish, redo and waiting included.
     pub total: Duration,
 }
@@ -126,6 +129,7 @@ struct Done<D: DocModel> {
     changed: bool,
     writes: KeySet<D::Key>,
     held: Duration,
+    waited: Duration,
 }
 
 /// A committed transaction's record, before it has versions around it.
@@ -149,7 +153,6 @@ pub struct Listed<K: Ord> {
 
 /// The state under the commit lock.
 pub(crate) struct State<D: DocModel> {
-    pub(crate) last: Seq,
     /// The highest state number given ([`Version::number`]).
     pub(crate) numbered: u64,
     pub(crate) history: History<D>,
@@ -176,6 +179,8 @@ struct Locked<'s, D: DocModel> {
     guard: MutexGuard<'s, State<D>>,
     clock: &'s dyn Clock,
     entered: Duration,
+    /// How long it was waited for (the gate too, where it was).
+    waited: Duration,
 }
 
 impl<D: DocModel> std::ops::Deref for Locked<'_, D> {
@@ -279,7 +284,6 @@ impl<D: DocModel> Store<D> {
         Self {
             head: HeadCell::new(Arc::new(Version::first(counters.version, doc))),
             state: Mutex::new(State {
-                last: counters.last,
                 numbered: 0,
                 history: History::new(config.history_depth),
                 journal: Journal::new(),
@@ -291,7 +295,7 @@ impl<D: DocModel> Store<D> {
             gate: Condvar::new(),
             holder: Mutex::new(None),
             released: Condvar::new(),
-            ids: Arc::new(IdAllocator::new(counters.cursors)),
+            ids: Arc::new(IdAllocator::new(counters.cursors, counters.last)),
             config,
             clock,
             counts: Counts::new(),
@@ -339,11 +343,13 @@ impl<D: DocModel> Store<D> {
         let asked = self.clock.monotonic();
         let mut guard = lock(&self.state);
         let entered = self.clock.monotonic();
-        guard.times.waited.record(entered.saturating_sub(asked));
+        let waited = entered.saturating_sub(asked);
+        guard.times.waited.record(waited);
         Locked {
             guard,
             clock: &*self.clock,
             entered,
+            waited,
         }
     }
 
@@ -374,6 +380,7 @@ impl<D: DocModel> Store<D> {
             guard,
             clock: &*self.clock,
             entered,
+            waited,
         }
     }
 
@@ -416,9 +423,7 @@ impl<D: DocModel> Store<D> {
     /// A version number never given before, for a version that is read but not published
     /// (a held transaction's, [`Store::in_txn`]).
     pub(crate) fn draw_seq(&self) -> Seq {
-        let mut state = lock(&self.state);
-        state.last = state.last.next();
-        state.last
+        self.ids.next_seq()
     }
 
     /// A transaction on the head, to be committed later by [`Store::commit`]: it shares the
@@ -453,10 +458,9 @@ impl<D: DocModel> Store<D> {
 
     /// The counters to save beside the bytes of `at`.
     pub fn counters(&self, at: &Snapshot<D>) -> Counters {
-        let last = self.lock_state().last;
         Counters {
             version: at.seq(),
-            last,
+            last: self.ids.last_seq(),
             cursors: self.ids.cursors(),
         }
     }
@@ -524,14 +528,52 @@ impl<D: DocModel> Store<D> {
         command: &C,
         setup: &D::Setup,
     ) -> Result<Committed<D, C::Out>, C::Error> {
+        let begin = |base: Snapshot<D>| Txn::new(base, Ids::Borrowed(&self.ids), setup);
+        self.attempts(caller, begin, |tx| {
+            command.validate(tx.base().doc())?;
+            command.prepare(tx)
+        })
+    }
+
+    /// [`Store::run_with`] of a command given as its `prepare` alone (it validates what it
+    /// needs as it goes), handed a transaction that shares the store's id allocator, as
+    /// [`Store::begin`]'s does: one it may pass on, erased, to code that names the model (a
+    /// host's batch hands it to each op's format). Its versions ([`Txn::version_here`]) are
+    /// numbered as its commit is expected to be: the store's next number as it is prepared.
+    ///
+    /// # Errors
+    /// What `prepare` returned (nothing published; a refusal is not prepared again).
+    pub fn run_txn<O, E: From<Error<D>>>(
+        &self,
+        caller: &Caller,
+        setup: &D::Setup,
+        prepare: impl Fn(&mut Txn<'static, D>) -> Result<O, E>,
+    ) -> Result<Committed<D, O>, E> {
+        let begin = |base: Snapshot<D>| {
+            let next = self.lock_state().numbered.saturating_add(1);
+            Txn::new(base, Ids::Shared(Arc::clone(&self.ids)), setup).numbered(next)
+        };
+        self.attempts(caller, begin, prepare)
+    }
+
+    /// Prepare (`prepare`, on a transaction `begin` makes on the head's snapshot) and commit
+    /// if nothing it read or wrote was written since, otherwise prepare again on the new head;
+    /// after [`StoreConfig::optimistic_tries`] conflicts (after one, for a transaction that
+    /// read the whole document), prepare and commit behind the gate, so that no other commit
+    /// comes between: prepared on the head outside the commit lock, as every command is (an
+    /// undo meanwhile, which the gate lets through, only has it prepared again).
+    fn attempts<'t, O, E>(
+        &self,
+        caller: &Caller,
+        begin: impl Fn(Snapshot<D>) -> Txn<'t, D>,
+        prepare: impl Fn(&mut Txn<'t, D>) -> Result<O, E>,
+    ) -> Result<Committed<D, O>, E> {
         let start = self.clock.monotonic();
         let mut attempts = 0;
         while attempts < self.config.optimistic_tries {
             attempts += 1;
-            let base = self.snapshot();
-            command.validate(base.doc())?;
-            let mut tx = Txn::new(base, Ids::Borrowed(&self.ids), setup);
-            let out = command.prepare(&mut tx)?;
+            let mut tx = begin(self.snapshot());
+            let out = prepare(&mut tx)?;
             let whole = tx.reads().keys().is_none();
             if let Some(done) = self.try_commit(caller, tx.into_parts(), false, None) {
                 return Ok(self.committed(done, out, attempts, false, start));
@@ -543,29 +585,16 @@ impl<D: DocModel> Store<D> {
                 break;
             }
         }
-        self.run_gated(caller, command, setup, attempts, start)
-    }
-
-    /// Prepare and commit behind the gate, so that no other commit comes between: prepared
-    /// on the head outside the commit lock, as every command is (an undo meanwhile, which
-    /// the gate lets through, only has it prepared again).
-    fn run_gated<C: Command<D>>(
-        &self,
-        caller: &Caller,
-        command: &C,
-        setup: &D::Setup,
-        mut attempts: u32,
-        start: Duration,
-    ) -> Result<Committed<D, C::Out>, C::Error> {
         self.counts.exclusive();
+        let asked = self.clock.monotonic();
         let _gate = self.enter_gate();
+        let closing = self.clock.monotonic().saturating_sub(asked);
         loop {
             attempts += 1;
-            let base = self.snapshot();
-            command.validate(base.doc())?;
-            let mut tx = Txn::new(base, Ids::Borrowed(&self.ids), setup);
-            let out = command.prepare(&mut tx)?;
-            if let Some(done) = self.try_commit(caller, tx.into_parts(), true, None) {
+            let mut tx = begin(self.snapshot());
+            let out = prepare(&mut tx)?;
+            if let Some(mut done) = self.try_commit(caller, tx.into_parts(), true, None) {
+                done.waited += closing;
                 return Ok(self.committed(done, out, attempts, true, start));
             }
             self.counts.conflict();
@@ -586,6 +615,7 @@ impl<D: DocModel> Store<D> {
                 changed: false,
                 writes: KeySet::new(),
                 held: Duration::ZERO,
+                waited: Duration::ZERO,
             });
         }
         // a key written only as a merge (made where the change is applied), or a derived one
@@ -597,6 +627,7 @@ impl<D: DocModel> Store<D> {
         let reads = history_reads(parts.reads.without(&parts.created), &parts.predicates);
         let changes: Arc<[D::Change]> = std::mem::take(&mut parts.changes).into();
         let mut moved = 0;
+        let mut waited = Duration::ZERO;
         let mut queue = Queue {
             store: self,
             queued: false,
@@ -611,6 +642,7 @@ impl<D: DocModel> Store<D> {
                 } else {
                     // the head and the entries that led to it, at once
                     let state = self.lock_state();
+                    waited += state.waited;
                     let head = self.head.load();
                     state.journal.since_base(parts.base.seq()).map(|since| (head, since))
                 };
@@ -621,6 +653,7 @@ impl<D: DocModel> Store<D> {
                 ));
             }
             let mut state = self.lock_ungated(gated, &mut queue);
+            waited += state.waited;
             let entered = self.clock.monotonic();
             let head = self.head.load();
             let (doc, changes) = match early {
@@ -657,6 +690,7 @@ impl<D: DocModel> Store<D> {
                 changed: true,
                 writes,
                 held,
+                waited,
             });
         }
     }
@@ -709,8 +743,10 @@ impl<D: DocModel> Store<D> {
         body: Body<D>,
         at: Option<Seq>,
     ) -> (Snapshot<D>, KeySet<D::Key>, Garbage<D>) {
-        let seq = at.filter(|at| *at > before.seq()).unwrap_or_else(|| state.last.next());
-        state.last = state.last.max(seq);
+        // (a number drawn already is never above the highest given)
+        let seq = at
+            .filter(|at| *at > before.seq())
+            .unwrap_or_else(|| self.ids.next_seq());
         state.numbered += 1;
         let number = state.numbered;
         doc.settle();
@@ -744,7 +780,11 @@ impl<D: DocModel> Store<D> {
             writes: done.writes,
             attempts,
             exclusive,
-            timing: CommitTiming { held: done.held, total },
+            timing: CommitTiming {
+                held: done.held,
+                waited: done.waited,
+                total,
+            },
         }
     }
 
@@ -805,8 +845,7 @@ impl<D: DocModel> Store<D> {
         let entered = self.clock.monotonic();
         let head = self.head.load();
         let mut planned = plan(&state.history, &head, &state.journal)?;
-        let seq = state.last.next();
-        state.last = seq;
+        let seq = self.ids.next_seq();
         planned.doc.carry(head.doc());
         planned.doc.settle();
         let number = planned.number.unwrap_or_else(|| {

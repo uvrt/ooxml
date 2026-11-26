@@ -283,6 +283,16 @@ impl Session {
         Ok(Self::opened(id, &document, document.head()))
     }
 
+    /// The document `id` at `version` (one of its own: a batch's op reads the version the
+    /// ops before it left, [`crate::StoredDoc::version_in`]).
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`].
+    pub fn opened_at(&self, id: &DocId, version: AnyVersion) -> Result<Opened, SessionError> {
+        let document = self.document(id)?;
+        Ok(Self::opened(id, &document, version))
+    }
+
     pub(crate) fn opened(id: &DocId, document: &Document, version: AnyVersion) -> Opened {
         Opened {
             id: id.clone(),

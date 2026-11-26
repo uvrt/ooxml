@@ -8,11 +8,12 @@
 
 use crate::batch::{MAX_READ_BATCH_CHARS, READ_BATCH};
 use crate::context::{revision_date, CallCancel};
-use crate::format::{Finished, FormatRun};
+use crate::format::{Deferred, Finished, FormatRun, LockSpent};
 use crate::session::Opened;
 use crate::undo::UNDO;
 use crate::{CallContext, DocId, DocKind, DocNames, Session, SessionError};
 use ooxml_base::Cancel;
+use ooxml_store::OpTxn;
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
 use serde_json::{Map, Value};
 use std::any::Any;
@@ -47,6 +48,37 @@ pub(crate) struct CallState<'p> {
     /// Whether the call's arguments were taken as meant already (by the host: design phase
     /// 3, one acceptance), so the session takes them as they are.
     accepted: bool,
+    /// The batch's transaction the call's edits run in, where it is handed one.
+    txn: Option<&'p dyn OpTxn>,
+    /// What the call keeps once its batch is published.
+    deferred: Mutex<Vec<Deferred>>,
+}
+
+impl<'p> CallState<'p> {
+    /// A call's state as it starts: what `context` names its documents by, the versions its
+    /// batch reads (`pinned`), its writes' `date`, whether its arguments were taken as meant
+    /// already, and the batch's transaction its edits run in.
+    fn new(
+        context: &CallContext,
+        pinned: Option<&'p mut Pinned>,
+        date: String,
+        accepted: bool,
+        txn: Option<&'p dyn OpTxn>,
+    ) -> Self {
+        CallState {
+            opened: None,
+            warnings: Vec::new(),
+            pinned,
+            others: Vec::new(),
+            names: context.names.clone(),
+            named: String::new(),
+            made: Mutex::new(None),
+            date,
+            accepted,
+            txn,
+            deferred: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 /// The versions one changing call made ([`Session::edit`]): its first edit's number and its
@@ -64,6 +96,26 @@ pub struct CallMade {
     /// What its format says of the call beside ([`Finished::format`]: a Word call's touched,
     /// validation and reflow, `ooxml-session-word`'s `WordMade`).
     pub format: Option<Arc<dyn Any + Send + Sync>>,
+    /// Where its commits' time went ([`Finished::lock`]).
+    pub lock: LockSpent,
+}
+
+/// One op of a host's batch run in the batch's transaction ([`Session::edit_in`]).
+pub struct InBatch {
+    /// Its reply (its version the state number its batch's commit is expected to be given).
+    pub result: ToolResult<Value>,
+    /// The versions its edits made, the batch's own until it is published; `None` where it
+    /// changed nothing.
+    pub made: Option<CallMade>,
+    /// What its format keeps once the batch is published, in order.
+    pub deferred: Vec<Deferred>,
+}
+
+impl InBatch {
+    /// The reply and the versions, as a call that is not a batch's op takes them.
+    fn into_call(self) -> (ToolResult<Value>, Option<CallMade>) {
+        (self.result, self.made)
+    }
 }
 
 /// The versions `context` names, by document.
@@ -139,7 +191,38 @@ impl Session {
         context: &CallContext,
     ) -> (ToolResult<Value>, Option<CallMade>) {
         let mut pinned = pinned_by(context);
-        self.run(name, Value::Object(arguments), context, "", Some(&mut pinned), true)
+        self.run(
+            name,
+            Value::Object(arguments),
+            context,
+            "",
+            Some(&mut pinned),
+            true,
+            None,
+        )
+        .into_call()
+    }
+
+    /// [`Session::edit_accepted`] of one op of a host's batch of one document, its edits run in
+    /// the batch's transaction `txn` (on the version the ops before it left): its step is the
+    /// batch's, and what its format keeps waits for the batch's publish.
+    pub fn edit_in(
+        &self,
+        name: &str,
+        arguments: Map<String, Value>,
+        context: &CallContext,
+        txn: &dyn OpTxn,
+    ) -> InBatch {
+        let mut pinned = pinned_by(context);
+        self.run(
+            name,
+            Value::Object(arguments),
+            context,
+            "",
+            Some(&mut pinned),
+            true,
+            Some(txn),
+        )
     }
 
     /// One call; `within` names the batch it runs in (`""`: none), whose refusals name it and
@@ -166,10 +249,13 @@ impl Session {
         within: &str,
         pinned: Option<&mut Pinned>,
     ) -> (ToolResult<Value>, Option<CallMade>) {
-        self.run(name, arguments, context, within, pinned, false)
+        self.run(name, arguments, context, within, pinned, false, None)
+            .into_call()
     }
 
-    /// [`Session::run_one`]; `accepted`: the arguments were taken as meant by the host.
+    /// [`Session::run_one`]; `accepted`: the arguments were taken as meant by the host;
+    /// `txn`: the batch's transaction its edits run in.
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         name: &str,
@@ -178,23 +264,15 @@ impl Session {
         within: &str,
         pinned: Option<&mut Pinned>,
         accepted: bool,
-    ) -> (ToolResult<Value>, Option<CallMade>) {
+        txn: Option<&dyn OpTxn>,
+    ) -> InBatch {
         self.counts.calls.fetch_add(1, Ordering::Relaxed);
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let mut state = CallState {
-            opened: None,
-            warnings: Vec::new(),
-            pinned,
-            others: Vec::new(),
-            names: context.names.clone(),
-            named: String::new(),
-            made: Mutex::new(None),
-            date: context
-                .date
-                .clone()
-                .unwrap_or_else(|| revision_date(self.context.clock.now())),
-            accepted,
-        };
+        let date = context
+            .date
+            .clone()
+            .unwrap_or_else(|| revision_date(self.context.clock.now()));
+        let mut state = CallState::new(context, pinned, date, accepted, txn);
         // a panic in the handler is the call's internal failure (crate::panics), never the host's
         let retry = arguments.clone();
         let run = AssertUnwindSafe(|| {
@@ -235,6 +313,7 @@ impl Session {
                     before,
                     last,
                     format,
+                    lock,
                     ..
                 } = finished;
                 CallMade {
@@ -242,6 +321,7 @@ impl Session {
                     before: Self::opened(&opened.id, document, before),
                     last: Self::opened(&opened.id, document, last),
                     format,
+                    lock,
                 }
             });
             // (state numbers, as the tool layer numbers the document's states)
@@ -256,7 +336,11 @@ impl Session {
         warnings.append(&mut result.warnings);
         result.warnings = warnings;
         result.app.tool = name.to_owned();
-        (result, call_made)
+        InBatch {
+            result,
+            made: call_made,
+            deferred: std::mem::take(state.deferred.get_mut().unwrap_or_else(PoisonError::into_inner)),
+        }
     }
 
     /// The run of `name` with `arguments` on `opened`, as its format is handed it.
@@ -280,6 +364,8 @@ impl Session {
             date: &state.date,
             locale: context.locale.as_ref().or(self.config.locale.as_ref()),
             made: &state.made,
+            txn: state.txn,
+            deferred: &state.deferred,
         }
     }
 

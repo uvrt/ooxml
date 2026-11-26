@@ -25,6 +25,7 @@
 #![forbid(unsafe_code)]
 
 pub mod batch;
+mod batch_run;
 pub mod blobs;
 mod changes;
 pub use changes::changed as changed_parts;
@@ -54,11 +55,12 @@ mod undo;
 mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
+pub use batch_run::{BatchCommitted, BatchOps, BatchRefused, OpRan};
 pub use context::{CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
-pub use dispatch::CallMade;
+pub use dispatch::{CallMade, InBatch};
 pub use document::PackageFormat;
 pub use error::SessionError;
-pub use format::{no_source, AnyVersion, Finished, Format, FormatDoc, FormatRun, OpenEnv};
+pub use format::{no_source, AnyVersion, Deferred, Finished, Format, FormatDoc, FormatRun, LockSpent, OpenEnv};
 pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};

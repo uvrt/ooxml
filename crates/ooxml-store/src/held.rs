@@ -58,8 +58,6 @@ pub(crate) struct HeldTxn<D: DocModel> {
     marks: Vec<(Savepoint<D>, Snapshot<D>)>,
     /// The version the owner reads now.
     current: Snapshot<D>,
-    /// The state number its versions carry: the one its commit will be given.
-    number: u64,
 }
 
 impl<D: DocModel> Store<D> {
@@ -85,14 +83,13 @@ impl<D: DocModel> Store<D> {
             txn: None,
             marks: Vec::new(),
             current: Arc::clone(&base),
-            number: 0,
         });
         drop(holder);
         let mut state = self.close_gate();
         // under the commit lock with the gate closed: nothing publishes after this head
         state.held = true;
         let number = state.numbered.saturating_add(1);
-        let tx = self.begin(setup);
+        let tx = self.begin(setup).numbered(number);
         drop(state);
         let base = Arc::clone(tx.base());
         let mut holder = lock(&self.holder);
@@ -100,7 +97,6 @@ impl<D: DocModel> Store<D> {
             Some(held) => {
                 held.marks.push((tx.savepoint(), Arc::clone(&base)));
                 held.current = Arc::clone(&base);
-                held.number = number;
                 held.txn = Some(tx);
                 Ok(base)
             }
@@ -144,18 +140,10 @@ impl<D: DocModel> Store<D> {
             }
         };
         let after = if changed {
-            // a number of its own, never given again: a reading kept by version number (the
-            // readings of a document's versions) never mistakes one for another
-            let seq = self.draw_seq();
-            let number = lock(&self.holder)
-                .as_ref()
-                .filter(|held| held.owner == owner)
-                .map_or(before.number(), |held| held.number);
-            let doc = tx.doc().clone();
-            doc.settle();
-            // its changes against the version the owner read before it, not the base
-            let version = tx.base().succeed(seq, number, doc, tx.writes());
-            Arc::new(version.changed_from(before.doc().clone()))
+            // a number of its own, never given again (a reading kept by version number -- the
+            // readings of a document's versions -- never mistakes one for another), its
+            // changes against the version the owner read before it, not the base
+            tx.version_here(&before)
         } else {
             Arc::clone(&before)
         };

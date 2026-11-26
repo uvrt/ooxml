@@ -295,6 +295,7 @@ impl FormatDoc for ToyDoc {
             last: made.last,
             batch: false,
             format: None,
+            lock: ooxml_session::LockSpent::default(),
         })
     }
 

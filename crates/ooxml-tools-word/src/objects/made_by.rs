@@ -3,6 +3,10 @@
 //! `_off_grid_by`, rounds 57 and 58, R125 and R128): each table's call, kept by table id,
 //! which `check`'s `table_grid_mismatch` names as an entry's `made_by` ([`MadeBy::add_to`]).
 //!
+//! An op of a host's batch keeps what it notes in a copy for its attempt
+//! ([`MadeBy::attempt`]), applied to the document's once the batch is published
+//! ([`MadeBy::apply`]): an attempt the batch prepares again leaves nothing.
+//!
 //! Must not: find which tables are ragged or off their grid (the facts do), or prune: an
 //! entry stays until its table is no longer found so (an undone call's table is simply not
 //! listed again).
@@ -27,6 +31,16 @@ pub enum Shape {
 #[derive(Debug, Default)]
 pub struct MadeBy {
     calls: Mutex<Calls>,
+    /// What an attempt's copy was told, in order, for the document's to be told the same
+    /// once the batch is published; `None`: the document's own.
+    told: Option<Mutex<Vec<Told>>>,
+}
+
+/// What a [`MadeBy`] was told.
+#[derive(Debug, Clone)]
+enum Told {
+    Noted(Shape, String, Value),
+    Renamed(String, String),
 }
 
 #[derive(Debug, Default)]
@@ -45,6 +59,49 @@ impl Calls {
 }
 
 impl MadeBy {
+    /// A copy of it for an attempt of a host's batch: it reads as this one and keeps what it
+    /// is told for [`MadeBy::apply`].
+    #[must_use]
+    pub fn attempt(&self) -> MadeBy {
+        let calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
+        MadeBy {
+            calls: Mutex::new(Calls {
+                ragged: calls.ragged.clone(),
+                off_grid: calls.off_grid.clone(),
+            }),
+            told: Some(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Tell it what `attempt` ([`MadeBy::attempt`]) was told, in order.
+    pub fn apply(&self, attempt: &MadeBy) {
+        let told = attempt
+            .told
+            .as_ref()
+            .map(|t| t.lock().unwrap_or_else(PoisonError::into_inner).clone())
+            .unwrap_or_default();
+        for told in told {
+            match told {
+                Told::Noted(shape, table, call) => self.keep(shape, &table, call),
+                Told::Renamed(from, to) => self.renamed(&from, &to),
+            }
+        }
+    }
+
+    /// What it is told, kept where it is an attempt's copy.
+    fn told(&self, told: Told) {
+        if let Some(kept) = &self.told {
+            kept.lock().unwrap_or_else(PoisonError::into_inner).push(told);
+        }
+    }
+
+    /// Keep `call` as the one that left `table` so.
+    fn keep(&self, shape: Shape, table: &str, call: Value) {
+        self.told(Told::Noted(shape, table.to_owned(), call.clone()));
+        let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
+        calls.of(shape).insert(table.to_owned(), call);
+    }
+
     /// Keep that `tool`, called with `arguments`, left `table` so.
     pub fn note(&self, shape: Shape, table: &str, tool: &str, arguments: &Map<String, Value>) {
         let given: Map<String, Value> = arguments
@@ -55,13 +112,13 @@ impl MadeBy {
         let mut call = Map::new();
         call.insert("tool".into(), Value::from(tool));
         call.insert("arguments".into(), Value::Object(given));
-        let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
-        calls.of(shape).insert(table.to_owned(), Value::Object(call));
+        self.keep(shape, table, Value::Object(call));
     }
 
     /// The table `from` is named `to` now (a row inserted or deleted at its top): what was
     /// kept of it goes with it.
     pub fn renamed(&self, from: &str, to: &str) {
+        self.told(Told::Renamed(from.to_owned(), to.to_owned()));
         let mut calls = self.calls.lock().unwrap_or_else(PoisonError::into_inner);
         for shape in [Shape::Ragged, Shape::OffGrid] {
             let kept = calls.of(shape);
@@ -122,5 +179,27 @@ mod tests {
             json!({"tool": "word_edit_table", "arguments": {"doc": "d1", "table": "t:1", "action": "delete_column", "index": 3}})
         );
         assert!(entries[1].get("made_by").is_none(), "off its grid: no call kept");
+    }
+
+    #[test]
+    fn an_attempt_reads_as_the_document_and_is_applied_once_in_order() {
+        let made = MadeBy::default();
+        let arguments = json!({"doc": "d1"});
+        let arguments = arguments.as_object().unwrap_or_else(|| unreachable!());
+        made.note(Shape::Ragged, "t:1", "word_edit_table", arguments);
+        let attempt = made.attempt();
+        assert!(attempt.of(Shape::Ragged, "t:1").is_some(), "reads as the document's");
+        attempt.renamed("t:1", "t:2");
+        attempt.note(Shape::OffGrid, "t:3", "word_format_table", arguments);
+        assert!(
+            made.of(Shape::Ragged, "t:2").is_none(),
+            "the document's untouched meanwhile"
+        );
+        // an attempt prepared again is dropped: only the one published is applied
+        drop(made.attempt());
+        made.apply(&attempt);
+        assert!(made.of(Shape::Ragged, "t:1").is_none());
+        assert!(made.of(Shape::Ragged, "t:2").is_some());
+        assert!(made.of(Shape::OffGrid, "t:3").is_some());
     }
 }
