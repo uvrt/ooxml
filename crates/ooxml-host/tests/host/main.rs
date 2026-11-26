@@ -4,4 +4,5 @@
 mod dispatch;
 mod lookup;
 mod roles;
+mod session_tools;
 mod toy;

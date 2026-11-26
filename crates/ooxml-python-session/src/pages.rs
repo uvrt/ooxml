@@ -48,6 +48,7 @@ impl PyPageSetup {
             inner: SessionPages {
                 setup: PageSetup::new(fonts.setup(), options),
                 memory,
+                raster: None,
             },
         })
     }

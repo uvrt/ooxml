@@ -13,7 +13,7 @@ use crate::WordVersion;
 use ooxml_session::{CancelToken, Opened, SessionError};
 use ooxml_tools::ToolError;
 use ooxml_word_edit::validate::Problem;
-use ooxml_word_edit::FileKind;
+use ooxml_word_edit::{FileKind, WordDoc};
 use ooxml_word_model::address::direct;
 use ooxml_word_model::docx::controls::controls;
 use ooxml_word_model::docx::drawings::all_drawings;
@@ -116,76 +116,85 @@ impl HostReads for Opened {
     }
 
     fn summary(&self) -> Result<Option<Value>, ToolError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let docx = word
-            .docx()
-            .map_err(|e| ToolError::internal(e.to_string(), "summary:docx"))?;
-        ooxml_tools_word::summary(word.package(), &docx, &CancelToken::new()).map(Some)
+        self.word().map(summary_of).transpose()
     }
 
     fn id_state(&self, host: &IdStateOf) -> Result<Option<String>, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let package = word.package();
-        let mut trees: Vec<Tree> = Vec::new();
-        for part in parts(package)? {
-            if let Some(tree) = word.tree(&part).map_err(SessionError::format)? {
-                trees.push(tree);
-            }
-        }
-        let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| t.root().as_ref()).collect();
-        let ids = word.ids();
-        let mut pool = IdPool::of(ids.values().collect());
-        for (seed, k) in ids.cursors() {
-            pool.set_cursor(seed, *k);
-        }
-        let ledger = Ledger {
-            pool: Some(pool),
-            gone: host.gone.iter().copied().collect(),
-            drawings_gone: host.drawings_gone.iter().copied().collect(),
-            highest_drawing: ids.highest_drawing(),
-            replaced: ids.replaced().iter().map(|(v, id)| (*v, id.clone())).collect(),
-            earlier: host.earlier.iter().cloned().collect(),
-            aliases: ids.aliases().clone(),
-            ..Ledger::default()
-        };
-        let said: HashMap<i64, &str> = host.said.iter().map(|(v, w)| (*v, w.as_str())).collect();
-        let versions = Versions {
-            version: host.version,
-            last: host.last,
-        };
-        let describe = |version: i64| said.get(&version).map(|w| (*w).to_owned());
-        Ok(Some(export_state(&ledger, &roots, &versions, &describe)))
+        self.word().map(|word| id_state_of(word, host)).transpose()
     }
 
     fn block_kind(&self, id: &str) -> Result<Option<&'static str>, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(None);
-        };
-        let docx = word.docx().map_err(SessionError::format)?;
-        if id.starts_with("cc:") || id.starts_with("cc@") {
-            let block = controls(&docx)
-                .into_iter()
-                .find(|c| c.id == id)
-                .is_some_and(|c| docx.part(&c.part).is_some_and(|part| c.level(part) == "block"));
-            return Ok(block.then_some("content control"));
-        }
-        let followed = word.ids().follow(id);
-        let found = direct(&docx, &followed).or_else(|| direct(&docx, id));
-        Ok(found.map(|(_, entry)| match entry {
-            Entry::Paragraph(_) => "paragraph",
-            Entry::Table(_) => "table",
-        }))
+        self.word().map_or(Ok(None), |word| block_kind_of(word, id))
     }
 
     fn has_drawing(&self, id: &str) -> Result<bool, SessionError> {
-        let Some(word) = self.word() else {
-            return Ok(false);
-        };
-        let docx = word.docx().map_err(SessionError::format)?;
-        Ok(all_drawings(&docx).iter().any(|d| d.id == id))
+        self.word().map_or(Ok(false), |word| has_drawing_of(word, id))
     }
+}
+
+/// What `open_document` says of `word`: cheap facts, no layout.
+pub(crate) fn summary_of(word: &WordDoc) -> Result<Value, ToolError> {
+    let docx = word
+        .docx()
+        .map_err(|e| ToolError::internal(e.to_string(), "summary:docx"))?;
+    ooxml_tools_word::summary(word.package(), &docx, &CancelToken::new())
+}
+
+/// `word`'s id state, its versions and retired ids as `host` numbers them.
+pub(crate) fn id_state_of(word: &WordDoc, host: &IdStateOf) -> Result<String, SessionError> {
+    let package = word.package();
+    let mut trees: Vec<Tree> = Vec::new();
+    for part in parts(package)? {
+        if let Some(tree) = word.tree(&part).map_err(SessionError::format)? {
+            trees.push(tree);
+        }
+    }
+    let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| t.root().as_ref()).collect();
+    let ids = word.ids();
+    let mut pool = IdPool::of(ids.values().collect());
+    for (seed, k) in ids.cursors() {
+        pool.set_cursor(seed, *k);
+    }
+    let ledger = Ledger {
+        pool: Some(pool),
+        gone: host.gone.iter().copied().collect(),
+        drawings_gone: host.drawings_gone.iter().copied().collect(),
+        highest_drawing: ids.highest_drawing(),
+        replaced: ids.replaced().iter().map(|(v, id)| (*v, id.clone())).collect(),
+        earlier: host.earlier.iter().cloned().collect(),
+        aliases: ids.aliases().clone(),
+        ..Ledger::default()
+    };
+    let said: HashMap<i64, &str> = host.said.iter().map(|(v, w)| (*v, w.as_str())).collect();
+    let versions = Versions {
+        version: host.version,
+        last: host.last,
+    };
+    let describe = |version: i64| said.get(&version).map(|w| (*w).to_owned());
+    Ok(export_state(&ledger, &roots, &versions, &describe))
+}
+
+/// What kind of block `id` names in `word` (a renamed id followed): `"paragraph"`,
+/// `"table"` or `"content control"` (a block-level one); `None` when it names none.
+pub(crate) fn block_kind_of(word: &WordDoc, id: &str) -> Result<Option<&'static str>, SessionError> {
+    let docx = word.docx().map_err(SessionError::format)?;
+    if id.starts_with("cc:") || id.starts_with("cc@") {
+        let block = controls(&docx)
+            .into_iter()
+            .find(|c| c.id == id)
+            .is_some_and(|c| docx.part(&c.part).is_some_and(|part| c.level(part) == "block"));
+        return Ok(block.then_some("content control"));
+    }
+    let followed = word.ids().follow(id);
+    let found = direct(&docx, &followed).or_else(|| direct(&docx, id));
+    Ok(found.map(|(_, entry)| match entry {
+        Entry::Paragraph(_) => "paragraph",
+        Entry::Table(_) => "table",
+    }))
+}
+
+/// Whether `word` has the drawing `id` (`d:3`).
+pub(crate) fn has_drawing_of(word: &WordDoc, id: &str) -> Result<bool, SessionError> {
+    let docx = word.docx().map_err(SessionError::format)?;
+    Ok(all_drawings(&docx).iter().any(|d| d.id == id))
 }

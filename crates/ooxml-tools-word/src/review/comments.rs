@@ -7,8 +7,8 @@
 
 use super::Editing;
 use crate::describe::short;
-use crate::paging::page_list;
 use crate::word_inspect::comments_with_anchors;
+use ooxml_tools::paging::page_list;
 use ooxml_tools::{ArgEnum, Done, ToolArgs, ToolError, ToolResult, TryCall};
 use serde_json::{json, Map, Value};
 

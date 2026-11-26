@@ -9,8 +9,11 @@
 //! repeat, the handler run by the document's format on the version the call reads, the
 //! effects applied once its change is published, the checks, the reply's warnings in today's
 //! order); the session's stores behind one lock ([`Stores`]); the call's record
-//! ([`CallRecord`]) and the retry keys ([`RetryKeys`]); and the seam the session tools run
-//! through ([`SessionTools`]).
+//! ([`CallRecord`]) and the retry keys ([`RetryKeys`]); the seam the session tools run
+//! through ([`SessionTools`]) and the tools themselves ([`HostTools`]); the documents as the
+//! application opens, saves, undoes and closes them ([`Opening`], [`Saved`]); and what the
+//! host adds to a format tool's reply (`save_document`'s output behind the save gate,
+//! `check`'s validation, `describe`'s problems).
 //!
 //! Must not: know a format (each comes as an [`ooxml_session::Format`]), hand a handler a
 //! document's head (the format runs it on the version the call reads), hold the stores'
@@ -18,14 +21,22 @@
 #![forbid(unsafe_code)]
 
 mod catalogue;
+mod documents;
 pub mod hints;
+pub mod images;
 mod own;
 mod pipeline;
+mod read_batch;
 mod records;
 mod session;
+mod tools;
+mod wrap;
 
 pub use catalogue::{Catalogue, Entry, Own};
+pub use documents::{DocumentLimits, Held, OpenRefused, Opening, Saved};
 pub use own::{Batch, CloseDocument, NewDocument, NewKind, NotYet, OpenDocument, OwnCall, ReadBlob, SessionTools};
 pub use pipeline::{caller_key, NotRun};
 pub use records::{digest, shape, CallRecord, RetryKeys};
 pub use session::{CallAs, Host, HostSession, HostSettings, Stores};
+pub use tools::HostTools;
+pub use wrap::validation_fact;

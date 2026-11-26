@@ -203,7 +203,7 @@ impl Sess {
         self.held.insert(handle.clone(), Arc::new(toy));
         self.docs.push(OpenDoc {
             handle: handle.clone(),
-            kind: kind.into(),
+            kind: DocKind::parse(kind).unwrap(),
             name: name.into(),
         });
         handle
@@ -220,7 +220,7 @@ impl Sess {
         let found = self.docs.iter().find(|d| d.handle == doc).unwrap();
         DocMeta {
             doc: found.handle.clone(),
-            kind: found.kind.clone(),
+            kind: found.kind,
             name: found.name.clone(),
         }
     }
@@ -267,7 +267,7 @@ impl Sess {
                 FormatOpen {
                     handle: d.handle.clone(),
                     name: d.name.clone(),
-                    format: self.formats.iter().find(|f| f.0.as_str() == d.kind).unwrap(),
+                    format: self.formats.iter().find(|f| f.0 == d.kind).unwrap(),
                     doc: doc.as_ref(),
                     at: Some(doc.stored().head()),
                 }
@@ -310,7 +310,7 @@ impl SourceHost for Sess {
         self.sources().source_hint(doc, value)
     }
 
-    fn merge_sources(&self, kind: &str, sources: Vec<String>) -> Vec<String> {
+    fn merge_sources(&self, kind: DocKind, sources: Vec<String>) -> Vec<String> {
         self.sources().merge_sources(kind, sources)
     }
 }
@@ -341,6 +341,14 @@ impl Format for ToyFormat {
     }
 
     fn register(&self, _tools: &mut Registry) {}
+
+    fn detect(&self, _bytes: &[u8], name: &str) -> bool {
+        name.ends_with(self.0.as_str())
+    }
+
+    fn new_document(&self, _made: &ooxml_session::NewDocument<'_>, _env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
+        Err(ToolError::internal("the services' toys make no new documents", "toy"))
+    }
 
     fn open(&self, _package: Package, _env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
         Ok(Arc::new(ToyDoc {
@@ -446,6 +454,18 @@ impl FormatDoc for ToyDoc {
 
     fn finish(&self, made: Box<dyn Any + Send>, run: &FormatRun<'_>) -> Option<Finished> {
         FormatDoc::finish(&self.stored, made, run)
+    }
+
+    fn baseline(&self) -> Vec<ooxml_session::problems::Problem> {
+        Vec::new()
+    }
+
+    fn summary(&self, _at: &AnyVersion) -> Option<Map<String, Value>> {
+        None
+    }
+
+    fn state(&self, _at: &AnyVersion) -> Option<String> {
+        None
     }
 
     fn as_any(&self) -> &dyn Any {

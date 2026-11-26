@@ -95,7 +95,7 @@ impl Toy {
         let mut call = CallDatasets::new();
         let meta = DocMeta {
             doc: "d2".into(),
-            kind: "xlsx".into(),
+            kind: ooxml_session::DocKind::Xlsx,
             name: NAME.into(),
         };
         let retry = retry();
@@ -137,13 +137,13 @@ impl Toy {
     fn host(&self) -> Host {
         let mut docs = vec![OpenDoc {
             handle: "d1".into(),
-            kind: "docx".into(),
+            kind: ooxml_session::DocKind::Docx,
             name: "brief.docx".into(),
         }];
         if self.with_table {
             docs.push(OpenDoc {
                 handle: "d2".into(),
-                kind: "xlsx".into(),
+                kind: ooxml_session::DocKind::Xlsx,
                 name: NAME.into(),
             });
         }

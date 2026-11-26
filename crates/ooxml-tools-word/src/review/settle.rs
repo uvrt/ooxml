@@ -9,8 +9,8 @@
 use super::changes::{invalid, try_call, ChangeAction, Reading, WordChanges};
 use super::listing::change_json;
 use super::Editing;
-use crate::paging::page_list;
 use ooxml_store::{Caller, Clock, Store, StoreConfig};
+use ooxml_tools::paging::page_list;
 use ooxml_tools::{Done, Refusal, ToolError, ToolResult, WayOut};
 use ooxml_word_edit::review::wanted_records;
 use ooxml_word_edit::{Mark, RemovedBlocks, Review, Reviewed, Selection, Typed, WordDoc};

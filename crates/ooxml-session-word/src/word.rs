@@ -22,7 +22,7 @@ use ooxml_session::{
     SessionError, StepBy, StoreClock, Stored, StoredDoc,
 };
 use ooxml_store::{Caller, Snapshot, Store};
-use ooxml_tools::{CallEnv, Outcome, Tool, ToolResult};
+use ooxml_tools::{CallEnv, Outcome, Tool, ToolError, ToolResult};
 use ooxml_tools_word::{LayoutLimit, Made, MadeBy, RowsWritten, WordLayout};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{Change, EarlierIds, Editor, IdsChange, WordDoc};
@@ -83,6 +83,44 @@ impl Format for WordFormat {
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
         let word = Word::open(package, env, &EarlierIds::default(), self.pages.clone())?;
         Ok(Arc::new(word))
+    }
+
+    fn open_with_state(
+        &self,
+        package: Package,
+        state: &str,
+        env: &OpenEnv<'_>,
+    ) -> Result<ooxml_session::WithState, SessionError> {
+        let (word, numbers) = Word::open_seeded(package, env, state, self.pages.clone()).map_err(|error| {
+            if crate::refuses_state(&error) {
+                SessionError::StateRefused {
+                    kind: ooxml_session::DocKind::Docx,
+                    reason: Some(error.to_string()),
+                }
+            } else {
+                error
+            }
+        })?;
+        let number = |n: i64| u64::try_from(n).unwrap_or(0);
+        Ok(ooxml_session::WithState {
+            doc: Arc::new(word),
+            numbers: Some((number(numbers.0), number(numbers.1))),
+        })
+    }
+
+    /// docx-agent's `detect`: a package named as a Word file, or one with a Word document's
+    /// main part.
+    fn detect(&self, bytes: &[u8], name: &str) -> bool {
+        if !bytes.starts_with(b"PK") {
+            return false;
+        }
+        let lower = name.to_lowercase();
+        [".docx", ".docm", ".dotx", ".dotm"].iter().any(|e| lower.ends_with(e))
+            || ooxml_session::package_has_part(bytes, "word/document.xml")
+    }
+
+    fn new_document(&self, made: &ooxml_session::NewDocument<'_>, env: &OpenEnv<'_>) -> Result<Vec<u8>, ToolError> {
+        crate::new_document(made, env)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -251,6 +289,66 @@ impl Word {
         Ok((Self::of_editor(editor, env.context, pages)?, loaded))
     }
 
+    /// `package` opened with its id state as [`Word::open_state`] opens it, the ids the
+    /// state retired seeded as the session's record: the document, and the state's
+    /// `(version, last)` for its history's numbers to go on from.
+    ///
+    /// # Errors
+    /// As [`Word::open_state`].
+    pub(crate) fn open_seeded(
+        package: Package,
+        env: &OpenEnv<'_>,
+        state: &str,
+        pages: Option<crate::SessionPages>,
+    ) -> Result<(Word, (i64, i64)), SessionError> {
+        let (word, loaded) = Self::open_state(package, env, state, pages)?;
+        word.retired().seed(crate::session::retired_rows(&loaded));
+        Ok((word, (loaded.versions.version, loaded.versions.last)))
+    }
+
+    /// What the id state of its version numbered `number` says beside the ids (docx-agent's
+    /// `hooks.id_state`): that number and the highest its history gave, and each retired id
+    /// with the number of the step that retired it -- one whose step is still ending left
+    /// out -- and who made that step (`tool (key=value, ...)`).
+    pub(crate) fn id_state_of(&self, number: u64) -> crate::IdStateOf {
+        let signed = |n: u64| i64::try_from(n).unwrap_or(i64::MAX);
+        let mut gone: BTreeMap<u32, i64> = BTreeMap::new();
+        let mut drawings_gone: BTreeMap<u64, i64> = BTreeMap::new();
+        let mut earlier: BTreeMap<i64, Option<String>> = BTreeMap::new();
+        let mut said: BTreeMap<i64, String> = BTreeMap::new();
+        for (id, by) in self.retired().list() {
+            let then = match by {
+                crate::RetiredBy::Step { seq, caller, tool } => {
+                    let Some(then) = self.retired().number_of(seq) else {
+                        continue;
+                    };
+                    let then = signed(then);
+                    if let Some(tool) = tool.filter(|t| !t.is_empty()) {
+                        said.insert(then, step_words(&tool, caller.as_deref()));
+                    }
+                    then
+                }
+                crate::RetiredBy::Earlier { version, said: words } => {
+                    let then = signed(version);
+                    earlier.insert(then, words);
+                    then
+                }
+            };
+            match id {
+                ooxml_word_model::ids::HeldId::Block(value) => gone.insert(value, then),
+                ooxml_word_model::ids::HeldId::Drawing(value) => drawings_gone.insert(value, then),
+            };
+        }
+        crate::IdStateOf {
+            version: signed(number),
+            last: signed(number.max(self.stored.highest())),
+            gone: gone.into_iter().collect(),
+            drawings_gone: drawings_gone.into_iter().collect(),
+            earlier: earlier.into_iter().collect(),
+            said: said.into_iter().collect(),
+        }
+    }
+
     /// A Word document's state as the session holds it, from its editor.
     fn of_editor(editor: Editor, context: &Context, pages: Option<crate::SessionPages>) -> Result<Word, SessionError> {
         let opened = editor.store().snapshot();
@@ -393,7 +491,10 @@ impl FormatDoc for Word {
             made: &made,
             layout: layout.as_deref(),
             layout_limit: layout_cancel.as_ref().map(limit),
-            raster: host.raster.as_deref(),
+            raster: host
+                .raster
+                .as_deref()
+                .or_else(|| self.default_pages.as_ref().and_then(|p| p.raster.as_deref())),
             image_budgets: &run.context.image_budgets,
             blobs: run.context.blobs.as_deref(),
             written: &host.written,
@@ -470,6 +571,71 @@ impl FormatDoc for Word {
         })
     }
 
+    fn own_source(&self, at: &AnyVersion, address: &str) -> Option<String> {
+        crate::own_sources::own_source(at.snapshot::<WordDoc>()?.doc(), address)
+    }
+
+    fn source_hint(&self, at: &AnyVersion, value: &str) -> Option<String> {
+        crate::own_sources::source_hint(at.snapshot::<WordDoc>()?.doc(), value)
+    }
+
+    fn checks(
+        &self,
+        at: &AnyVersion,
+        made: Option<&(dyn Any + Send + Sync)>,
+    ) -> Option<serde_json::Map<String, Value>> {
+        let made = made.and_then(|m| m.downcast_ref::<WordMade>());
+        let validation = match made {
+            Some(made) => crate::problems::structured(&made.validation),
+            None => FormatDoc::validation(self, at)?,
+        };
+        let mut checks = serde_json::Map::new();
+        checks.insert("validate".into(), validation.to_json());
+        checks.insert(
+            "reflow".into(),
+            made.and_then(|m| m.reflow.clone()).unwrap_or(Value::Null),
+        );
+        Some(checks)
+    }
+
+    fn validation(&self, at: &AnyVersion) -> Option<ooxml_session::problems::Validation> {
+        let version = at.snapshot::<WordDoc>()?;
+        let delta = Word::validation(self, version).ok()?;
+        Some(crate::problems::structured(&delta))
+    }
+
+    fn baseline(&self) -> Vec<ooxml_session::problems::Problem> {
+        self.editor().baseline().iter().map(crate::problems::problem).collect()
+    }
+
+    fn summary(&self, at: &AnyVersion) -> Option<serde_json::Map<String, Value>> {
+        let version = at.snapshot::<WordDoc>()?;
+        match crate::host_reads::summary_of(version.doc()) {
+            Ok(Value::Object(summary)) => Some(summary),
+            _ => None,
+        }
+    }
+
+    fn state(&self, at: &AnyVersion) -> Option<String> {
+        let version = at.snapshot::<WordDoc>()?;
+        crate::host_reads::id_state_of(version.doc(), &self.id_state_of(at.number())).ok()
+    }
+
+    fn touched(&self, before: &AnyVersion, after: &AnyVersion, made: Option<&(dyn Any + Send + Sync)>) -> Vec<Value> {
+        if let Some(touched) = made
+            .and_then(|m| m.downcast_ref::<WordMade>())
+            .and_then(|m| m.touched.clone())
+        {
+            return touched;
+        }
+        let (Some(then), Some(now)) = (before.snapshot::<WordDoc>(), after.snapshot::<WordDoc>()) else {
+            return Vec::new();
+        };
+        ooxml_word_edit::touched::touched(then.doc(), now.doc())
+            .map(|found| found.iter().map(crate::version::touched_json).collect())
+            .unwrap_or_default()
+    }
+
     fn group_state(&self) -> Option<Arc<dyn Any + Send + Sync>> {
         Some(Arc::new(self.tracking()))
     }
@@ -526,9 +692,27 @@ pub(crate) fn limit<'a>(cancel: &'a LayoutCancel<'_>) -> LayoutLimit<'a> {
 }
 
 /// The store's clock and the context's cache budget, as a Word document's editor reads them.
-fn ports(context: &Context) -> (Arc<StoreClock>, Arc<Budget>) {
+pub(crate) fn ports(context: &Context) -> (Arc<StoreClock>, Arc<Budget>) {
     (
         Arc::new(StoreClock(Arc::clone(&context.clock))),
         Arc::new(Budget(Arc::clone(&context.budget))),
     )
+}
+
+/// Who made a step, in an id state's words: the tool, and the caller's context after it
+/// (`word_delete (agent=a)`).
+fn step_words(tool: &str, caller: Option<&str>) -> String {
+    let context: Vec<String> = caller
+        .and_then(|c| serde_json::from_str::<serde_json::Map<String, Value>>(c).ok())
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| format!("{key}={}", ooxml_tools::pyfmt::str_of(value)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if context.is_empty() {
+        tool.to_owned()
+    } else {
+        format!("{tool} ({})", context.join(", "))
+    }
 }

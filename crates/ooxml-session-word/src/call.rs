@@ -59,13 +59,19 @@ impl WordHost {
     /// What `context`'s host handed a Word call, if anything.
     #[must_use]
     pub fn of(context: &CallContext) -> Option<&WordHost> {
-        context.host.as_deref()?.downcast_ref()
+        context.host.as_deref()?.as_any().downcast_ref()
     }
 
     /// `self` as a call's context carries it.
     #[must_use]
-    pub fn into_host(self) -> Option<Arc<dyn Any + Send + Sync>> {
+    pub fn into_host(self) -> Option<Arc<dyn ooxml_session::FormatHost>> {
         Some(Arc::new(self))
+    }
+}
+
+impl ooxml_session::FormatHost for WordHost {
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

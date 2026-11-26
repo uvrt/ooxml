@@ -9,7 +9,7 @@
 use crate::stamps::Stamps;
 use crate::{DocModel, KeySet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// A version's number. Monotonic and never given twice, also across a reopen
 /// ([`crate::Counters`]); an undo makes a new number whose content is an earlier version's.
@@ -39,6 +39,53 @@ pub struct Version<D: DocModel> {
     number: u64,
     doc: D,
     stamps: Stamps<D::Key>,
+    changes: Changes<D>,
+}
+
+/// What a version changed against the version it was published after, worked out when first
+/// asked ([`Version::changes`]): until then the earlier version's document is held (the
+/// document alone, never its version, so versions do not chain), and let go once it is.
+struct Changes<D: DocModel> {
+    before: Mutex<Option<D>>,
+    worked: OnceLock<Option<Arc<D::Delta>>>,
+}
+
+impl<D: DocModel> Changes<D> {
+    fn none() -> Self {
+        Changes {
+            before: Mutex::new(None),
+            worked: OnceLock::from(None),
+        }
+    }
+
+    fn against(before: D) -> Self {
+        Changes {
+            before: Mutex::new(Some(before)),
+            worked: OnceLock::new(),
+        }
+    }
+
+    fn get(&self, after: &D) -> Option<Arc<D::Delta>> {
+        self.worked
+            .get_or_init(|| {
+                let before = self.before.lock().unwrap_or_else(PoisonError::into_inner).take()?;
+                Some(Arc::new(D::delta(&before, after)))
+            })
+            .clone()
+    }
+
+    /// Whether the earlier version's document is still held.
+    fn holding(&self) -> bool {
+        self.before.lock().unwrap_or_else(PoisonError::into_inner).is_some()
+    }
+}
+
+impl<D: DocModel> fmt::Debug for Changes<D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Changes")
+            .field("worked", &self.worked.get().is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl<D: DocModel> Version<D> {
@@ -48,17 +95,20 @@ impl<D: DocModel> Version<D> {
             number: 0,
             doc,
             stamps: Stamps::default(),
+            changes: Changes::none(),
         }
     }
 
     /// The same version, its state numbered `number` (a store going on with numbers given
-    /// before it opened: [`crate::Store::continue_numbers`]).
+    /// before it opened: [`crate::Store::continue_numbers`]); only a first version is
+    /// renumbered, so it has no changes.
     pub(crate) fn renumbered(&self, number: u64) -> Self {
         Self {
             seq: self.seq,
             number,
             doc: self.doc.clone(),
             stamps: self.stamps.clone(),
+            changes: Changes::none(),
         }
     }
 
@@ -72,7 +122,16 @@ impl<D: DocModel> Version<D> {
             number,
             doc,
             stamps,
+            changes: Changes::against(self.doc.clone()),
         }
+    }
+
+    /// The same version, its changes worked out against `previous` (the document of the
+    /// version a reader held before this one, where that is not the version it was made
+    /// from: a held transaction's versions, made from its base).
+    pub(crate) fn changed_from(mut self, previous: D) -> Self {
+        self.changes = Changes::against(previous);
+        self
     }
 
     /// The version's number.
@@ -91,6 +150,19 @@ impl<D: DocModel> Version<D> {
     /// The document.
     pub fn doc(&self) -> &D {
         &self.doc
+    }
+
+    /// What this version changed against the version it was published after
+    /// ([`DocModel::delta`]), worked out on the first ask and kept; `None` for a store's
+    /// first version.
+    pub fn changes(&self) -> Option<Arc<D::Delta>> {
+        self.changes.get(&self.doc)
+    }
+
+    /// Whether this version still holds the earlier version's document its changes are
+    /// worked out from (nobody has asked for them yet).
+    pub fn holds_before(&self) -> bool {
+        self.changes.holding()
     }
 
     /// The number of the last version that wrote `key`; `Seq(0)` when none did since the store

@@ -45,6 +45,9 @@ impl DocModel for Rows {
     type Change = Change;
     type Error = NoRow;
     type Setup = ();
+    type Delta = ();
+
+    fn delta(_: &Self, _: &Self) {}
 
     fn apply(&mut self, change: &Change) -> Result<(), NoRow> {
         match change {

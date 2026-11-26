@@ -43,13 +43,13 @@ pub struct ReadBatch {
 pub const READ_BATCH: &str = "read_batch";
 
 /// Ops a batch may hold, as `Limits.max_batch_ops`.
-const MAX_OPS: usize = 200;
+pub const MAX_OPS: usize = 200;
 
 /// The batch's reply budget, as `Limits.max_read_batch_chars`.
 pub const MAX_READ_BATCH_CHARS: usize = 96_000;
 
 /// What the reply needs besides its ops' answers, in characters.
-const MARGIN: usize = 2_000;
+pub const MARGIN: usize = 2_000;
 
 /// How long a batch may take, as `Limits.batch_timeout`.
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(120);
@@ -58,7 +58,8 @@ pub const BATCH_TIMEOUT: Duration = Duration::from_secs(120);
 /// limit on one reply -- without the empty fields a reading call never fills, led by its
 /// index and tool; `next`, the call for its next page, where it has one and its tool takes
 /// a cursor.
-fn answer(
+#[must_use]
+pub fn answer(
     index: usize,
     tool: &str,
     result: &ToolResult<Value>,
@@ -97,9 +98,11 @@ fn answer(
 }
 
 /// Why an op was left out: over the budget, or past the deadline.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Left {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Left {
+    /// It did not fit the reply's budget.
     Budget,
+    /// The batch's deadline passed before it ran.
     Deadline,
 }
 
@@ -163,12 +166,14 @@ impl Session {
 }
 
 /// What the envelope of `done` holds, for its size.
-fn envelope(done: &Done<Value>) -> Map<String, Value> {
+#[must_use]
+pub fn envelope(done: &Done<Value>) -> Map<String, Value> {
     ToolResult::done(done.clone()).to_json()
 }
 
 /// The batch's result: the answers in op order, then what was left out.
-fn combine(
+#[must_use]
+pub fn combine(
     ops: &[Value],
     answers: &[(Map<String, Value>, usize, bool)],
     left: &[(usize, Left)],

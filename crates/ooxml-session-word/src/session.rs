@@ -99,10 +99,9 @@ impl WordSession for Session {
 
     fn open_state(&self, bytes: Arc<[u8]>, name: &str, state: &str) -> Result<(DocId, (i64, i64)), SessionError> {
         let package = Package::open(bytes, &self.context().limits)?;
-        let (word, loaded) = Word::open_state(package, &self.open_env(), state, pages_of(self))?;
-        word.retired().seed(retired_rows(&loaded));
+        let (word, numbers) = Word::open_seeded(package, &self.open_env(), state, pages_of(self))?;
         let id = self.insert(DocKind::Docx, name, Arc::new(word));
-        Ok((id, (loaded.versions.version, loaded.versions.last)))
+        Ok((id, numbers))
     }
 
     fn validation(&self, id: &DocId) -> Result<Option<Delta>, SessionError> {
@@ -202,7 +201,7 @@ fn edit_error(error: &SessionError) -> Option<&EditError> {
 
 /// What a loaded state retired, as the session's record takes it: each block id and drawing
 /// number with the version that retired it (the host's number) and who made that version.
-fn retired_rows(loaded: &LoadedState) -> Vec<(HeldId, u64, Option<String>)> {
+pub(crate) fn retired_rows(loaded: &LoadedState) -> Vec<(HeldId, u64, Option<String>)> {
     let said = |step: i64| loaded.steps.get(&step).cloned().flatten();
     let version = |step: i64| u64::try_from(step).unwrap_or_default();
     let blocks = loaded

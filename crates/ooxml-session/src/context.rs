@@ -87,7 +87,15 @@ pub struct CallContext {
     /// What the host hands the call for its document's format beside the rest (a Word
     /// call's layout, blobs, values written by reference: `ooxml-session-word`'s
     /// `WordHost`), read by that format alone; `None`: nothing.
-    pub host: Option<Arc<dyn Any + Send + Sync>>,
+    pub host: Option<Arc<dyn FormatHost>>,
+}
+
+/// What a host hands a call for its document's format beside the rest of its context
+/// ([`CallContext::host`]): a format's own type (a Word call's layout and the values the host
+/// wrote, `ooxml-session-word`'s `WordHost`), which only that format reads.
+pub trait FormatHost: Any + Send + Sync {
+    /// Itself, for its format to read (a downcast).
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl std::fmt::Debug for CallContext {
@@ -188,7 +196,7 @@ impl ooxml_store::Clock for StoreClock {
 
 /// The date an edit made at `now` carries, as docx-agent's tools date it (the session's
 /// clock, `utc_now`): UTC, to the second (`2026-11-18T09:30:15Z`).
-pub(crate) fn revision_date(now: ooxml_base::context::Timestamp) -> String {
+pub fn revision_date(now: ooxml_base::context::Timestamp) -> String {
     let days = now.seconds.div_euclid(86_400);
     let seconds = now.seconds.rem_euclid(86_400);
     let minutes = seconds / 60;

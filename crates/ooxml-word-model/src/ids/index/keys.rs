@@ -17,6 +17,7 @@ use super::{Entry, Located, PartIds, Path};
 use crate::ids::block_id::{BlockId, BlockKind, ParaId};
 use crate::ids::key::{BlockKey, KeyName, StoryIx};
 use crate::ids::valid_long_hex;
+use std::sync::Arc;
 
 impl PartIds {
     /// How many paragraphs and rows have a valid paraId written with fewer than eight digits.
@@ -107,12 +108,26 @@ impl PartIds {
     /// The key of the paragraph or table `entry`, in the story `story` (this part's).
     #[must_use]
     pub fn key_of(&self, story: StoryIx, entry: Entry) -> Option<BlockKey> {
-        let (kind, name) = match entry {
-            Entry::Paragraph(n) => {
-                let (at, k) = self.paragraph_place(n)?;
-                let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::P)?;
+        let (at, k) = match entry {
+            Entry::Paragraph(n) => self.paragraph_place(n)?,
+            Entry::Table(n) => self.table_place(n)?,
+        };
+        let kind = at.body.blocks.get(k)?.kind;
+        let wanted = match entry {
+            Entry::Paragraph(_) => Kind::P,
+            Entry::Table(_) => Kind::Tbl,
+        };
+        (kind == wanted).then(|| self.key_in(story, &at, k)).flatten()
+    }
+
+    /// The key of the block (paragraph, table or row) at place `k` of `at`'s blocks.
+    pub(super) fn key_in(&self, story: StoryIx, at: &Located<'_>, k: usize) -> Option<BlockKey> {
+        let block = at.body.blocks.get(k)?;
+        let (kind, name) = match block.kind {
+            Kind::P => {
+                let n = at.paragraphs + block.ordinal as usize;
                 let name = match self.unique_id(block) {
-                    Some(id) => match self.repeat_of(&at, k, block) {
+                    Some(id) => match self.repeat_of(at, k, block) {
                         0 => KeyName::Durable(id),
                         repeat => {
                             u32::try_from(repeat).map_or(KeyName::Ordinal(ordinal(n)?), |r| KeyName::Repeat(id, r))
@@ -122,17 +137,32 @@ impl PartIds {
                 };
                 (BlockKind::Paragraph, name)
             }
-            Entry::Table(n) => {
-                let (at, k) = self.table_place(n)?;
-                at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
-                let first = Self::own_rows(&at, k).into_iter().next();
+            Kind::Tbl => {
+                let n = at.tables + block.ordinal as usize;
+                let first = Self::own_rows(at, k).into_iter().next();
                 let id = first
-                    .filter(|(r, row)| self.row_named(&at, *r, row))
+                    .filter(|(r, row)| self.row_named(at, *r, row))
                     .and_then(|(_, row)| self.unique_id(row));
                 (
                     BlockKind::Table,
                     id.map_or(KeyName::Ordinal(ordinal(n)?), KeyName::Durable),
                 )
+            }
+            Kind::Tr => {
+                let id = self.row_named(at, k, block).then(|| self.unique_id(block)).flatten();
+                let name = match id {
+                    Some(id) => KeyName::Durable(id),
+                    None => {
+                        let owner = block.owner? as usize;
+                        let table = at.tables + at.body.blocks.get(owner)?.ordinal as usize;
+                        let row = Self::own_rows(at, owner).iter().position(|(r, _)| *r == k)?;
+                        KeyName::RowAt {
+                            table: ordinal(table)?,
+                            row: ordinal(row)?,
+                        }
+                    }
+                };
+                (BlockKind::Row, name)
             }
         };
         Some(BlockKey::new(story, kind, name))
@@ -169,16 +199,8 @@ impl PartIds {
     #[must_use]
     pub fn row_key_of(&self, story: StoryIx, table: usize, row: usize) -> Option<BlockKey> {
         let (at, k) = self.table_place(table)?;
-        let (r, block) = *Self::own_rows(&at, k).get(row)?;
-        let id = self.row_named(&at, r, block).then(|| self.unique_id(block)).flatten();
-        let name = match id {
-            Some(id) => KeyName::Durable(id),
-            None => KeyName::RowAt {
-                table: ordinal(table)?,
-                row: ordinal(row)?,
-            },
-        };
-        Some(BlockKey::new(story, BlockKind::Row, name))
+        let (r, _) = *Self::own_rows(&at, k).get(row)?;
+        self.key_in(story, &at, r)
     }
 
     /// The table (its ordinal) and own row (its place, from 0) a row's `key` names; `None`
@@ -200,22 +222,35 @@ impl PartIds {
         (self.row_key_of(key.story(), found.0, found.1) == Some(key)).then_some(found)
     }
 
-    /// The place (child indexes from the root) of the block `key` names.
-    #[must_use]
-    pub fn place_of(&self, key: BlockKey) -> Option<Path> {
-        let (at, k) = match key.kind() {
+    /// The block `key` names: its segment and place there.
+    fn block_of(&self, key: BlockKey) -> Option<(Located<'_>, usize)> {
+        match key.kind() {
             BlockKind::Paragraph | BlockKind::Table => match self.entry_of(key)? {
-                Entry::Paragraph(n) => self.paragraph_place(n)?,
-                Entry::Table(n) => self.table_place(n)?,
+                Entry::Paragraph(n) => self.paragraph_place(n),
+                Entry::Table(n) => self.table_place(n),
             },
             BlockKind::Row => {
                 let (table, row) = self.row_of(key)?;
                 let (at, k) = self.table_place(table)?;
                 let (r, _) = *Self::own_rows(&at, k).get(row)?;
-                (at, r)
+                Some((at, r))
             }
-        };
+        }
+    }
+
+    /// The place (child indexes from the root) of the block `key` names.
+    #[must_use]
+    pub fn place_of(&self, key: BlockKey) -> Option<Path> {
+        let (at, k) = self.block_of(key)?;
         Some(Self::path_of(&at, at.body.blocks.get(k)?))
+    }
+
+    /// The `w14:paraId` of the paragraph or row `key` names, as written (`None` for a table,
+    /// or a block written without one).
+    #[must_use]
+    pub fn raw_id_of(&self, key: BlockKey) -> Option<Arc<str>> {
+        let (at, k) = self.block_of(key)?;
+        at.body.blocks.get(k)?.raw.clone()
     }
 
     /// The id of the block `key` names, as the index names it.
