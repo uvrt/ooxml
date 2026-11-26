@@ -428,7 +428,8 @@ mod tests {
     /// gives it: the tests set no formatting).
     fn text_of(editor: &Editor, start: &str) -> String {
         let body = shape(editor);
-        body.lines().find(|t| t.starts_with(start)).unwrap().to_owned()
+        let line = body.lines().find(|t| t.starts_with(start)).unwrap();
+        line.trim_end_matches("[sectPr]").to_owned()
     }
 
     fn done(result: &ToolResult<Value>) -> Value {
