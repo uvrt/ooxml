@@ -608,24 +608,7 @@ impl Replayer {
     fn event(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
         let kind = event.get("event").and_then(Value::as_str).unwrap_or_default();
         match kind {
-            "open" => {
-                let Some(bytes) = event.get("input").and_then(|i| self.input(i)) else {
-                    return (Outcome::Waiting(Waits::Settings, true), true);
-                };
-                let text = |key: &str| event.get(key).and_then(Value::as_str);
-                let name = text("name").unwrap_or("document.docx");
-                let how = Opening {
-                    kind: text("kind").and_then(DocKind::parse),
-                    source: text("source"),
-                    doc_id: text("doc_id"),
-                    state: text("state"),
-                };
-                let have = match session.open_with(bytes, name, &how) {
-                    Ok(id) => (Some(Value::from(id.to_string())), None),
-                    Err(refused) => (None, Some(refused.to_string())),
-                };
-                (self.compare_app(stream, event, have), false)
-            }
+            "open" => (self.open(stream, session, event), false),
             "blob" => {
                 let bytes = event.get("input").and_then(|i| self.input(i));
                 let name = event.get("name").and_then(Value::as_str).unwrap_or("blob");
@@ -646,42 +629,7 @@ impl Replayer {
                 session.new_round();
                 (Outcome::Equal, false)
             }
-            "save" => {
-                let Some(doc) = event.get("doc").and_then(Value::as_str).and_then(DocId::parse) else {
-                    return (Outcome::Waiting(Waits::Settings, true), true);
-                };
-                match session.save(&doc) {
-                    Ok(saved) => {
-                        let have = serde_json::json!({"saved": {"doc": saved.doc, "name": saved.name,
-                            "kind": saved.kind.as_str(), "version": saved.version,
-                            "parts": part_digests(&saved.data), "state": saved.state}});
-                        (self.compare(stream, event, "saved", &have["saved"]), false)
-                    }
-                    Err(error) => (self.compare_app(stream, event, (None, Some(error.to_string()))), false),
-                }
-            }
-            "undo" | "redo" => {
-                let Some(doc) = event.get("doc").and_then(Value::as_str).and_then(DocId::parse) else {
-                    return (Outcome::Waiting(Waits::Settings, true), true);
-                };
-                if event.get("scope").is_some_and(|s| !s.is_null()) {
-                    return (Outcome::Waiting(Waits::Settings, true), true);
-                }
-                let steps = event
-                    .get("steps")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| usize::try_from(n).ok())
-                    .unwrap_or(1);
-                let caller = event
-                    .get("view")
-                    .and_then(|v| v.get("context"))
-                    .and_then(Value::as_object);
-                let have = match session.history(&doc, steps, kind == "redo", caller) {
-                    Ok(count) => (Some(Value::from(count)), None),
-                    Err(error) => (None, Some(error.to_string())),
-                };
-                (self.compare_app(stream, event, have), false)
-            }
+            "save" | "undo" | "redo" => self.history(stream, session, event, kind),
             "call" | "change" => self.call(stream, session, event),
             "final" => {
                 let mut documents = Map::new();
@@ -698,6 +646,63 @@ impl Replayer {
             "settings" => (Outcome::Waiting(Waits::Settings, true), true),
             _ => (Outcome::Waiting(Waits::Settings, true), true),
         }
+    }
+
+    /// The application's open, made again.
+    fn open(&self, stream: &str, session: &HostSession, event: &Value) -> Outcome {
+        let Some(bytes) = event.get("input").and_then(|i| self.input(i)) else {
+            return Outcome::Waiting(Waits::Settings, true);
+        };
+        let text = |key: &str| event.get(key).and_then(Value::as_str);
+        let name = text("name").unwrap_or("document.docx");
+        let how = Opening {
+            kind: text("kind").and_then(DocKind::parse),
+            source: text("source"),
+            doc_id: text("doc_id"),
+            state: text("state"),
+        };
+        let have = match session.open_with(bytes, name, &how) {
+            Ok(id) => (Some(Value::from(id.to_string())), None),
+            Err(refused) => (None, Some(refused.to_string())),
+        };
+        self.compare_app(stream, event, have)
+    }
+
+    /// The application's save, undo or redo (`kind`), made again: how it went, and whether
+    /// the case's later events depend on it.
+    fn history(&self, stream: &str, session: &HostSession, event: &Value, kind: &str) -> (Outcome, bool) {
+        let Some(doc) = event.get("doc").and_then(Value::as_str).and_then(DocId::parse) else {
+            return (Outcome::Waiting(Waits::Settings, true), true);
+        };
+        if kind == "save" {
+            let outcome = match session.save(&doc) {
+                Ok(saved) => {
+                    let have = serde_json::json!({"doc": saved.doc, "name": saved.name,
+                        "kind": saved.kind.as_str(), "version": saved.version,
+                        "parts": part_digests(&saved.data), "state": saved.state});
+                    self.compare(stream, event, "saved", &have)
+                }
+                Err(error) => self.compare_app(stream, event, (None, Some(error.to_string()))),
+            };
+            return (outcome, false);
+        }
+        if event.get("scope").is_some_and(|s| !s.is_null()) {
+            return (Outcome::Waiting(Waits::Settings, true), true);
+        }
+        let steps = event
+            .get("steps")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(1);
+        let caller = event
+            .get("view")
+            .and_then(|v| v.get("context"))
+            .and_then(Value::as_object);
+        let have = match session.history(&doc, steps, kind == "redo", caller) {
+            Ok(count) => (Some(Value::from(count)), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        (self.compare_app(stream, event, have), false)
     }
 
     fn call(&self, stream: &str, session: &HostSession, event: &Value) -> (Outcome, bool) {
