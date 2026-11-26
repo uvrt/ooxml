@@ -156,3 +156,21 @@ fn word_finds_styles_substitutes_and_reports_them() {
     assert_eq!(none.resolve("Calibri", false, false).grade, Grade::Missing);
     assert_ne!(none.epoch(), fonts.epoch());
 }
+
+#[test]
+fn a_character_map_of_groups_laid_over_each_other_is_refused_quickly() {
+    // The fuzzer's `glyph_ink` timeout, made up: a `cmap` whose format 12 subtable states
+    // 200 groups each claiming every code point (220 million insertions, were they made).
+    let data = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/cmap-groups-laid-over.ttf"
+    ))
+    .unwrap();
+    let started = std::time::Instant::now();
+    let face = Face::new(Arc::from(data), 0, "made up").unwrap();
+    assert_eq!(face.glyph('A'), None);
+    for slant in [0.0, 0.34] {
+        assert_eq!(face.ink("AVATAR Tyre", slant), None);
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+}
