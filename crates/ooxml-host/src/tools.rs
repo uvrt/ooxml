@@ -138,13 +138,13 @@ fn is_text(blob: &Blob) -> bool {
     if blob.data.starts_with(b"PK") || blob.mime.starts_with("image/") {
         return false;
     }
-    let head = &blob.data[..blob.data.len().min(65_536)];
+    let head = blob.data.get(..blob.data.len().min(65_536)).unwrap_or_default();
     let head = head.strip_prefix(b"\xef\xbb\xbf".as_slice()).unwrap_or(head);
     // (not final: a cut through a multi-byte character at the end is still text)
     let text = match std::str::from_utf8(head) {
         Ok(text) => text,
         Err(error) if error.error_len().is_none() => {
-            std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or_default()
+            std::str::from_utf8(head.get(..error.valid_up_to()).unwrap_or_default()).unwrap_or_default()
         }
         Err(_) => return false,
     };
