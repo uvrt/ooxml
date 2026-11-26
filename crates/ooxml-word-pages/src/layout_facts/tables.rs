@@ -6,176 +6,100 @@
 //!
 //! Must not: word an entry (the tool layer does) or cap a list.
 
-use super::tree::{self, is_w, row_of, W};
+use super::tree::{self, is_w, W};
 use super::Facts;
-use crate::page_parts::Part;
+use crate::line_text::TableRow;
 use ooxml_word_layout::facts::PageFacts;
 use ooxml_word_model::docx::cells::PartCells;
 use ooxml_word_model::docx::text::{shown_runs, View};
 use ooxml_word_model::docx::{at_path, StoryPart};
+use ooxml_word_model::ids::{Anchor, BlockKey};
 use ooxml_word_model::model::{Block, Table};
 use ooxml_word_model::resolve::Sources;
-use ooxml_word_model::value::Text;
 use ooxml_word_model::value::Value;
 use ooxml_xml::Element;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-/// One row's lines on each page it is drawn on: `(paragraph path, line number)`, sorted,
-/// each once.
-type RowLines<'f> = BTreeMap<usize, &'f [(Text, usize)]>;
+/// One row's lines on each page it is drawn on: `(paragraph key, line number)`, each once.
+type RowLines = BTreeMap<usize, HashSet<(BlockKey, usize)>>;
 
-/// One page's contribution to the tables as drawn (the layout half of the page tier,
-/// [`crate::laid_entry`]): the body's outermost tables it draws lines of, in the order
-/// first drawn, each with its rows' lines; and whether it draws a table's row at all.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RowsPart {
-    tables: Vec<RowsOnPage>,
-    draws_row: bool,
-}
-
-/// An outermost table's rows drawn on one page.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RowsOnPage {
-    /// The table's path (as [`row_of`] reads it).
-    path: Text,
-    /// Its rows (from 0) in order, each with its lines: `(paragraph path, line number)`,
-    /// sorted, each once.
-    rows: Vec<(usize, Vec<(Text, usize)>)>,
-}
-
-impl RowsPart {
-    /// The tables the page draws lines of, in the order first drawn.
-    pub fn tables(&self) -> &[RowsOnPage] {
-        &self.tables
-    }
-}
-
-impl RowsOnPage {
-    /// The table's path.
-    #[must_use]
-    pub fn path(&self) -> &str {
-        &self.path
-    }
-
-    /// Its rows (from 0) the page draws lines of, in order.
-    pub fn rows(&self) -> impl Iterator<Item = usize> + '_ {
-        self.rows.iter().map(|(row, _)| *row)
-    }
-}
-
-impl Part<PageFacts> for RowsPart {
-    fn of(page: &PageFacts) -> RowsPart {
-        let mut tables: Vec<RowsOnPage> = Vec::new();
-        for line in page.lines.iter().filter(|l| super::story_kind(&l.path) == "body") {
-            let Some((table, row)) = row_of(&line.path) else {
-                continue;
-            };
-            let k = match tables.iter().position(|t| &*t.path == table) {
-                Some(k) => k,
-                None => {
-                    tables.push(RowsOnPage {
-                        path: Text::from(table),
-                        rows: Vec::new(),
-                    });
-                    tables.len() - 1
-                }
-            };
-            let Some(rows) = tables.get_mut(k).map(|t| &mut t.rows) else {
-                continue;
-            };
-            let at = match rows.binary_search_by_key(&row, |(r, _)| *r) {
-                Ok(at) => at,
-                Err(at) => {
-                    rows.insert(at, (row, Vec::new()));
-                    at
-                }
-            };
-            if let Some((_, lines)) = rows.get_mut(at) {
-                let line = (Text::clone(&line.path), line.number);
-                if let Err(at) = lines.binary_search(&line) {
-                    lines.insert(at, line);
-                }
-            }
-        }
-        RowsPart {
-            tables,
-            draws_row: page.blocks.iter().any(|key| row_of(key).is_some()),
-        }
-    }
-
-    fn weight_of(page: &PageFacts) -> usize {
-        let each = std::mem::size_of::<RowsOnPage>()
-            + std::mem::size_of::<(usize, Vec<(Text, usize)>)>()
-            + std::mem::size_of::<(Text, usize)>();
-        let lines = page
-            .lines
-            .iter()
-            .filter(|l| l.path.contains("w:tbl["))
-            .map(|l| each + l.path.len());
-        std::mem::size_of::<RowsPart>() + lines.sum::<usize>()
-    }
-}
-
-/// The body's outermost tables as drawn, in the order first drawn.
+/// The body's outermost tables as drawn, by key, in the order first drawn.
 #[derive(Debug, Default)]
-pub struct DrawnTables<'f> {
-    /// Each table's path, in the order first drawn.
-    order: Vec<Text>,
+pub struct DrawnTables {
+    /// Each table, in the order first drawn.
+    order: Vec<BlockKey>,
     /// Each table's rows (from 0), each with its lines by 1-based page.
-    rows: HashMap<Text, BTreeMap<usize, RowLines<'f>>>,
+    rows: HashMap<BlockKey, BTreeMap<usize, RowLines>>,
     /// The 1-based pages each table draws a line or a rule on.
-    pages: HashMap<Text, BTreeSet<usize>>,
+    pages: HashMap<BlockKey, BTreeSet<usize>>,
 }
 
-impl<'f> DrawnTables<'f> {
-    fn page(&mut self, table: &str, page: usize) {
-        if !self.pages.contains_key(table) {
-            self.order.push(Text::from(table));
+impl DrawnTables {
+    fn page(&mut self, table: BlockKey, page: usize) {
+        if !self.pages.contains_key(&table) {
+            self.order.push(table);
         }
-        self.pages.entry(Text::from(table)).or_default().insert(page);
+        self.pages.entry(table).or_default().insert(page);
     }
 
-    /// Each table's path and pages, in the order first drawn.
-    pub fn tables(&self) -> impl Iterator<Item = (&str, &BTreeSet<usize>)> + '_ {
-        self.order.iter().filter_map(|t| Some((&**t, self.pages.get(t)?)))
+    /// Each table and its pages, in the order first drawn.
+    pub fn tables(&self) -> impl Iterator<Item = (BlockKey, &BTreeSet<usize>)> + '_ {
+        self.order.iter().filter_map(|t| Some((*t, self.pages.get(t)?)))
     }
 
-    /// The rows of the table at `path`, from 0, each with its lines by page.
+    /// The rows of the table `table`, from 0, each with its lines by page.
     #[must_use]
-    pub fn rows(&self, path: &str) -> Option<&BTreeMap<usize, RowLines<'f>>> {
-        self.rows.get(path)
+    pub fn rows(&self, table: BlockKey) -> Option<&BTreeMap<usize, RowLines>> {
+        self.rows.get(&table)
     }
 }
 
-/// The body's tables as drawn: every body line of a table's row (whether or not the
-/// version names its paragraph), and the rules of a page that draws a row -- a fold over
-/// the pages' contributions ([`RowsPart`], [`super::margins::TableInkPart`]).
+/// The body's tables as drawn: every body line of a row of a table right in the body
+/// ([`super::In::row`]), and the rules of a page that draws such a row -- each line's row
+/// read through the version's names, the rules from the pages' contributions
+/// ([`super::margins::TableInkPart`]).
 #[must_use]
-pub fn drawn_tables<'f>(facts: &'f Facts<'_>) -> DrawnTables<'f> {
+pub fn drawn_tables(facts: &Facts<'_>) -> DrawnTables {
     let mut out = DrawnTables::default();
-    for index in 0..facts.version().facts().pages.len() {
+    for (index, page) in facts.version().facts().pages.iter().enumerate() {
         let number = index + 1;
-        let Some(laid) = facts.laid(index) else { continue };
-        for table in laid.rows().tables() {
-            let rows = out.rows.entry(Text::from(table.path())).or_default();
-            for (row, lines) in &table.rows {
-                rows.entry(*row).or_default().insert(number, lines.as_slice());
-            }
-            out.page(table.path(), number);
+        let mut draws_row = false;
+        for (row, line) in table_lines(facts, page) {
+            draws_row = true;
+            let lines = out
+                .rows
+                .entry(row.table)
+                .or_default()
+                .entry(row.row)
+                .or_default()
+                .entry(number)
+                .or_default();
+            lines.insert(line);
+            out.page(row.table, number);
         }
-        if !laid.rows().draws_row {
+        if !draws_row {
             continue; // no table drawn: nothing painted to read its rules
         }
         let Some(entry) = facts.entry(index) else { continue };
         for table in entry.tables().0.iter().filter(|t| t.ruled) {
-            // the rules' table is kept by key in the page tier: named for the rows' paths
-            if let Some(path) = facts.names().path(ooxml_word_model::ids::Anchor::whole(table.table)) {
-                out.page(&path, number);
-            }
+            out.page(table.table, number);
         }
     }
     out
+}
+
+/// The body lines `page` draws of rows of tables right in the body, each with its row: its
+/// paragraph's key and its number there.
+pub(crate) fn table_lines(facts: &Facts<'_>, page: &PageFacts) -> Vec<(TableRow, (BlockKey, usize))> {
+    page.lines
+        .iter()
+        .filter_map(|line| {
+            let key = line.anchor?.block;
+            let row = facts.place_of(key)?.row?;
+            Some((row, (key, line.number)))
+        })
+        .collect()
 }
 
 /// A row (from 0) whose content is drawn on two pages or more.
@@ -229,8 +153,15 @@ pub fn tables(facts: &Facts<'_>, drawn: &DrawnTables) -> (Vec<SplitRow>, Vec<Unr
         if pages.len() < 2 || !facts.shown(pages.iter().copied()) {
             continue;
         }
-        let id = facts.version().id_of(table).unwrap_or_else(|| table.to_owned());
-        let element = tree::resolve(body, table);
+        let names = facts.names();
+        let id = names
+            .id(table)
+            .map(|id| id.to_string())
+            .or_else(|| names.path(Anchor::whole(table)))
+            .unwrap_or_default();
+        let element = names
+            .place_of(table)
+            .and_then(|place| Some((at_path(body.root(), &place)?, place.to_vec())));
         let header_rows = element.as_ref().map_or(0, |(e, _)| header_rows(e));
         let ordered: Vec<usize> = pages.iter().copied().collect();
         let rows = drawn.rows(table).unwrap_or(&empty);
@@ -313,12 +244,14 @@ pub(crate) fn columns(table: &Element) -> usize {
         .unwrap_or(0)
 }
 
-/// Each layout model table among `blocks` (nested ones too) by its path, the first of a
-/// path kept, in document order.
-pub(crate) fn index_tables<'b>(blocks: &'b [Block], out: &mut HashMap<&'b str, &'b Arc<Table>>) {
+/// Each layout model table among `blocks` (nested ones too) by its key, the first of a
+/// key kept, in document order.
+pub(crate) fn index_tables<'b>(blocks: &'b [Block], out: &mut HashMap<BlockKey, &'b Arc<Table>>) {
     for block in blocks {
         let Block::Table(table) = block else { continue };
-        out.entry(&*table.path).or_insert(table);
+        if let Some(key) = table.key {
+            out.entry(key).or_insert(table);
+        }
         for cells in table.rows.iter() {
             for story in cells.iter() {
                 index_tables(story, out);
@@ -346,7 +279,7 @@ pub(crate) fn sources<'v>(facts: &Facts<'v>) -> Sources<'v> {
 pub fn header_look(
     facts: &Facts<'_>,
     story: &StoryPart,
-    path: &str,
+    table: BlockKey,
     element: &Arc<Element>,
     place: &[u32],
 ) -> Vec<&'static str> {
@@ -360,7 +293,7 @@ pub fn header_look(
         return Vec::new();
     }
     let mut reasons = Vec::new();
-    let table = facts.model_table(path);
+    let table = facts.model_table(table);
     let src = sources(facts);
     if let Some(table) = table {
         let first_row = table

@@ -1,6 +1,6 @@
 //! Owns: the layout facts a check reads (docx-agent's `layout.DocumentLayout` over
 //! docx2svg's pages, lane L3d): every page -- blank ones included -- with what the
-//! paginator knows of it, its frame, the body's lines it draws by paragraph path (top,
+//! paginator knows of it, its frame, the body's lines it draws by paragraph key (top,
 //! pitch, baseline, column) and the body blocks it draws something of
 //! ([`PageFacts::blocks`], docx2svg's `Page.blocks`); a page's header's and footer's
 //! lines ([`story_line_facts`], laid out with the page's field values, not painted); where
@@ -9,8 +9,10 @@
 //! paginator read them ([`BlockKeeps`]). One page's facts are made on their own
 //! ([`PageFacts::of`]), once per layout ([`DocumentLayout::page_facts`]).
 //!
-//! Paths are docx2svg's: a paragraph's `w:body/w:p[3]`, a cell's
-//! `w:body/w:tbl[1]/w:tr[2]/w:tc[1]/w:p[1]`. Mapping them to a tool's ids is the caller's.
+//! Blocks are named by key ([`Anchor`]): a page whose facts a relayout keeps keeps them
+//! while its blocks' keys are the same, wherever their paths moved. Naming them -- a path
+//! (docx2svg's `w:body/w:tbl[1]/w:tr[2]/w:tc[1]/w:p[1]`) or a tool's id -- is the edge's,
+//! through the version's [`VersionNames`].
 //!
 //! Must not: lay anything out, judge what it reports (verdicts are the check's), or hold
 //! anything but the facts of one layout.
@@ -23,9 +25,9 @@ use crate::paginate::PageInfo;
 use crate::px::Px;
 use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
-use ooxml_word_model::model::Block;
+use ooxml_word_model::model::{Block, Paragraph};
 use ooxml_word_model::value::Text;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// One line a page draws, as a check reads it.
@@ -33,11 +35,12 @@ use std::sync::Arc;
 pub struct LineFact {
     /// Where it comes from in the flow.
     pub source: LineSource,
-    /// Its paragraph's path.
-    pub path: Text,
-    /// Its paragraph's key, beside its path (`None`: a paragraph no story's index holds,
-    /// such as the endnotes' continuation separator the layout makes).
+    /// Its paragraph's key (`None`: a paragraph no story's index holds, a notes separator
+    /// the layout makes).
     pub anchor: Option<Anchor>,
+    /// The layout model's path of a paragraph the layout makes (a notes separator, which no
+    /// index holds): what an edge names its line by; `None` for a line with a key.
+    pub made: Option<Text>,
     /// Its number in the paragraph.
     pub number: usize,
     /// The exact top of its pitch, px from the page's top.
@@ -61,23 +64,23 @@ pub struct PageFacts {
     pub frame: PageFrame,
     /// The body's lines it draws, in drawing order.
     pub lines: Vec<LineFact>,
-    /// The keys of the body's blocks it draws something of (`Page.blocks`): each
-    /// paragraph, table, row and cell, once each, in drawing order.
-    pub blocks: Vec<Text>,
-    /// The same blocks by anchor, beside their paths (a cell its table's
-    /// [`ooxml_word_model::ids::Sub::Cell`]): those of its lines' paragraphs that are
-    /// anchored, in drawing order, each named as its path in `blocks`.
-    pub anchors: Vec<Anchor>,
+    /// The body's blocks it draws something of (`Page.blocks`), by anchor: each paragraph,
+    /// table, row and cell (a cell as its table's [`ooxml_word_model::ids::Sub::Cell`]) of
+    /// its lines' paragraphs, once each, in drawing order.
+    pub blocks: Vec<Anchor>,
 }
 
 /// A header's or footer's line a page draws, as a check reads it: its story's kind and
-/// part, and the line (its path the story's paragraph's, `w:hdr/w:p[1]`).
+/// part, and the line (its paragraph's path, `w:hdr/w:p[1]`, beside it: the page's
+/// header and footer are laid out for the page, not kept by key).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoryLineFact {
     /// `header` or `footer`.
     pub kind: &'static str,
     /// Its part (`word/header1.xml`).
     pub part: Text,
+    /// Its paragraph's path.
+    pub path: Text,
     /// The line.
     pub line: LineFact,
 }
@@ -92,14 +95,14 @@ pub fn story_line_facts(parts: &crate::geometry::stories::PageParts) -> Vec<Stor
             let Some(paragraph) = line.block.and_then(|b| paragraphs.get(b)) else {
                 continue;
             };
-            let (path, anchor) = (paragraph.path.clone(), paragraph.key.map(Anchor::whole));
             out.push(StoryLineFact {
                 kind: story.kind,
                 part: story.part.clone(),
+                path: paragraph.path.clone(),
                 line: LineFact {
                     source: line.source,
-                    path,
-                    anchor,
+                    anchor: paragraph.key.map(Anchor::whole),
+                    made: paragraph.key.is_none().then(|| paragraph.path.clone()),
                     number: line.number,
                     top: line.top,
                     pitch: line.pitch,
@@ -160,81 +163,54 @@ pub struct LayoutFacts {
     pub keeps: BTreeMap<usize, BlockKeeps>,
 }
 
-/// The body's blocks a body path is in, outermost first (`paths.block_keys`): every prefix
-/// ending at a paragraph, table, row or cell step, up to the first paragraph.
-pub fn block_keys(path: &str) -> Vec<String> {
-    let mut steps = path.split('/');
-    if steps.next() != Some("w:body") {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    let mut prefix = String::from("w:body");
-    for step in steps {
-        prefix.push('/');
-        prefix.push_str(step);
-        let name = step.split('[').next().unwrap_or("");
-        let local = name.rsplit(':').next().unwrap_or(name);
-        match local {
-            "p" => {
-                out.push(prefix.clone());
-                break;
-            }
-            "tbl" | "tr" | "tc" => out.push(prefix.clone()),
-            "sdt" | "sdtContent" | "customXml" => {}
-            _ => break,
-        }
-    }
-    out
+/// What a drawn line can be of: the body's paragraphs (cells included) and its top-level
+/// blocks, and the endnotes' continuation separator, where the layout draws one.
+#[derive(Debug, Clone)]
+pub(crate) struct LineKeys {
+    paragraphs: Arc<[Arc<Paragraph>]>,
+    opening: Option<Arc<Paragraph>>,
 }
 
-/// The paths of what a drawn line can be of: the body's paragraphs (cells included), its
-/// top-level blocks, and the endnotes' continuation separator (made once per layout).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct LinePaths {
-    paragraphs: Vec<(Text, Option<BlockKey>)>,
-    opening: Option<Text>,
-}
-
-impl LinePaths {
-    /// The paths of `layout`'s lines.
-    pub(crate) fn of(layout: &DocumentLayout) -> LinePaths {
-        let paragraphs = layout.body_paragraphs();
+impl LineKeys {
+    /// What `layout`'s lines can be of.
+    pub(crate) fn of(layout: &DocumentLayout) -> LineKeys {
         let opening = separator(&layout.document, "continuationSeparator", NotesPart::Endnotes)
             .iter()
             .find_map(|b| match b {
-                Block::Paragraph(p) => Some(p.path.clone()),
+                Block::Paragraph(p) => Some(Arc::clone(p)),
                 Block::Table(_) => None,
             });
-        LinePaths {
-            paragraphs: paragraphs.iter().map(|p| (p.path.clone(), p.key)).collect(),
+        LineKeys {
+            paragraphs: Arc::clone(layout.body_paragraphs()),
             opening,
         }
     }
 
-    fn path(&self, line: LineOf, body: &[Block]) -> Option<Text> {
-        self.named(line, body).map(|(path, _)| path)
-    }
-
-    /// The path of what `line` is of, and its key.
-    fn named(&self, line: LineOf, body: &[Block]) -> Option<(Text, Option<BlockKey>)> {
+    /// The paragraph `line` is of, where the layout names one.
+    fn paragraph<'k>(&'k self, line: LineOf, body: &'k [Block]) -> Option<&'k Paragraph> {
         match (line.source, line.block, line.body) {
-            (LineSource::Opening { .. }, ..) => self.opening.clone().map(|p| (p, None)),
-            (_, Some(block), _) => self.paragraphs.get(block).cloned(),
+            (LineSource::Opening { .. }, ..) => self.opening.as_deref(),
+            (_, Some(block), _) => self.paragraphs.get(block).map(|p| &**p),
             (_, None, Some(index)) => match body.get(index) {
-                Some(Block::Paragraph(p)) => Some((p.path.clone(), p.key)),
+                Some(Block::Paragraph(p)) => Some(p),
                 _ => None,
             },
             (_, None, None) => None,
         }
     }
+
+    /// The key of the paragraph `line` is of, where an index holds it.
+    fn key(&self, line: LineOf, body: &[Block]) -> Option<BlockKey> {
+        self.paragraph(line, body)?.key
+    }
 }
 
-fn line_fact(line: &DrawnLine, paths: &LinePaths, body: &[Block]) -> Option<LineFact> {
-    let (path, key) = paths.named(LineOf::from(line), body)?;
+fn line_fact(line: &DrawnLine, keys: &LineKeys, body: &[Block]) -> Option<LineFact> {
+    let paragraph = keys.paragraph(LineOf::from(line), body)?;
     Some(LineFact {
         source: line.source,
-        path,
-        anchor: key.map(Anchor::whole),
+        anchor: paragraph.key.map(Anchor::whole),
+        made: paragraph.key.is_none().then(|| paragraph.path.clone()),
         number: line.number,
         top: line.top,
         pitch: line.pitch,
@@ -247,37 +223,24 @@ impl PageFacts {
     /// Page `page`'s facts (0-based, blank pages counted); `None` past the last.
     pub fn of(layout: &DocumentLayout, page: usize) -> Option<PageFacts> {
         let geometry = layout.page_geometry(page)?;
-        let paths = layout.line_paths();
+        let keys = layout.line_keys();
         let body = &layout.document.body;
-        let lines: Vec<LineFact> = geometry
-            .lines
-            .iter()
-            .filter_map(|l| line_fact(l, paths, body))
-            .collect();
-        let mut blocks: Vec<Text> = Vec::new();
-        for line in &lines {
-            for key in block_keys(&line.path) {
-                if !blocks.iter().any(|b| **b == *key) {
-                    blocks.push(Text::from(key.as_str()));
-                }
-            }
-        }
-        let anchors = page_anchors(&layout.document.names, &lines);
+        let lines: Vec<LineFact> = geometry.lines.iter().filter_map(|l| line_fact(l, keys, body)).collect();
+        let blocks = page_blocks(&layout.document.names, &lines);
         Some(PageFacts {
             page,
             info: geometry.info,
             frame: geometry.frame,
             lines,
             blocks,
-            anchors,
         })
     }
 }
 
 /// The body blocks `lines` draw something of, by anchor, once each in drawing order: each
-/// anchored body line's paragraph and the tables, rows and cells it is in, named through
-/// the version's `names` (each the path [`block_keys`] gives it, asserted in debug builds).
-fn page_anchors(names: &VersionNames, lines: &[LineFact]) -> Vec<Anchor> {
+/// anchored body line's paragraph and the tables, rows and cells it is in, found through
+/// the version's `names`.
+fn page_blocks(names: &VersionNames, lines: &[LineFact]) -> Vec<Anchor> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut done = HashSet::new();
@@ -291,11 +254,6 @@ fn page_anchors(names: &VersionNames, lines: &[LineFact]) -> Vec<Anchor> {
         let Some(chain) = names.blocks_of(anchor.block) else {
             continue;
         };
-        debug_assert_eq!(
-            chain.iter().map(|a| names.path(*a)).collect::<Vec<_>>(),
-            block_keys(&line.path).into_iter().map(Some).collect::<Vec<_>>(),
-            "{anchor:?}'s blocks are named as their paths"
-        );
         out.extend(chain.into_iter().filter(|a| seen.insert(*a)));
     }
     out
@@ -316,20 +274,13 @@ impl LayoutFacts {
 
     /// The facts of `layout`, laid out again from `before`, whose facts are `known`: a page
     /// it kept as `before` laid it out -- the very same laid page, drawing the very same
-    /// flow items, with the same number and story, its frame made of the same section
-    /// properties and header and footer heights, the body's paragraphs at the same paths -- takes its facts from `known`; the rest
-    /// are made. Equal to [`LayoutFacts::of`] (an edit pays for the pages it moved).
+    /// flow items of blocks with the same keys, with the same number and story, its frame
+    /// made of the same section properties and header and footer heights -- takes its facts
+    /// from `known`; the rest are made. Equal to [`LayoutFacts::of`] (an edit pays for the
+    /// pages it moved).
     pub fn after(layout: &DocumentLayout, before: &DocumentLayout, known: &LayoutFacts) -> LayoutFacts {
-        let same_paths = layout.mode15 == before.mode15 && layout.line_paths() == before.line_paths();
         let pages: Vec<Arc<PageFacts>> = (0..layout.page_count())
-            .filter_map(|k| {
-                let kept = if same_paths {
-                    kept_page(layout, before, known, k)
-                } else {
-                    None
-                };
-                kept.or_else(|| PageFacts::of(layout, k).map(Arc::new))
-            })
+            .filter_map(|k| kept_page(layout, before, known, k).or_else(|| PageFacts::of(layout, k).map(Arc::new)))
             .collect();
         LayoutFacts {
             pages,
@@ -338,13 +289,13 @@ impl LayoutFacts {
         }
     }
 
-    /// Where the paragraph at `path` is drawn: one placement per page and text column, in
-    /// page order and, on a page, in the order its columns are first drawn (`where`).
-    pub fn placements(&self, path: &str) -> Vec<Placement> {
+    /// Where the paragraph `key` is drawn: one placement per page and text column, in page
+    /// order and, on a page, in the order its columns are first drawn (`where`).
+    pub fn placements(&self, key: BlockKey) -> Vec<Placement> {
         let mut out: Vec<Placement> = Vec::new();
         for page in &self.pages {
             let first = out.len();
-            for line in page.lines.iter().filter(|l| &*l.path == path) {
+            for line in page.lines.iter().filter(|l| l.anchor.map(|a| a.block) == Some(key)) {
                 let column = line.column.unwrap_or(0);
                 let bottom = line.top + line.pitch;
                 let found = out
@@ -369,39 +320,39 @@ impl LayoutFacts {
         out
     }
 
-    /// Each paragraph path's first page (0-based): the first page whose lines draw it. What
-    /// [`DocumentLayout::first_pages`] makes without placing a line.
-    pub fn first_pages(&self) -> std::collections::HashMap<Text, usize> {
-        let mut first = std::collections::HashMap::new();
+    /// Each paragraph's first page (0-based), by key: the first page whose lines draw it.
+    /// What [`DocumentLayout::first_pages`] makes without placing a line.
+    pub fn first_pages(&self) -> HashMap<BlockKey, usize> {
+        let mut first = HashMap::new();
         for page in &self.pages {
-            for line in &page.lines {
-                first.entry(Text::clone(&line.path)).or_insert(page.page);
+            for key in page.lines.iter().filter_map(|l| l.anchor) {
+                first.entry(key.block).or_insert(page.page);
             }
         }
         first
     }
 
-    /// Every 0-based page a block (its key: a paragraph's, table's, row's or cell's path)
-    /// draws something on, in order (`pages_of`).
-    pub fn pages_of(&self, key: &str) -> Vec<usize> {
+    /// Every 0-based page a block (a paragraph, table, row, or a cell as its table's
+    /// [`ooxml_word_model::ids::Sub::Cell`]) draws something on, in order (`pages_of`).
+    pub fn pages_of(&self, block: Anchor) -> Vec<usize> {
         self.pages
             .iter()
-            .filter(|p| p.blocks.iter().any(|b| &**b == key))
+            .filter(|p| p.blocks.contains(&block))
             .map(|p| p.page)
             .collect()
     }
 
-    /// [`LayoutFacts::pages_of`] for each of `keys`, in their order, in one pass over the
+    /// [`LayoutFacts::pages_of`] for each of `blocks`, in their order, in one pass over the
     /// pages.
-    pub fn pages_of_each(&self, keys: &[&str]) -> Vec<Vec<usize>> {
-        let mut wanted: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
-        for (k, key) in keys.iter().enumerate() {
-            wanted.entry(key).or_default().push(k);
+    pub fn pages_of_each(&self, blocks: &[Anchor]) -> Vec<Vec<usize>> {
+        let mut wanted: HashMap<Anchor, Vec<usize>> = HashMap::new();
+        for (k, block) in blocks.iter().enumerate() {
+            wanted.entry(*block).or_default().push(k);
         }
-        let mut out = vec![Vec::new(); keys.len()];
+        let mut out = vec![Vec::new(); blocks.len()];
         for page in &self.pages {
             for block in &page.blocks {
-                for &k in wanted.get(&**block).map_or(&[][..], Vec::as_slice) {
+                for &k in wanted.get(block).map_or(&[][..], Vec::as_slice) {
                     if let Some(pages) = out.get_mut(k) {
                         pages.push(page.page);
                     }
@@ -412,23 +363,23 @@ impl LayoutFacts {
     }
 }
 
-/// Each body paragraph path's first page (0-based) in `layout`: its pages' lines as
+/// Each body paragraph's first page (0-based) in `layout`, by key: its pages' lines as
 /// [`LayoutFacts::of`] reads them -- those of a page of a known section -- found without
 /// placing a line ([`crate::geometry::body_lines_of`]).
-pub(crate) fn first_pages_of(layout: &DocumentLayout) -> std::collections::HashMap<Text, usize> {
-    let mut first = std::collections::HashMap::new();
-    for (page, paths) in layout.page_paths().iter().enumerate() {
-        for path in paths.iter() {
-            first.entry(Text::clone(path)).or_insert(page);
+pub(crate) fn first_pages_of(layout: &DocumentLayout) -> HashMap<BlockKey, usize> {
+    let mut first = HashMap::new();
+    for (page, keys) in layout.page_keys().iter().enumerate() {
+        for key in keys.iter() {
+            first.entry(*key).or_insert(page);
         }
     }
     first
 }
 
-/// The body paragraph paths page `page` of `layout` draws lines of, each once, in the order
-/// first drawn (none for a blank page or one of an unknown section): the page's part of
-/// [`first_pages_of`].
-pub(crate) fn page_paths_of(layout: &DocumentLayout, page: usize) -> Arc<[Text]> {
+/// The keys of the body paragraphs page `page` of `layout` draws lines of, each once, in
+/// the order first drawn (none for a blank page or one of an unknown section): the page's
+/// part of [`first_pages_of`].
+pub(crate) fn page_keys_of(layout: &DocumentLayout, page: usize) -> Arc<[BlockKey]> {
     let section = layout
         .pagination
         .info
@@ -437,32 +388,83 @@ pub(crate) fn page_paths_of(layout: &DocumentLayout, page: usize) -> Arc<[Text]>
     let (Some(section), Some(laid)) = (section, layout.laid_page(page)) else {
         return Arc::from(Vec::new());
     };
-    let (paths, body) = (layout.line_paths(), &layout.document.body);
+    let (keys, body) = (layout.line_keys(), &layout.document.body);
     let height = crate::geometry::device_px(section.props.page_size.height);
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     crate::geometry::body_lines_of(layout, laid, height)
         .into_iter()
-        .filter_map(|line| paths.path(line, body))
-        .filter(|path| seen.insert(Text::clone(path)))
+        .filter_map(|line| keys.key(line, body))
+        .filter(|key| seen.insert(*key))
         .collect()
 }
 
-/// Page `page`'s paths ([`page_paths_of`]) as `before` (laid out before `layout`) made
-/// them, where `layout` kept the page as `before` laid it out: the very same laid page, of
-/// the same place and section, its page as tall; the paths of the body's paragraphs are
-/// the caller's to have compared.
-pub(crate) fn kept_page_paths(
+/// Page `page`'s keys ([`page_keys_of`]) as `before` (laid out before `layout`) made them,
+/// where `layout` kept the page as `before` laid it out: the very same laid page, of the
+/// same place and section, its page as tall, its blocks' keys the same
+/// ([`same_page_blocks`]).
+pub(crate) fn kept_page_keys(
     layout: &DocumentLayout,
     before: &DocumentLayout,
-    known: &[Arc<[Text]>],
+    known: &[Arc<[BlockKey]>],
     page: usize,
-) -> Option<Arc<[Text]>> {
+) -> Option<Arc<[BlockKey]>> {
     let info = layout.pagination.info.get(page)?;
     let height = |l: &DocumentLayout| l.sections.get(info.section).map(|s| s.props.page_size.height);
-    let same = std::sync::Arc::ptr_eq(laid_arc(layout, page)?, laid_arc(before, page)?)
+    let laid = laid_arc(layout, page)?;
+    let same = layout.mode15 == before.mode15
+        && Arc::ptr_eq(laid, laid_arc(before, page)?)
         && before.pagination.info.get(page) == Some(info)
-        && height(layout) == height(before);
+        && height(layout) == height(before)
+        && same_page_blocks(layout, before, laid);
     same.then(|| known.get(page).cloned()).flatten()
+}
+
+/// Whether the blocks the flow items of `laid` (a page both layouts lay out the same)
+/// draw have the same keys in both: each item's top-level body block, every paragraph in
+/// it, checked by key (ADR-008: a page kept across versions is checked by its blocks'
+/// keys, never by their paths or addresses).
+fn same_page_blocks(layout: &DocumentLayout, before: &DocumentLayout, laid: &crate::paginate::LaidPage) -> bool {
+    let (now, then) = (&layout.document.body, &before.document.body);
+    let mut items: Vec<usize> = laid
+        .lines
+        .iter()
+        .map(|l| l.item)
+        .chain(laid.rows.iter().map(|r| r.item))
+        .collect();
+    items.dedup();
+    items.into_iter().all(|item| {
+        let body = match layout.flow.items.get(item) {
+            Some(FlowItem::Para(p)) => {
+                let cap = p.drop_cap.as_ref().map(|d| d.body);
+                return [Some(p.body), cap]
+                    .into_iter()
+                    .flatten()
+                    .all(|k| same_keys(now.get(k), then.get(k)));
+            }
+            Some(FlowItem::Table(t)) => t.body,
+            Some(FlowItem::Stop(_)) | None => return true,
+        };
+        same_keys(now.get(body), then.get(body))
+    })
+}
+
+/// Whether two blocks, and every block in them, have the same keys.
+fn same_keys(a: Option<&Block>, b: Option<&Block>) -> bool {
+    match (a, b) {
+        (Some(Block::Paragraph(a)), Some(Block::Paragraph(b))) => a.key == b.key,
+        (Some(Block::Table(a)), Some(Block::Table(b))) => {
+            Arc::ptr_eq(a, b)
+                || (a.key == b.key
+                    && a.rows.len() == b.rows.len()
+                    && a.rows.iter().zip(b.rows.iter()).all(|(x, y)| {
+                        x.len() == y.len()
+                            && x.iter().zip(y.iter()).all(|(c, d)| {
+                                c.len() == d.len() && c.iter().zip(d.iter()).all(|(e, f)| same_keys(Some(e), Some(f)))
+                            })
+                    }))
+        }
+        _ => false,
+    }
 }
 
 /// The top-level body block `layout` stopped at, if it did.
@@ -476,8 +478,8 @@ fn stopped(layout: &DocumentLayout) -> Option<usize> {
 }
 
 /// Page `page`'s facts as `known` (`before`'s) holds them, where `layout` kept the page as
-/// `before` laid it out (see [`LayoutFacts::after`]); the paths of the body's paragraphs
-/// are the caller's to have compared. The very same facts, shared.
+/// `before` laid it out, its blocks' keys the same (see [`LayoutFacts::after`]). The very
+/// same facts, shared.
 fn kept_page(
     layout: &DocumentLayout,
     before: &DocumentLayout,
@@ -488,7 +490,8 @@ fn kept_page(
     let old = laid_arc(before, page)?;
     let facts = known.pages.get(page).filter(|f| f.page == page)?;
     let info = layout.pagination.info.get(page)?;
-    let same = std::sync::Arc::ptr_eq(laid, old)
+    let same = layout.mode15 == before.mode15
+        && Arc::ptr_eq(laid, old)
         && before.pagination.info.get(page) == Some(info)
         && facts.info == *info
         && !facts
@@ -501,7 +504,8 @@ fn kept_page(
             .iter()
             .map(|l| l.item)
             .chain(laid.rows.iter().map(|r| r.item))
-            .all(|item| same_flow_item(layout.flow.items.get(item), before.flow.items.get(item)));
+            .all(|item| same_flow_item(layout.flow.items.get(item), before.flow.items.get(item)))
+        && same_page_blocks(layout, before, laid);
     same.then(|| Arc::clone(facts))
 }
 
@@ -568,24 +572,4 @@ fn keeps(layout: &DocumentLayout) -> BTreeMap<usize, BlockKeeps> {
         }
     }
     out
-}
-
-#[cfg(test)]
-mod tests {
-    use super::block_keys;
-
-    #[test]
-    fn a_cell_line_is_in_its_table_row_and_cell() {
-        assert_eq!(
-            block_keys("w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]"),
-            vec![
-                "w:body/w:tbl[2]",
-                "w:body/w:tbl[2]/w:tr[3]",
-                "w:body/w:tbl[2]/w:tr[3]/w:tc[1]",
-                "w:body/w:tbl[2]/w:tr[3]/w:tc[1]/w:p[1]",
-            ]
-        );
-        assert_eq!(block_keys("w:body/w:sdt[1]/w:sdtContent/w:p[2]/w:r[1]").len(), 1);
-        assert!(block_keys("w:hdr/w:p[1]").is_empty());
-    }
 }

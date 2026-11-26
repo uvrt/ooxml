@@ -118,7 +118,7 @@ fn is_empty(facts: &Facts<'_>, block: &Block<'_>) -> bool {
     if block.kind != BlockKind::Paragraph || has_content(block.element) {
         return false;
     }
-    let lines = facts.lines_of(&block.path);
+    let lines = facts.lines_of(block.key);
     if lines.is_empty() {
         return false;
     }
@@ -181,7 +181,7 @@ fn spacer(
         _ => {
             let bottom = run
                 .iter()
-                .flat_map(|b| facts.lines_of(&b.path))
+                .flat_map(|b| facts.lines_of(b.key))
                 .filter(|d| d.page == page)
                 .map(|d| d.line.top + d.line.pitch)
                 .max()?;

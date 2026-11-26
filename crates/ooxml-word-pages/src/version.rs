@@ -107,44 +107,52 @@ impl LaidVersion {
         names.id(key).map(|id| id.to_string())
     }
 
-    /// The id the tool names a body block by in this version, through the version's names
-    /// from its key `key`; a block with no key, or not the body's, by its body path `path`
-    /// ([`LaidVersion::id_of`]).
-    pub fn id_named(&self, key: Option<BlockKey>, path: &str) -> Option<Text> {
-        let Some(key) = key.filter(|k| k.story() == StoryIx::BODY) else {
-            return self.id_of(path).map(|id| Text::from(id.as_str()));
-        };
+    /// The id the tool names the body block `key` by in this version, through the version's
+    /// names; `None` for a block with no key or not the body's.
+    pub fn id_named(&self, key: Option<BlockKey>) -> Option<Text> {
+        let key = key.filter(|k| k.story() == StoryIx::BODY)?;
         self.block_names().id(key).map(|id| Text::from(id.to_string().as_str()))
     }
 
-    /// Whether a body block the tool names in this version is `key`'s, without naming it:
-    /// through the version's names; a block with no key, or not the body's, by its body path
-    /// `path` ([`LaidVersion::is_named`]).
-    pub fn is_named_by(&self, key: Option<BlockKey>, path: &str) -> bool {
-        match key.filter(|k| k.story() == StoryIx::BODY) {
-            Some(key) => self.block_names().holds(key),
-            None => self.is_named(path),
+    /// Whether the body block `key` is one the tool names in this version, without naming
+    /// it; never a block with no key or not the body's.
+    pub fn is_named_by(&self, key: Option<BlockKey>) -> bool {
+        key.filter(|k| k.story() == StoryIx::BODY)
+            .is_some_and(|key| self.block_names().holds(key))
+    }
+
+    /// The layout model's path of the paragraph a line of its facts is of, as an edge
+    /// writes it: named through the version's names; a separator the layout makes by the
+    /// path it was made with.
+    pub fn line_path(&self, line: &ooxml_word_layout::facts::LineFact) -> Option<String> {
+        match line.anchor {
+            Some(anchor) => self.block_names().path(anchor),
+            None => line.made.as_deref().map(str::to_owned),
         }
     }
 
-    /// The body blocks page `facts` draws something of, as written (`Page.blocks`): named
-    /// through the version's names from their anchors where every one is anchored (each its
-    /// path, asserted in debug builds), else their paths.
-    pub fn page_blocks(&self, facts: &PageFacts) -> Vec<String> {
-        if facts.anchors.len() != facts.blocks.len() {
-            return facts.blocks.iter().map(ToString::to_string).collect();
-        }
+    /// The key of the paragraph the layout model's path `path` names: a body paragraph's
+    /// (`w:body/w:p[3]`) or a note's (`w:endnote[@w:id=2]/w:p[1]`), as an edge is handed
+    /// one.
+    pub fn key_of_path(&self, path: &str) -> Option<BlockKey> {
         let names = self.block_names();
-        facts
-            .anchors
-            .iter()
-            .zip(&facts.blocks)
-            .map(|(anchor, path)| {
-                let named = names.path(*anchor);
-                debug_assert_eq!(named.as_deref(), Some(&**path), "{anchor:?} is named as its path");
-                named.unwrap_or_else(|| path.to_string())
-            })
-            .collect()
+        let story = if path.starts_with("w:body") {
+            StoryIx::BODY
+        } else if path.starts_with("w:endnote[") {
+            names.story_named("endnotes")?
+        } else if path.starts_with("w:footnote[") {
+            names.story_named("footnotes")?
+        } else {
+            return None;
+        };
+        names.key_at_path(story, path)
+    }
+
+    /// The body blocks page `facts` draws something of, as written (`Page.blocks`): named
+    /// through the version's names.
+    pub fn page_blocks(&self, facts: &PageFacts) -> Vec<String> {
+        let names = self.block_names();
+        facts.blocks.iter().filter_map(|anchor| names.path(*anchor)).collect()
     }
 
     /// Whether the body path `path` names a paragraph, table or row the tool names in this
@@ -189,11 +197,11 @@ impl LaidVersion {
     }
 
     /// Where the paragraph the id `id` names is inside a body paragraph's content (a text
-    /// box's paragraph, which the body's lines do not draw): the body path of the paragraph
-    /// holding it (`w:body/w:p[2]`), and its own place (child indexes from the root, every
+    /// box's paragraph, which the body's lines do not draw): the key of the paragraph
+    /// holding it, and its own place (child indexes from the root, every
     /// node counted), which a painted line's path is matched with
     /// ([`LaidVersion::place_of_path`]). `None` for any other id.
-    pub fn in_paragraph(&self, id: &str) -> Option<(Text, Vec<u32>)> {
+    pub fn in_paragraph(&self, id: &str) -> Option<(BlockKey, Vec<u32>)> {
         let names = self.block_names();
         let part = names.part(StoryIx::BODY)?;
         let Some(ooxml_word_model::ids::Entry::Paragraph(k)) = part.ids.get(id) else {
@@ -209,8 +217,7 @@ impl LaidVersion {
                     return None;
                 }
                 let host = part.ids.key_at(StoryIx::BODY, place.get(..=depth)?)?;
-                let path = names.path(Anchor::whole(host))?;
-                return Some((Text::from(path.as_str()), place.to_vec()));
+                return Some((host, place.to_vec()));
             }
         }
         None

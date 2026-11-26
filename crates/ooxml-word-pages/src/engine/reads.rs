@@ -1,7 +1,7 @@
 //! Owns: a page as a check reads it ([`PageEngine::page_read`]): its entry in the page
 //! tier (its read and its facts' contributions), taken from the generation's
 //! [`crate::page_reads::ReadMemo`] where a version before read the page laid out the same,
-//! in the same context, of the same blocks at the same places; else painted (not kept) and read, and the
+//! in the same context, of blocks with the same keys; else painted (not kept) and read, and the
 //! entry kept. And each page's context ([`PageEngine::page_contexts`]), made
 //! once per version: what a page's read and its digests depend on beyond its laid page.
 //!
@@ -13,7 +13,7 @@ use crate::laid_entry::LaidEntry;
 use crate::page_context::PageContext;
 use crate::page_entry::PageEntry;
 use crate::page_read::PageRead;
-use crate::page_reads::{page_blocks, places, Found, ReadOf, Split};
+use crate::page_reads::{page_blocks, Found, ReadOf, Split};
 use crate::text_boxes::{text_boxes, TextBoxJob};
 use crate::version::LaidVersion;
 use ooxml_word_layout::paint::{paint_stories, PaintContext};
@@ -24,7 +24,8 @@ use std::sync::Arc;
 impl PageEngine {
     /// Page `page` of `version` as a check reads it ([`crate::page_read`]): its lines' text
     /// and the boxes beside them, from one paint (not kept), or as a version before read
-    /// the page where it is laid out the same in the same context at the same places --
+    /// the page where it is laid out the same in the same context, of blocks with the same
+    /// keys --
     /// with only its stories painted again where they show other values.
     pub fn page_read(&mut self, version: &LaidVersion, page: usize) -> Option<Arc<PageEntry>> {
         let key = crate::page_said::page_key(&version.layout, page);
@@ -37,7 +38,6 @@ impl PageEngine {
             context,
             epoch: version.epoch,
             model: version.context,
-            places: places(&version.layout, &key.items),
             blocks: page_blocks(&version.layout, &key.items),
         });
         let Some(of) = of else {

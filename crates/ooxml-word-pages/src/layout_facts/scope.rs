@@ -11,11 +11,12 @@
 //!
 //! Must not: word a refusal (the tool layer does), or read the layout but for the pages.
 
-use super::tree::{is_w, table_paths, top_block_path};
+use super::tree::{is_w, top_of};
 use crate::LaidVersion;
 use ooxml_word_model::address::{scope_paragraphs, Address, AddressError};
 use ooxml_word_model::docx::drawings::all_drawings;
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::ids::{BlockKey, BlockKind as KeyKind, StoryIx, Sub};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Why a range is refused.
@@ -169,23 +170,26 @@ impl Scope {
     /// (`[]` for a range nothing of which is drawn).
     #[must_use]
     pub fn pages(&self, version: &LaidVersion) -> Vec<Vec<usize>> {
-        let mut drawn: HashMap<&str, BTreeSet<usize>> = HashMap::new();
+        let names = &version.layout().document.names;
+        let mut drawn: HashMap<BlockKey, BTreeSet<usize>> = HashMap::new();
         for (index, page) in version.facts().pages.iter().enumerate() {
-            for line in &page.lines {
-                let path: &str = &line.path;
-                drawn.entry(path).or_default().insert(index + 1);
-                for table in table_paths(path) {
-                    drawn.entry(table).or_default().insert(index + 1);
+            for key in page.lines.iter().filter_map(|l| l.anchor).map(|a| a.block) {
+                drawn.entry(key).or_default().insert(index + 1);
+                // the tables it is in and its top-level block
+                let Some(chain) = names.blocks_of(key) else { continue };
+                let above = chain.iter().filter(|a| a.sub == Sub::Whole && a.block != key);
+                for block in above.filter(|a| a.block.kind() == KeyKind::Table) {
+                    drawn.entry(block.block).or_default().insert(index + 1);
                 }
-                if let Some(top) = top_block_path(path).filter(|t| *t != path) {
+                if let Some(top) = top_of(names, key).filter(|t| *t != key) {
                     drawn.entry(top).or_default().insert(index + 1);
                 }
             }
         }
         let pages_of = |ids: &[String]| -> BTreeSet<usize> {
             ids.iter()
-                .filter_map(|id| version.path_of(id))
-                .filter_map(|path| drawn.get(&*path))
+                .filter_map(|id| names.key_of_id(StoryIx::BODY, id))
+                .filter_map(|key| drawn.get(&key))
                 .flatten()
                 .copied()
                 .collect()

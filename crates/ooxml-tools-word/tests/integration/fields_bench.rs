@@ -92,7 +92,7 @@ fn best_after<A: ToolArgs>(
     for _ in 0..3 {
         let editor = editor(bytes);
         let opened = editor.store().snapshot().doc().clone();
-        let warm = layout.engine.lock().unwrap().lay_out(opened.package());
+        let warm = layout.engine.lock().unwrap().lay_out(opened.package(), None);
         assert!(matches!(warm, Ok(Ok(_))), "the opened version is laid out");
         let caller = Caller::anonymous();
         let call_editor = CallEditor::new(&editor);
@@ -151,7 +151,10 @@ fn field_tools_on_a_long_document() {
         .collect();
     let engine = Arc::new(Mutex::new(engine()));
     let started = Instant::now();
-    let first = engine.lock().unwrap().lay_out(probe.store().snapshot().doc().package());
+    let first = engine
+        .lock()
+        .unwrap()
+        .lay_out(probe.store().snapshot().doc().package(), None);
     let pages = first.unwrap().map(|v| v.page_count());
     println!(
         "{} body paragraphs; first layout {:.1} ms ({pages:?} pages)",

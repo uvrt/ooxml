@@ -8,13 +8,13 @@
 //! Must not: say whether a range is kept or what fixes it (the tool layer reads the keeps
 //! a call would write), or cap a list.
 
-use super::tree::{block_keys_top, is_w, page_break_at, paragraphs_below, BlockKind, W};
-use super::{points, Block, Facts, Range};
+use super::tree::{is_top, is_w, page_break_at, paragraphs_below, BlockKind, W};
+use super::{points, Block, Facts, In, Range};
 use ooxml_word_layout::facts::PageFacts;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::at_path;
 use ooxml_word_model::docx::sections::sections;
-use ooxml_word_model::ids::Entry;
+use ooxml_word_model::ids::{Anchor, BlockKey, Entry, StoryIx};
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::{BTreeSet, HashSet};
@@ -94,13 +94,11 @@ impl Facts<'_> {
     #[must_use]
     pub fn extent(&self, ids: &[String], pages: Option<&[usize]>) -> Vec<Extent> {
         let version = self.version();
-        let wanted: HashSet<String> = ids
+        let wanted: HashSet<BlockKey> = ids
             .iter()
-            .filter_map(|id| version.path_of(id))
-            .map(|p| p.to_string())
+            .filter_map(|id| self.names().key_of_id(StoryIx::BODY, id))
             .collect();
-        let held =
-            |path: &str| wanted.contains(path) || super::tree::table_paths(path).any(|table| wanted.contains(table));
+        let held = |key: BlockKey, place: &In| wanted.contains(&key) || place.tables().any(|t| wanted.contains(&t));
         let all = &version.facts().pages;
         let numbers: BTreeSet<usize> = match pages {
             None => (1..=all.len()).collect(),
@@ -115,9 +113,10 @@ impl Facts<'_> {
                 .lines
                 .iter()
                 .filter(|l| {
-                    super::story_kind(&l.path) == "body" && version.is_named_by(l.anchor.map(|a| a.block), &l.path)
+                    l.anchor
+                        .and_then(|a| Some((a.block, self.place_of(a.block)?)))
+                        .is_some_and(|(key, place)| held(key, place))
                 })
-                .filter(|l| held(&l.path))
                 .map(|l| (l.top, l.pitch, l.column.unwrap_or(0)))
                 .collect();
             if boxed.pages.contains(&number) {
@@ -154,17 +153,17 @@ impl Facts<'_> {
         for id in ids {
             let (place, held_by, table) = match body.ids.get(id) {
                 Some(Entry::Paragraph(_)) => match version.in_paragraph(id) {
-                    Some((host, place)) => (place, host.to_string(), false),
+                    Some((host, place)) => (place, host, false),
                     None => continue,
                 },
-                Some(Entry::Table(k)) => match (body.ids.tables().get(k), version.path_of(id)) {
-                    (Some(table), Some(path)) => (table.path.to_vec(), path.to_string(), true),
+                Some(Entry::Table(k)) => match (body.ids.tables().get(k), self.names().key_of_id(StoryIx::BODY, id)) {
+                    (Some(table), Some(key)) => (table.path.to_vec(), key, true),
                     _ => continue,
                 },
                 None => continue,
             };
-            let top = super::tree::top_block_path(&held_by).unwrap_or(&held_by);
-            boxed.pages.extend(self.block_pages(top));
+            let top = super::tree::top_of(self.names(), held_by).unwrap_or(held_by);
+            boxed.pages.extend(self.block_pages(Anchor::whole(top)));
             boxed.places.push((place, table));
         }
         boxed
@@ -221,7 +220,10 @@ impl Facts<'_> {
             owned.push(block);
         }
         let found: Vec<&Block<'_>> = owned.iter().collect();
-        let drawn: Vec<Vec<usize>> = found.iter().map(|b| self.block_pages(&b.path)).collect();
+        let drawn: Vec<Vec<usize>> = found
+            .iter()
+            .map(|b| b.key.map(|k| self.block_pages(Anchor::whole(k))).unwrap_or_default())
+            .collect();
         if found.is_empty() || drawn.iter().any(Vec::is_empty) {
             return None;
         }
@@ -314,17 +316,15 @@ impl Facts<'_> {
         }
     }
 
-    /// The 1-based pages that draw something of the body block at layout path `path` (its
-    /// key among a page's blocks: `pages_of`).
+    /// The 1-based pages that draw something of the body block `block` (one of a page's
+    /// blocks: `pages_of`).
     #[must_use]
-    pub fn block_pages(&self, path: &str) -> Vec<usize> {
+    pub fn block_pages(&self, block: Anchor) -> Vec<usize> {
         self.version()
             .facts()
-            .pages
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.blocks.iter().any(|b| **b == *path))
-            .map(|(k, _)| k + 1)
+            .pages_of(block)
+            .into_iter()
+            .map(|k| k + 1)
             .collect()
     }
 
@@ -338,8 +338,8 @@ impl Facts<'_> {
         let mut found: Vec<(usize, &Block<'_>)> = facts
             .blocks
             .iter()
-            .filter(|key| block_keys_top(key))
-            .filter_map(|key| self.block_at(key))
+            .filter(|block| is_top(self.names(), **block))
+            .filter_map(|block| self.block_at(block.block))
             .collect();
         found.sort_by_key(|(k, _)| *k);
         found.dedup_by_key(|(k, _)| *k);
@@ -430,9 +430,12 @@ pub fn room(page: &PageFacts, beyond: &BeyondFacts) -> (f64, f64) {
         .map_or(page.frame.bottom, |notes| page.frame.bottom.min(notes));
     let mut lowest = beyond.text_boxes.map_or(top, |foot| top.max(foot));
     for line in &page.lines {
-        if super::story_kind(&line.path) == "body" {
+        // a line of a note's paragraph (placed in the flow, or its continuation separator)
+        // is a note's; one of a separator the layout makes is counted as the body's, as
+        // docx-agent reads its path
+        if line.anchor.is_none_or(|a| a.block.story() == StoryIx::BODY) {
             lowest = lowest.max(line.top + line.pitch);
-        } else if line.path.starts_with("w:footnote") || line.path.starts_with("w:endnote") {
+        } else {
             bottom = bottom.min(line.top);
         }
     }

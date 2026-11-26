@@ -10,14 +10,16 @@
 //! Must not: judge a keep the paginator did not read (a row's keep is the layout's), or
 //! list a table kept together taller than a page more than once.
 
-use super::tree::{is_w, page_break_at, row_of, W};
-use super::{story_kind, Block, BlockKind, Facts};
+use super::tables::table_lines;
+use super::tree::{is_w, page_break_at, W};
+use super::{Block, BlockKind, Facts};
+use crate::line_text::TableRow;
 use crate::page_parts::Part;
 use ooxml_word_layout::facts::{BlockKeeps, LineFact, PageFacts};
 use ooxml_word_model::docx::keeps::{row_keeps, RowKeep, TableKeeps};
 use ooxml_word_model::docx::StoryPart;
+use ooxml_word_model::ids::{BlockKey, StoryIx};
 use ooxml_word_model::model::Block as ModelBlock;
-use ooxml_word_model::value::Text;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -157,26 +159,37 @@ pub fn keep_together(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeptTogether> 
 
 /// One page's contribution to `keep_with_next_at_foot` (the layout half of the page tier,
 /// [`crate::laid_entry`]): the paragraphs of its body lines, lowest first (of lines at the
-/// same height, the one drawn first), each once. The line at the page's foot is the first
-/// of them the version names: which it names is the fold's.
+/// same height, the one drawn first), each once, by key. The line at the page's foot is
+/// the first of them the version names: which it names is the fold's.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct FootPart(Vec<Text>);
+pub struct FootPart(Vec<BlockKey>);
+
+impl FootPart {
+    /// The page's body lines' paragraphs, lowest first.
+    pub fn keys(&self) -> &[BlockKey] {
+        &self.0
+    }
+}
 
 impl Part<PageFacts> for FootPart {
     fn of(page: &PageFacts) -> FootPart {
-        let mut lines: Vec<&LineFact> = page.lines.iter().filter(|l| story_kind(&l.path) == "body").collect();
+        let mut lines: Vec<&LineFact> = page
+            .lines
+            .iter()
+            .filter(|l| l.anchor.is_some_and(|a| a.block.story() == StoryIx::BODY))
+            .collect();
         lines.sort_by_key(|l| std::cmp::Reverse(l.top));
-        let mut out: Vec<Text> = Vec::new();
-        for line in lines {
-            if !out.contains(&line.path) {
-                out.push(Text::clone(&line.path));
+        let mut out: Vec<BlockKey> = Vec::new();
+        for key in lines.into_iter().filter_map(|l| l.anchor).map(|a| a.block) {
+            if !out.contains(&key) {
+                out.push(key);
             }
         }
         FootPart(out)
     }
 
     fn weight_of(page: &PageFacts) -> usize {
-        std::mem::size_of::<FootPart>() + page.lines.len() * std::mem::size_of::<Text>()
+        std::mem::size_of::<FootPart>() + page.lines.len() * std::mem::size_of::<BlockKey>()
     }
 }
 
@@ -191,12 +204,12 @@ pub fn keep_with_next_at_foot(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepA
             continue;
         }
         let Some(entry) = facts.laid(index) else { continue };
-        let Some(path) = entry.foot().0.iter().find(|p| version.is_named(p)) else {
+        let Some(&key) = entry.foot().0.iter().find(|k| version.is_named_by(Some(**k))) else {
             continue;
         };
-        let found = match facts.block_at(path) {
+        let found = match facts.block_at(key) {
             Some((k, block)) => paragraph_at_foot(facts, k, block, number),
-            None => table_end_at_foot(facts, path, number),
+            None => table_end_at_foot(facts, key, number),
         };
         out.extend(found);
     }
@@ -208,7 +221,7 @@ pub fn keep_with_next_at_foot(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepA
 /// page that does not start a page anyway.
 fn paragraph_at_foot(facts: &Facts<'_>, k: usize, block: &Block<'_>, number: usize) -> Option<KeepAtFoot> {
     let next = facts.blocks().get(k + 1)?;
-    if block.kind != BlockKind::Paragraph || facts.pages_of(&block.path).last() != Some(&number) {
+    if block.kind != BlockKind::Paragraph || facts.pages_of(block.key).last() != Some(&number) {
         return None;
     }
     let (next_page, _) = facts.first_line(next).filter(|(p, _)| *p > number)?;
@@ -225,10 +238,10 @@ fn paragraph_at_foot(facts: &Facts<'_>, k: usize, block: &Block<'_>, number: usi
 }
 
 /// A top-level table whose last row keeps with the next, its last row's line (of the
-/// paragraph at `path`) last on page `number`, the block after it on a later page
+/// paragraph `key`) last on page `number`, the block after it on a later page
 /// (`_table_end_at_foot`).
-fn table_end_at_foot(facts: &Facts<'_>, path: &str, number: usize) -> Option<KeepAtFoot> {
-    let (table, row) = row_of(path)?;
+fn table_end_at_foot(facts: &Facts<'_>, key: BlockKey, number: usize) -> Option<KeepAtFoot> {
+    let TableRow { table, row } = facts.place_of(key)?.row?;
     let (k, block) = facts.block_at(table)?;
     let next = facts.blocks().get(k + 1)?;
     if block.kind != BlockKind::Table {
@@ -239,7 +252,7 @@ fn table_end_at_foot(facts: &Facts<'_>, path: &str, number: usize) -> Option<Kee
     if row + 1 != rows.len() || last.lead.is_none() || !last.keeps {
         return None;
     }
-    if facts.table_pages(&block.path).last() != Some(&number) {
+    if facts.table_pages(block.key).last() != Some(&number) {
         return None;
     }
     let (next_page, _) = facts.first_line(next).filter(|(p, _)| *p > number)?;
@@ -256,21 +269,18 @@ fn table_end_at_foot(facts: &Facts<'_>, path: &str, number: usize) -> Option<Kee
 }
 
 /// The body's tables as drawn: each outermost table's rows' pages, tables in the order
-/// first drawn -- a fold over the pages' contributions ([`super::tables::RowsPart`]).
-fn drawn_rows<'f>(facts: &'f Facts<'_>) -> Vec<(&'f str, BTreeMap<usize, BTreeSet<usize>>)> {
-    let mut out: Vec<(&str, BTreeMap<usize, BTreeSet<usize>>)> = Vec::new();
-    let mut seen: HashMap<&str, usize> = HashMap::new();
-    for index in 0..facts.version().facts().pages.len() {
-        let Some(entry) = facts.laid(index) else { continue };
-        for table in entry.rows().tables() {
-            let at = *seen.entry(table.path()).or_insert_with(|| {
-                out.push((table.path(), BTreeMap::new()));
+/// first drawn ([`super::tables::table_lines`]).
+fn drawn_rows(facts: &Facts<'_>) -> Vec<(BlockKey, BTreeMap<usize, BTreeSet<usize>>)> {
+    let mut out: Vec<(BlockKey, BTreeMap<usize, BTreeSet<usize>>)> = Vec::new();
+    let mut seen: HashMap<BlockKey, usize> = HashMap::new();
+    for (index, page) in facts.version().facts().pages.iter().enumerate() {
+        for (TableRow { table, row }, _) in table_lines(facts, page) {
+            let at = *seen.entry(table).or_insert_with(|| {
+                out.push((table, BTreeMap::new()));
                 out.len() - 1
             });
             if let Some((_, rows)) = out.get_mut(at) {
-                for row in table.rows() {
-                    rows.entry(row).or_default().insert(index + 1);
-                }
+                rows.entry(row).or_default().insert(index + 1);
             }
         }
     }
@@ -320,15 +330,15 @@ fn kept_rows(facts: &Facts<'_>, kept: &KeptTables) -> Vec<KeepAtFoot> {
     out
 }
 
-/// The rows' keeps the paginator read for the top-level table at `path`.
-fn model_keeps(facts: &Facts<'_>, path: &str) -> Option<Vec<bool>> {
+/// The rows' keeps the paginator read for the top-level table `key`.
+fn model_keeps(facts: &Facts<'_>, key: BlockKey) -> Option<Vec<bool>> {
     let version = facts.version();
     let index = version
         .layout()
         .document
         .body
         .iter()
-        .position(|b| matches!(b, ModelBlock::Table(t) if &*t.path == path))?;
+        .position(|b| matches!(b, ModelBlock::Table(t) if t.key == Some(key)))?;
     match version.facts().keeps.get(&index)? {
         BlockKeeps::Table { rows, .. } => Some(rows.clone()),
         BlockKeeps::Paragraph { .. } => None,

@@ -43,6 +43,12 @@ impl Trial<'_> {
     pub fn facts(&self) -> &LayoutFacts {
         &self.facts
     }
+
+    /// The names of the version it was laid out of: what its facts' keys are named by.
+    #[must_use]
+    pub fn names(&self) -> &ooxml_word_model::docx::VersionNames {
+        &self.layout.document.names
+    }
 }
 
 impl PageEngine {

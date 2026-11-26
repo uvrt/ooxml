@@ -274,7 +274,15 @@ fn trial(
         };
         engine.beyond_facts(laid, page.page)
     };
-    Ok(KeepEffect::of((version.facts(), then.facts()), &placed, on, &mut foot))
+    Ok(KeepEffect::of(
+        (
+            (version.facts(), &version.layout().document.names),
+            (then.facts(), then.names()),
+        ),
+        &placed,
+        on,
+        &mut foot,
+    ))
 }
 
 /// A trial's effect as docx-agent says it, with what it says in words (`said`) and, for a

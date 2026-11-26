@@ -48,6 +48,15 @@ impl VersionNames {
         VersionNames { parts }
     }
 
+    /// The index of the story named `name` (`endnotes`), where this version has its part.
+    #[must_use]
+    pub fn story_named(&self, name: &str) -> Option<StoryIx> {
+        self.parts
+            .iter()
+            .find(|(_, part)| part.story == name)
+            .map(|(ix, _)| *ix)
+    }
+
     /// The part of the story `story`.
     #[must_use]
     pub fn part(&self, story: StoryIx) -> Option<&Arc<StoryPart>> {

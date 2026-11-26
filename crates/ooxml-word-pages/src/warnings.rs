@@ -307,8 +307,8 @@ fn body_fields(layout: &DocumentLayout, before: Option<&DocumentLayout>, out: &m
             if &*field.keyword == "PAGEREF" {
                 let target = ooxml_word_layout::fields::argument(&field.instruction)
                     .and_then(|name| marks.get(name.as_str()))
-                    .and_then(|block| paragraphs.get(*block))
-                    .filter(|p| numbers.drawn_on(&p.path).is_some());
+                    .and_then(|block| paragraphs.get(*block)?.key)
+                    .filter(|key| numbers.drawn_on(*key).is_some());
                 let Some(target) = target else {
                     out.warn(
                         "field-not-computed:PAGEREF",
@@ -317,7 +317,7 @@ fn body_fields(layout: &DocumentLayout, before: Option<&DocumentLayout>, out: &m
                     );
                     continue;
                 };
-                if let Err(why) = numbers.page_reference(&field.instruction, &target.path) {
+                if let Err(why) = numbers.page_reference(&field.instruction, target) {
                     out.warn(
                         "field-not-computed:PAGEREF",
                         format!("a PAGEREF field in the body is drawn as Word cached it ({})", why.0),
@@ -326,10 +326,10 @@ fn body_fields(layout: &DocumentLayout, before: Option<&DocumentLayout>, out: &m
                 }
                 continue;
             }
-            if numbers.drawn_on(&paragraph.path).is_none() {
+            let Some(key) = paragraph.key.filter(|key| numbers.drawn_on(*key).is_some()) else {
                 continue;
-            }
-            if let Err(why) = numbers.page_field(&field.instruction, &field.keyword, &paragraph.path) {
+            };
+            if let Err(why) = numbers.page_field(&field.instruction, &field.keyword, key) {
                 out.warn(
                     format!("field-not-computed:{}", field.keyword),
                     format!(

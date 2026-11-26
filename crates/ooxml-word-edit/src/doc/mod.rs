@@ -18,7 +18,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{
-    drawing_numbers, load_state, used_long_hex, BlockId, LoadedState, PartsDelta, StoryTable, VersionDelta,
+    drawing_numbers, load_state, used_long_hex, BlockId, DocumentId, LoadedState, PartsDelta, StoryTable, VersionDelta,
 };
 use ooxml_xml::{Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -89,6 +89,9 @@ pub struct Shared {
     pub(crate) accepted: crate::facts::AcceptedShapes,
     /// The document's stories, interned once: what its versions' change sets key blocks by.
     stories: Mutex<StoryTable>,
+    /// The document's identity, whatever its version: what its store's version numbers are
+    /// named with ([`ooxml_word_model::ids::VersionRef`]).
+    document: DocumentId,
 }
 
 /// A Word document at one version.
@@ -179,6 +182,7 @@ impl WordDoc {
                 accepted: crate::facts::AcceptedShapes::new(Arc::clone(&budget), crate::facts::accepted_weight),
                 facts: Facts::new(budget),
                 stories: Mutex::new(StoryTable::new()),
+                document: DocumentId::fresh(),
             }),
         }
     }
@@ -213,6 +217,12 @@ impl WordDoc {
         &self.shared
     }
 
+    /// The document's identity, the same in every version of it.
+    #[must_use]
+    pub fn document(&self) -> DocumentId {
+        self.shared.document
+    }
+
     /// The same, as a handle that outlives this version's borrow.
     pub(crate) fn shared_handle(&self) -> Arc<Shared> {
         Arc::clone(&self.shared)
@@ -233,6 +243,7 @@ impl WordDoc {
     pub fn delta_from(&self, before: &WordDoc) -> VersionDelta {
         let (Ok(old), Ok(new)) = (before.docx(), self.docx()) else {
             return VersionDelta {
+                span: None,
                 parts: PartsDelta::between(before.package(), self.package()),
                 stories: Vec::new(),
             };

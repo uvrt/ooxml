@@ -9,6 +9,7 @@
 //!
 //! Must not: lay out or paint but through the facts' pages.
 
+use ooxml_word_model::ids::{BlockKey, StoryIx};
 use ooxml_word_pages::layout_facts::Facts;
 use ooxml_word_pages::line_text::ItemPlace;
 use std::cell::OnceCell;
@@ -18,8 +19,8 @@ use std::collections::{BTreeSet, HashMap};
 /// header's paragraph is on every page that draws it).
 pub(super) struct Placed<'f, 'a> {
     facts: &'f Facts<'a>,
-    /// Each body paragraph's pages, by its path.
-    body: HashMap<&'a str, BTreeSet<usize>>,
+    /// Each body paragraph's pages, by its key.
+    body: HashMap<BlockKey, BTreeSet<usize>>,
     /// Each header's, footer's and note's paragraph's pages among those asked for, by its
     /// id: read when one is first asked for.
     stories: OnceCell<HashMap<String, BTreeSet<usize>>>,
@@ -28,10 +29,10 @@ pub(super) struct Placed<'f, 'a> {
 impl<'f, 'a> Placed<'f, 'a> {
     /// The pages of `facts`' version.
     pub(super) fn of(facts: &'f Facts<'a>) -> Self {
-        let mut body: HashMap<&str, BTreeSet<usize>> = HashMap::new();
+        let mut body: HashMap<BlockKey, BTreeSet<usize>> = HashMap::new();
         for (index, page) in facts.version().facts().pages.iter().enumerate() {
-            for line in &page.lines {
-                body.entry(&*line.path).or_default().insert(index + 1);
+            for key in page.lines.iter().filter_map(|l| l.anchor) {
+                body.entry(key.block).or_default().insert(index + 1);
             }
         }
         Placed {
@@ -44,8 +45,8 @@ impl<'f, 'a> Placed<'f, 'a> {
     /// The pages the paragraph `id` is drawn on, in order: a header's, footer's or note's
     /// only among those asked for.
     pub(super) fn pages(&self, id: &str) -> Vec<usize> {
-        let found = match self.facts.version().path_of(id) {
-            Some(path) => self.body.get(&*path),
+        let found = match self.facts.names().key_of_id(StoryIx::BODY, id) {
+            Some(key) => self.body.get(&key),
             None => self.stories().get(id),
         };
         found.map(|pages| pages.iter().copied().collect()).unwrap_or_default()

@@ -93,7 +93,7 @@ pub fn table_parted(facts: &Facts<'_>) -> Vec<Parted> {
         if block.kind != BlockKind::Table {
             continue;
         }
-        let pages = facts.table_pages(&block.path);
+        let pages = facts.table_pages(block.key);
         let (Some(&first), Some(&last)) = (pages.first(), pages.last()) else {
             continue;
         };
@@ -113,7 +113,7 @@ pub fn table_parted(facts: &Facts<'_>) -> Vec<Parted> {
 }
 
 fn lead_in(facts: &Facts<'_>, k: usize, table: &Block<'_>, lead: &Block<'_>, first: usize) -> Option<Parted> {
-    let para_page = facts.pages_of(&lead.path).last().copied().filter(|p| *p < first)?;
+    let para_page = facts.pages_of(lead.key).last().copied().filter(|p| *p < first)?;
     if !facts.shown([para_page, first]) {
         return None;
     }
@@ -131,7 +131,7 @@ fn lead_in(facts: &Facts<'_>, k: usize, table: &Block<'_>, lead: &Block<'_>, fir
 }
 
 fn line_after(facts: &Facts<'_>, table: &Block<'_>, after: &Block<'_>, pages: usize, last: usize) -> Option<Parted> {
-    let para_page = facts.pages_of(&after.path).first().copied().filter(|p| *p > last)?;
+    let para_page = facts.pages_of(after.key).first().copied().filter(|p| *p > last)?;
     if !facts.shown([last, para_page]) {
         return None;
     }
@@ -175,5 +175,5 @@ fn parted_kind(facts: &Facts<'_>, block: &Block<'_>, before: bool) -> Option<Par
     if before && text.ends_with(':') {
         return Some(PartedKind::Colon);
     }
-    (facts.lines_of(&block.path).len() == 1).then_some(PartedKind::OneLine)
+    (facts.lines_of(block.key).len() == 1).then_some(PartedKind::OneLine)
 }

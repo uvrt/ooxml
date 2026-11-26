@@ -16,6 +16,7 @@ use crate::layout_facts::{story_kind, BeyondFacts};
 use crate::LaidVersion;
 use ooxml_word_layout::px::Px;
 use ooxml_word_layout::DocumentLayout;
+use ooxml_word_model::ids::{Anchor, BlockKey, Sub};
 use ooxml_word_model::model::{Block, InlineObject, Paragraph};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -67,7 +68,7 @@ impl PageEngine {
         let drawn_in = |line: &ooxml_word_layout::paint::PaintedLine| {
             version.place_of_path(&line.path).as_deref() == Some(place.as_slice())
         };
-        version.facts().pages_of(&host).into_iter().find(|&page| {
+        version.facts().pages_of(Anchor::whole(host)).into_iter().find(|&page| {
             self.paint(version, page).is_some_and(|paint| {
                 paint
                     .text_boxes
@@ -94,7 +95,7 @@ impl PageEngine {
             Laid::Trial(t) => t.facts(),
         };
         let blocks = &facts.pages.iter().find(|p| p.page == page)?.blocks;
-        let drawn: HashSet<&str> = blocks.iter().map(|b| &**b).collect();
+        let drawn: HashSet<BlockKey> = blocks.iter().filter(|b| b.sub == Sub::Whole).map(|b| b.block).collect();
         if !draws_text_box(&laid.layout().document.body, &drawn) {
             return None;
         }
@@ -136,11 +137,11 @@ impl PageEngine {
 
 /// Whether one of `blocks`' paragraphs the page draws (`drawn`: its blocks' keys) holds a
 /// drawing with text, anchored or inline.
-fn draws_text_box(blocks: &[Block], drawn: &HashSet<&str>) -> bool {
+fn draws_text_box(blocks: &[Block], drawn: &HashSet<BlockKey>) -> bool {
     blocks.iter().any(|block| match block {
-        Block::Paragraph(p) => drawn.contains(&*p.path) && holds_text_box(p),
+        Block::Paragraph(p) => p.key.is_some_and(|k| drawn.contains(&k)) && holds_text_box(p),
         Block::Table(t) => {
-            drawn.contains(&*t.path)
+            t.key.is_some_and(|k| drawn.contains(&k))
                 && t.rows
                     .iter()
                     .any(|row| row.iter().any(|cell| draws_text_box(cell, drawn)))

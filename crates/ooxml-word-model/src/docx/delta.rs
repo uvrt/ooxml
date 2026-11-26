@@ -37,6 +37,7 @@ impl VersionDelta {
         }
         changes.sort_by_key(|(order, _)| *order);
         VersionDelta {
+            span: None,
             parts,
             stories: changes.into_iter().map(|(_, change)| change).collect(),
         }

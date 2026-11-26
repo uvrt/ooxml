@@ -10,7 +10,9 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
-use ooxml_word_model::ids::Sub;
+use ooxml_word_model::ids::{
+    DocumentId, PartsDelta, StoryChange, StoryDelta, StoryIx, Sub, VersionDelta, VersionRef, VersionSpan,
+};
 use ooxml_word_pages::{support, DiskFonts, EngineBudgets, EngineOptions, FontSetup, LaidVersion, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -284,7 +286,10 @@ fn after(n: usize) -> After {
 fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_before() {
     let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
     let mut kept = engine();
-    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let first = kept
+        .lay_out(&opened(package(&paragraphs(120, None))), None)
+        .unwrap()
+        .unwrap();
     let edited = opened(package(&paragraphs(120, Some(60))));
     for n in [0, 1] {
         // stopped before its first block, and after it
@@ -314,7 +319,7 @@ fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_befor
         fresh.lay_out_until(&edited, &after(asks - 1)),
         Err(ooxml_word_pages::PagesError::Stopped)
     ));
-    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    let whole = fresh.lay_out(&edited, None).unwrap().unwrap();
     assert!(!whole.relaid());
     assert_eq!(svgs(&mut kept, &second), svgs(&mut fresh, &whole));
     assert_eq!(second.facts(), whole.facts());
@@ -323,11 +328,74 @@ fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_befor
     assert_eq!(summary.pages, kept.summary(&second).unwrap().pages);
 }
 
+/// A delta of the main part alone, between the versions `base` and `version` of `document`.
+fn body_delta(document: DocumentId, base: u64, version: u64) -> VersionDelta {
+    let at = |seq| VersionRef { document, seq };
+    VersionDelta {
+        span: None,
+        parts: PartsDelta::default(),
+        stories: vec![StoryChange {
+            story: StoryIx::BODY,
+            part: "word/document.xml".to_owned(),
+            delta: StoryDelta::Whole,
+        }],
+    }
+    .spanning(VersionSpan {
+        base: at(base),
+        version: at(version),
+    })
+}
+
+#[test]
+fn a_delta_is_taken_for_the_change_only_from_the_version_given_last() {
+    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let (document, other) = (DocumentId::fresh(), DocumentId::fresh());
+    let versions: Vec<_> = (0..6).map(|k| opened(package(&paragraphs(60, Some(10 + k))))).collect();
+    let mut kept = engine();
+    kept.lay_out(&versions[0], None).unwrap().unwrap();
+    // the version given last was named by no delta: the packages are compared
+    kept.lay_out(&versions[1], Some(&body_delta(document, 0, 1)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.stats().changes_from, (0, 1));
+    // its base is the version given last: the delta says what changed
+    let taken = kept
+        .lay_out(&versions[2], Some(&body_delta(document, 1, 2)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.stats().changes_from, (1, 1));
+    // its base is not the version given last (a version before it)
+    let skipped = kept
+        .lay_out(&versions[3], Some(&body_delta(document, 1, 3)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.stats().changes_from, (1, 2));
+    // another document's numbers never match: the same number of another document
+    kept.lay_out(&versions[4], Some(&body_delta(other, 3, 4)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.stats().changes_from, (1, 3));
+    // a version given with no delta names none: the next delta's base cannot be it
+    kept.lay_out(&versions[5], None).unwrap().unwrap();
+    kept.lay_out(&versions[4], Some(&body_delta(other, 5, 6)))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept.stats().changes_from, (1, 5));
+    // laid out alike either way: each as a whole layout lays it out
+    for (version, k) in [(&taken, 2), (&skipped, 3)] {
+        let whole = engine().lay_out(&versions[k], None).unwrap().unwrap();
+        assert_eq!(version.facts(), whole.facts(), "version {k}");
+    }
+}
+
 #[test]
 fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
     let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
     let mut kept = engine();
-    let first = kept.lay_out(&opened(package(&paragraphs(120, None)))).unwrap().unwrap();
+    let first = kept
+        .lay_out(&opened(package(&paragraphs(120, None))), None)
+        .unwrap()
+        .unwrap();
     let edited = opened(package(&paragraphs(120, Some(60))));
     let trial = kept.trial(&edited, &first, &after(usize::MAX)).unwrap().unwrap();
     assert!(
@@ -336,7 +404,7 @@ fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
     );
     assert_eq!(kept.stats().trials, 1);
     let mut fresh = engine();
-    let whole = fresh.lay_out(&edited).unwrap().unwrap();
+    let whole = fresh.lay_out(&edited, None).unwrap().unwrap();
     assert_eq!(
         trial.facts(),
         whole.facts(),
@@ -349,7 +417,7 @@ fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
     ));
     assert!(Arc::ptr_eq(kept.last().unwrap(), &first));
     // the next version is laid out from the one the engine had
-    let second = kept.lay_out(&edited).unwrap().unwrap();
+    let second = kept.lay_out(&edited, None).unwrap().unwrap();
     assert!(second.relaid());
     assert_eq!(second.facts(), whole.facts());
 }
@@ -359,18 +427,18 @@ fn a_version_with_the_last_ones_parts_is_the_last_version() {
     let mut kept = engine();
     let bytes: Arc<[u8]> = Arc::from(package(&paragraphs(40, None)));
     let opened = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()).unwrap();
-    let first = kept.lay_out(&opened).unwrap().unwrap();
-    let again = kept.lay_out(&opened.clone()).unwrap().unwrap();
+    let first = kept.lay_out(&opened, None).unwrap().unwrap();
+    let again = kept.lay_out(&opened.clone(), None).unwrap().unwrap();
     assert!(Arc::ptr_eq(&first, &again));
     let stats = kept.stats();
     assert_eq!((stats.kept, stats.full, stats.relaid), (1, 1, 0), "{stats:?}");
     let touched: Arc<[u8]> = Arc::from(document_xml(&paragraphs(40, Some(3))).into_bytes());
     let edited = opened.with_bytes("word/document.xml", touched);
-    let next = kept.lay_out(&edited).unwrap().unwrap();
+    let next = kept.lay_out(&edited, None).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&first, &next));
     assert_eq!(kept.stats().kept, 1);
     // The version before is no longer the last: it is laid out again, not kept.
-    let back = kept.lay_out(&opened).unwrap().unwrap();
+    let back = kept.lay_out(&opened, None).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&first, &back));
     assert_eq!(back.facts(), first.facts());
 }
@@ -422,10 +490,7 @@ fn columns_line_numbers_and_a_drop_cap_are_laid_out_and_painted_in_rust() {
         .filter(|l| l.story.is_some())
         .map(|l| (l.path.clone(), l.baseline))
         .collect();
-    let facts: Vec<_> = story_lines
-        .iter()
-        .map(|l| (l.line.path.clone(), l.line.baseline))
-        .collect();
+    let facts: Vec<_> = story_lines.iter().map(|l| (l.path.clone(), l.line.baseline)).collect();
     assert!(!facts.is_empty());
     assert_eq!(drawn, facts);
     // A section of several columns is not numbered: docx2svg says so.
@@ -565,13 +630,26 @@ fn a_first_edit_that_stamps_an_unstamped_document_names_every_block_by_its_new_k
     summary_names_by_ids(&mut kept, &after);
     for page in &after.facts().pages {
         for line in &page.lines {
-            assert!(line.anchor.is_some_and(|a| a.block.durable()), "{}", line.path);
+            assert!(line.anchor.is_some_and(|a| a.block.durable()), "{line:?}");
         }
-        assert_eq!(page.anchors.len(), page.blocks.len());
-        for (anchor, path) in page.anchors.iter().zip(&page.blocks) {
-            assert!(anchor.block.durable());
-            assert_eq!(names.path(*anchor).as_deref(), Some(&**path));
+        for block in &page.blocks {
+            assert!(block.block.durable());
+            assert!(names.path(*block).is_some(), "{block:?}");
         }
+        // the layout half of the page tier: its foot by the new keys
+        for key in kept.laid_entry(&after, page.page).unwrap().foot().keys() {
+            assert!(key.durable(), "{key:?}");
+        }
+    }
+    // the facts by key are a whole layout's: none kept from the version before by a key it
+    // no longer has
+    let whole = engine()
+        .lay_out_bytes(Arc::from(package(&stampable(80, 30, true))))
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.facts(), whole.facts());
+    for (page, old) in after.facts().pages.iter().zip(&before.facts().pages) {
+        assert!(!Arc::ptr_eq(page, old), "page {} kept by the ordinal keys", page.page);
     }
 }
 
@@ -963,8 +1041,8 @@ fn a_version_given_as_a_package_says_which_part_it_changed() {
     let styles = format!(r#"<w:styles {W}>{large}</w:styles>"#);
     let edited = first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes()));
     let mut kept = engine();
-    kept.lay_out(&first).unwrap().unwrap();
-    let again = kept.lay_out(&edited).unwrap().unwrap();
+    kept.lay_out(&first, None).unwrap().unwrap();
+    let again = kept.lay_out(&edited, None).unwrap().unwrap();
     let cause = again.relaid_cause().expect("laid out whole from a version before");
     assert_eq!(
         (cause.reason, cause.part.as_deref()),
@@ -985,10 +1063,10 @@ fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_lay
         .with_bytes("word/diagrams/data1.xml", Arc::from(data.as_bytes()))
         .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes()));
     let mut kept = engine();
-    let before = kept.lay_out(&first).unwrap().unwrap();
+    let before = kept.lay_out(&first, None).unwrap().unwrap();
     assert!(!before.said().warnings.is_empty());
-    let again = kept.lay_out(&edited).unwrap().unwrap();
-    let whole = engine().lay_out(&edited).unwrap().unwrap();
+    let again = kept.lay_out(&edited, None).unwrap().unwrap();
+    let whole = engine().lay_out(&edited, None).unwrap().unwrap();
     assert_ne!(before.said(), whole.said(), "the edit changes what is said");
     assert_eq!(again.said(), whole.said());
 }

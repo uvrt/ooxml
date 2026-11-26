@@ -9,7 +9,7 @@
 //! This is not what the layout draws for a field (`super::field_values`: the page of the
 //! line the field's run is on); it is what an update writes into the file.
 //!
-//! Must not: find a field's paragraph or a bookmark's (the caller names them by path), or
+//! Must not: find a field's paragraph or a bookmark's (the caller names them by key), or
 //! write anything.
 
 use super::styleref::target_in;
@@ -17,8 +17,9 @@ use crate::engine::DocumentLayout;
 use crate::paginate::PageInfo;
 use crate::paint::PagePaint;
 use ooxml_base::Locale;
+use ooxml_word_model::docx::VersionNames;
 use ooxml_word_model::fieldtext::{field_text, Uncomputable};
-use ooxml_word_model::value::Text;
+use ooxml_word_model::ids::{Anchor, BlockKey};
 use ooxml_word_model::WordDocument;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,7 +35,9 @@ pub struct Unknown(pub String);
 /// pages ([`DocumentLayout::first_pages`], found without placing a line).
 #[derive(Debug, Clone)]
 pub struct PageNumbers {
-    first: Arc<HashMap<Text, usize>>,
+    first: Arc<HashMap<BlockKey, usize>>,
+    /// The version's names: what a paragraph not drawn is said by.
+    names: Arc<VersionNames>,
     /// Each section's page number format, `None` for decimal or none stated.
     formats: Vec<Option<String>>,
     /// Each page the facts hold (those of a known section), in order.
@@ -74,35 +77,37 @@ impl PageNumbers {
             .is_some();
         PageNumbers {
             first: Arc::clone(layout.first_pages()),
+            names: Arc::clone(&layout.document.names),
             formats,
             pages,
             stopped,
         }
     }
 
-    /// Each paragraph path's first page.
-    fn first(&self) -> &HashMap<Text, usize> {
-        &self.first
+    /// Whether the paragraph `key` is drawn: the page its first line is on.
+    pub fn drawn_on(&self, key: BlockKey) -> Option<usize> {
+        self.first.get(&key).copied()
     }
 
-    /// Whether the paragraph at `path` is drawn: the page its first line is on.
-    pub fn drawn_on(&self, path: &str) -> Option<usize> {
-        self.first().get(path).copied()
+    /// The paragraph `key`, as an error names it: its path.
+    fn named(&self, key: BlockKey) -> String {
+        self.names
+            .path(Anchor::whole(key))
+            .unwrap_or_else(|| format!("{key:?}"))
     }
 
     fn format_of(&self, section: usize) -> Option<&str> {
         self.formats.get(section).and_then(Option::as_deref)
     }
 
-    /// What the paginator knows of the page the paragraph at `path` is first drawn on.
-    fn first_page(&self, path: &str) -> Result<&PageInfo, Unknown> {
-        let page = *self
-            .first()
-            .get(path)
-            .ok_or_else(|| Unknown(format!("{path} is not drawn")))?;
+    /// What the paginator knows of the page the paragraph `key` is first drawn on.
+    fn first_page(&self, key: BlockKey) -> Result<&PageInfo, Unknown> {
+        let page = self
+            .drawn_on(key)
+            .ok_or_else(|| Unknown(format!("{} is not drawn", self.named(key))))?;
         self.pages
             .get(page)
-            .ok_or_else(|| Unknown(format!("{path} is not on a page")))
+            .ok_or_else(|| Unknown(format!("{} is not on a page", self.named(key))))
     }
 
     /// What the paginator knows of each page, in order.
@@ -111,11 +116,11 @@ impl PageNumbers {
     }
 
     /// A `PAGE`, `NUMPAGES` or `SECTIONPAGES` field's result, `instruction` as written, in
-    /// the paragraph at `path`: on the page that paragraph is first drawn on. The page
+    /// the paragraph `key`: on the page that paragraph is first drawn on. The page
     /// count is every page, blank ones included; a section's, its pages that are not blank;
     /// neither is known past where the layout stopped.
-    pub fn page_field(&self, instruction: &str, keyword: &str, path: &str) -> Result<String, Unknown> {
-        let info = self.first_page(path)?;
+    pub fn page_field(&self, instruction: &str, keyword: &str, key: BlockKey) -> Result<String, Unknown> {
+        let info = self.first_page(key)?;
         self.page_field_on(instruction, keyword, info)
     }
 
@@ -151,11 +156,11 @@ impl PageNumbers {
         .map_err(|Uncomputable(why)| Unknown(why))
     }
 
-    /// What a `PAGEREF` (`instruction` as written) to the paragraph at `path` shows -- or a
+    /// What a `PAGEREF` (`instruction` as written) to the paragraph `key` shows -- or a
     /// table of contents entry for it, with `PAGEREF x \h`: the number of the page that
     /// paragraph is first drawn on, in its section's format unless a switch formats it.
-    pub fn page_reference(&self, instruction: &str, path: &str) -> Result<String, Unknown> {
-        let info = self.first_page(path)?;
+    pub fn page_reference(&self, instruction: &str, key: BlockKey) -> Result<String, Unknown> {
+        let info = self.first_page(key)?;
         Self::page_reference_on(instruction, info, self.format_of(info.section))
     }
 

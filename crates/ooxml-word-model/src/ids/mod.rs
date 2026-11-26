@@ -27,7 +27,9 @@ pub use sha256::sha256;
 mod state;
 
 pub use block_id::{renames_text, BlockId, BlockKind, BlockName, NotABlockId, ParaId, Renames, StoryName};
-pub use delta::{BlockDelta, Moved, PartsDelta, StoryChange, StoryDelta, VersionDelta};
+pub use delta::{
+    BlockDelta, DocumentId, Moved, PartsDelta, StoryChange, StoryDelta, VersionDelta, VersionRef, VersionSpan,
+};
 pub use index::{Entry, IdState, ParagraphId, PartIds, Path, PlacedTable, TableHead, TableId};
 pub use key::{Anchor, BlockKey, KeyName, StoryIx, StoryTable, Sub};
 pub use ledger::{

@@ -14,7 +14,8 @@ use ooxml_base::Cancel;
 use ooxml_opc::Package;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::Docx;
-use ooxml_word_pages::layout_facts::{points, story_kind};
+use ooxml_word_model::ids::{BlockKey, StoryIx, Sub};
+use ooxml_word_pages::layout_facts::points;
 use ooxml_word_pages::line_text::ItemPlace;
 use ooxml_word_pages::LaidVersion;
 use serde_json::{json, Map, Value};
@@ -40,8 +41,9 @@ pub(super) struct Laid<'v> {
     version: Arc<LaidVersion>,
     layout: &'v dyn WordLayout,
     docx: &'v Docx,
-    /// Each body paragraph's lines, by path, in drawing order.
-    body: HashMap<String, Vec<Line>>,
+    /// Each body paragraph's lines, and each table's and row's (its paragraphs'), by key,
+    /// in drawing order.
+    body: HashMap<BlockKey, Vec<Line>>,
     /// Each paragraph's lines among every line the pages paint (headers, footers, notes,
     /// text boxes), by id: read when a block without body lines is first asked for.
     painted: OnceCell<HashMap<String, Vec<Line>>>,
@@ -56,20 +58,31 @@ impl<'v> Laid<'v> {
         cancel: &dyn Cancel,
     ) -> Result<Laid<'v>, NotLaid> {
         let version = layout.laid(package, cancel)?;
-        let mut body: HashMap<String, Vec<Line>> = HashMap::new();
+        let names = &version.layout().document.names;
+        let mut body: HashMap<BlockKey, Vec<Line>> = HashMap::new();
+        // the blocks a paragraph's lines count for: itself, and the tables and rows it is in
+        let mut blocks: HashMap<BlockKey, Vec<BlockKey>> = HashMap::new();
         for (page, facts) in version.facts().pages.iter().enumerate() {
             for (place, line) in facts.lines.iter().enumerate() {
-                if story_kind(&line.path) != "body" {
+                let Some(key) = line.anchor.map(|a| a.block).filter(|k| k.story() == StoryIx::BODY) else {
                     continue;
-                }
-                body.entry(line.path.to_string()).or_default().push(Line {
+                };
+                let held = blocks.entry(key).or_insert_with(|| {
+                    let chain = names.blocks_of(key).unwrap_or_default();
+                    let above = chain.iter().filter(|a| a.sub == Sub::Whole && a.block != key);
+                    std::iter::once(key).chain(above.map(|a| a.block)).collect()
+                });
+                let drawn = Line {
                     page,
                     place,
                     top: line.top,
                     pitch: line.pitch,
                     column: line.column.unwrap_or(0),
                     story: "body",
-                });
+                };
+                for block in held.iter() {
+                    body.entry(*block).or_default().push(drawn);
+                }
             }
         }
         Ok(Laid {
@@ -102,15 +115,9 @@ impl<'v> Laid<'v> {
     /// The lines the block `id` is drawn with, in drawing order: a table's, its
     /// paragraphs'.
     fn lines_of(&self, id: &str) -> Vec<Line> {
-        if let Some(path) = self.version.path_of(id) {
-            let path: &str = &path;
-            let inside = format!("{path}/");
-            let mut lines: Vec<Line> = self
-                .body
-                .iter()
-                .filter(|(p, _)| p.as_str() == path || p.starts_with(&inside))
-                .flat_map(|(_, lines)| lines.iter().copied())
-                .collect();
+        let names = &self.version.layout().document.names;
+        if let Some(key) = names.key_of_id(StoryIx::BODY, id) {
+            let mut lines: Vec<Line> = self.body.get(&key).cloned().unwrap_or_default();
             if !lines.is_empty() {
                 // drawing order: by page, then by place among the page's lines
                 lines.sort_by_key(|line| (line.page, line.place));

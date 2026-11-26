@@ -2,8 +2,9 @@
 //! of the document with that one change (docx-agent's `keep_trials._trial`, round 40): where
 //! the range then starts and ends, how much of the page before it is left blank (then and
 //! now), the document's page count now and then, and the page what follows starts on now
-//! and then ([`KeepEffect::of`]). The blocks are found by their layout paths, which a keep
-//! (a paragraph's properties) does not change. The blank is measured with the lines the
+//! and then ([`KeepEffect::of`]). The blocks are named across the two layouts by their
+//! layout paths, which a keep (a paragraph's properties) does not change -- their keys may
+//! (the trial's edit stamps an unstamped document) -- and found in each by key. The blank is measured with the lines the
 //! facts leave out -- the page's text boxes' and footnotes' ([`BeyondFacts`]), which
 //! docx-agent counts -- asked of the caller for the two pages measured only ([`Side`]).
 //!
@@ -11,11 +12,12 @@
 //! reply, or change the document.
 
 use super::ranges::{room, BeyondFacts};
-use super::tree::block_keys_top;
+use super::tree::is_top;
 use super::Facts;
 use ooxml_word_layout::facts::{LayoutFacts, PageFacts};
+use ooxml_word_model::docx::VersionNames;
+use ooxml_word_model::ids::{Anchor, StoryIx};
 use std::collections::HashSet;
-use std::sync::Arc;
 
 /// The blank at the foot of the page before a range kept, then and now.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,30 +72,32 @@ impl Facts<'_> {
     /// of them is not a top-level block the layout draws.
     #[must_use]
     pub fn trial_blocks(&self, ids: &[String]) -> Option<TrialBlocks> {
-        let mut order: Vec<&str> = Vec::new();
-        let mut seen: HashSet<&str> = HashSet::new();
+        let names = self.names();
+        let mut order: Vec<Anchor> = Vec::new();
+        let mut seen: HashSet<Anchor> = HashSet::new();
         for page in &self.version().facts().pages {
-            for key in &page.blocks {
-                if block_keys_top(key) && seen.insert(key) {
-                    order.push(key);
+            for block in &page.blocks {
+                if is_top(names, *block) && seen.insert(*block) {
+                    order.push(*block);
                 }
             }
         }
-        let keys: Vec<String> = ids
+        let mine: Vec<Anchor> = ids
             .iter()
             .map(|id| {
-                let path = self.version().path_of(id)?;
-                seen.contains(&*path).then(|| path.to_string())
+                let block = Anchor::whole(names.key_of_id(StoryIx::BODY, id)?);
+                seen.contains(&block).then_some(block)
             })
             .collect::<Option<_>>()?;
-        let mine: HashSet<&str> = keys.iter().map(String::as_str).collect();
-        let last = keys.iter().filter_map(|k| order.iter().position(|o| o == k)).max()?;
-        let after = order
-            .iter()
-            .skip(last + 1)
-            .find(|k| !mine.contains(**k))
-            .map(|k| (*k).to_owned());
-        Some(TrialBlocks { keys, after })
+        let last = mine.iter().filter_map(|k| order.iter().position(|o| o == k)).max()?;
+        let after = order.iter().skip(last + 1).find(|k| !mine.contains(k));
+        Some(TrialBlocks {
+            keys: mine.iter().map(|b| names.path(*b)).collect::<Option<_>>()?,
+            after: match after {
+                Some(after) => Some(names.path(*after)?),
+                None => None,
+            },
+        })
     }
 }
 
@@ -106,20 +110,23 @@ struct Placed {
 }
 
 impl Placed {
-    fn of(pages: &[Arc<PageFacts>], blocks: &TrialBlocks) -> Placed {
-        let wanted: HashSet<&str> = blocks.keys.iter().map(String::as_str).collect();
+    /// Where `blocks` (named by path) are drawn in a layout whose facts are `facts`, each
+    /// found there by key through its version's `names`.
+    fn of((facts, names): (&LayoutFacts, &VersionNames), blocks: &TrialBlocks) -> Placed {
+        let key = |path: &str| names.key_at_path(StoryIx::BODY, path).map(Anchor::whole);
+        let wanted: HashSet<Anchor> = blocks.keys.iter().filter_map(|p| key(p)).collect();
+        let pages = &facts.pages;
         let drawn: Vec<usize> = pages
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.blocks.iter().any(|b| wanted.contains(&**b)))
+            .filter(|(_, p)| p.blocks.iter().any(|b| wanted.contains(b)))
             .map(|(k, _)| k + 1)
             .collect();
-        let after = blocks.after.as_deref().and_then(|after| {
-            pages
-                .iter()
-                .position(|p| p.blocks.iter().any(|b| **b == *after))
-                .map(|k| k + 1)
-        });
+        let after = blocks
+            .after
+            .as_deref()
+            .and_then(key)
+            .and_then(|after| pages.iter().position(|p| p.blocks.contains(&after)).map(|k| k + 1));
         Placed {
             start: drawn.first().copied(),
             end: drawn.last().copied(),
@@ -130,16 +137,17 @@ impl Placed {
 
 impl KeepEffect {
     /// What keeping (`on`) or releasing `blocks` did, `now` the layout checked and `then`
-    /// the trial's: `None` where the range is drawn in neither. `foot` gives what a page
+    /// the trial's (each its facts and its version's names): `None` where the range is drawn in neither. `foot` gives what a page
     /// (of that side's layout) draws beyond its facts, asked only of the two pages whose
     /// blank is measured.
     pub fn of(
-        (now, then): (&LayoutFacts, &LayoutFacts),
+        (now, then): ((&LayoutFacts, &VersionNames), (&LayoutFacts, &VersionNames)),
         blocks: &TrialBlocks,
         on: bool,
         foot: &mut dyn FnMut(Side, &PageFacts) -> BeyondFacts,
     ) -> Option<KeepEffect> {
-        let (was, will) = (Placed::of(&now.pages, blocks), Placed::of(&then.pages, blocks));
+        let (was, will) = (Placed::of(now, blocks), Placed::of(then, blocks));
+        let (now, then) = (now.0, then.0);
         let (now_start, then_start) = (was.start?, will.start?);
         let ends = will.end?;
         let (kept_start, free_start) = if on {

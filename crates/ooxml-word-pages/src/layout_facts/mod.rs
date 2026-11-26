@@ -11,12 +11,13 @@
 //! scoped ([`Scope`]).
 //!
 //! What every fact reads alike is made once per [`Facts`]: the body's lines by paragraph
-//! path and by top-level block (only lines of a paragraph the version names), the body's
-//! top-level blocks (block-level content controls opened), and each page's lines' text and
-//! boxes, read from its paint when first asked ([`PageReads`]).
+//! key and by top-level block (only lines of a paragraph the version names), where each of
+//! those paragraphs is among the body's blocks ([`tree::In`]), the body's top-level blocks
+//! (block-level content controls opened), and each page's lines' text and boxes, read from
+//! its paint when first asked ([`PageReads`]).
 //!
-//! Paths are the layout's (`w:body/w:tbl[1]/w:tr[2]/w:tc[1]/w:p[1]`); ids the tool's, as
-//! the version's bytes name its blocks.
+//! Blocks are found by key, through the version's names; ids are the tool's, as the
+//! version's bytes name its blocks.
 //!
 //! Must not: lay out or paint but through [`PageReads`], word a reply (the tool layer
 //! does), cap a list, or change the document.
@@ -44,13 +45,14 @@ use ooxml_word_layout::facts::LineFact;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
 use ooxml_word_model::docx::{Docx, StoryPart, VersionNames};
+use ooxml_word_model::ids::{BlockKey, StoryIx};
 use ooxml_word_model::model::Table;
 use ooxml_word_model::resolve::{resolve_table, ResolvedTable};
 use ooxml_xml::Element;
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-pub(crate) use tree::{cell_line, row_of};
+pub(crate) use tree::{cell_line, row_of, In};
 
 pub use ranges::{room, BeyondFacts, Break, Extent, RangeLayout};
 pub use scope::{Range, Scope, ScopeError};
@@ -91,22 +93,24 @@ pub struct Facts<'a> {
     formatting: Formatting,
     /// The 1-based pages asked for (`None`: every page).
     wanted: Option<BTreeSet<usize>>,
-    /// The body's lines of each paragraph the version names, by path, in drawing order.
-    by_path: HashMap<&'a str, Vec<Drawn<'a>>>,
+    /// The body's lines of each paragraph the version names, by key, in drawing order.
+    by_key: HashMap<BlockKey, Vec<Drawn<'a>>>,
     /// The same lines by the top-level block (paragraph or table) they are in.
-    by_block: HashMap<&'a str, Vec<Drawn<'a>>>,
+    by_block: HashMap<BlockKey, Vec<Drawn<'a>>>,
     /// The pages of the same lines by every table they are in (nested ones too).
-    by_table: HashMap<&'a str, BTreeSet<usize>>,
+    by_table: HashMap<BlockKey, BTreeSet<usize>>,
+    /// Where each of those paragraphs is among the body's blocks.
+    places: HashMap<BlockKey, In>,
     blocks: Vec<Block<'a>>,
-    /// Each top-level block's place among them, by path.
-    positions: HashMap<String, usize>,
+    /// Each top-level block's place among them, by key.
+    positions: HashMap<BlockKey, usize>,
     reads: &'a dyn PageReads,
     painted: Vec<OnceCell<Option<Arc<PageEntry>>>>,
     laid: Vec<OnceCell<Option<Arc<LaidEntry>>>>,
     /// Each table of the layout model resolved, by its address, when first asked.
     resolved: RefCell<HashMap<usize, Arc<ResolvedTable>>>,
-    /// The layout model's tables (nested ones too) by path, made when first asked.
-    model_tables: OnceCell<HashMap<&'a str, &'a Arc<ooxml_word_model::model::Table>>>,
+    /// The layout model's tables (nested ones too) by key, made when first asked.
+    model_tables: OnceCell<HashMap<BlockKey, &'a Arc<ooxml_word_model::model::Table>>>,
     /// What `range` scopes the facts to (`None`: the whole document).
     scope: Option<Scope>,
 }
@@ -129,60 +133,53 @@ impl<'a> Facts<'a> {
         pages: Option<&[usize]>,
         reads: &'a dyn PageReads,
     ) -> Facts<'a> {
-        let mut by_path: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
-        let mut by_block: HashMap<&str, Vec<Drawn<'_>>> = HashMap::new();
-        let mut by_table: HashMap<&str, BTreeSet<usize>> = HashMap::new();
-        let facts = version.facts();
-        // A paragraph's lines stand together on a page: each run of them is mapped at once.
-        // Whether the version names a run's paragraph is asked once per paragraph (a run on
-        // the next page too), all of them together.
-        let runs: Vec<(usize, &[LineFact])> = facts
-            .pages
-            .iter()
-            .enumerate()
-            .flat_map(|(index, page)| {
-                page.lines
-                    .chunk_by(|a, b| a.path == b.path)
-                    .map(move |run| (index, run))
-            })
-            .filter(|(_, run)| !run.is_empty())
-            .collect();
-        // The runs of one paragraph in a row (across pages), each group asked once; a path
-        // of another story than the body's is named by none (it does not start `w:body`).
-        let groups: Vec<&[(usize, &[LineFact])]> = runs.chunk_by(|a, b| path_of(a.1) == path_of(b.1)).collect();
-        let named = groups.iter().map(|group| {
-            group.first().is_some_and(|(_, run)| {
-                let first = run.first();
-                version.is_named_by(first.and_then(|l| l.anchor).map(|a| a.block), path_of(run))
-            })
+        let mut by_key: HashMap<BlockKey, Vec<Drawn<'_>>> = HashMap::new();
+        let mut by_block: HashMap<BlockKey, Vec<Drawn<'_>>> = HashMap::new();
+        let mut by_table: HashMap<BlockKey, BTreeSet<usize>> = HashMap::new();
+        let mut places: HashMap<BlockKey, In> = HashMap::new();
+        let names = &version.layout().document.names;
+        // A paragraph's lines stand together on a page: each run of them is mapped at once,
+        // where the version names its paragraph (a body paragraph of its own).
+        let runs = version.facts().pages.iter().enumerate().flat_map(|(index, page)| {
+            page.lines
+                .chunk_by(|a, b| a.anchor == b.anchor)
+                .map(move |run| (index, run))
         });
-        let named: Vec<bool> = named.collect();
-        for (group, named) in groups.into_iter().zip(named) {
-            if !named {
+        for (index, run) in runs {
+            let Some(key) = run.first().and_then(|l| l.anchor).map(|a| a.block) else {
+                continue;
+            };
+            if key.story() != StoryIx::BODY || !names.holds(key) {
                 continue;
             }
-            for &(index, run) in group {
-                let path = path_of(run);
-                let drawn = run.iter().map(|line| Drawn { page: index + 1, line });
-                by_path.entry(path).or_default().extend(drawn.clone());
-                if let Some(top) = tree::top_block_path(path) {
-                    by_block.entry(top).or_default().extend(drawn);
-                }
-                for table in tree::table_paths(path) {
-                    by_table.entry(table).or_default().insert(index + 1);
-                }
+            let drawn = run.iter().map(|line| Drawn { page: index + 1, line });
+            by_key.entry(key).or_default().extend(drawn.clone());
+            let place = places
+                .entry(key)
+                .or_insert_with(|| In::of(names, key).unwrap_or_default());
+            if let Some(top) = place.top() {
+                by_block.entry(top).or_default().extend(drawn);
+            }
+            for table in place.tables() {
+                by_table.entry(table).or_default().insert(index + 1);
             }
         }
         let blocks = tree::top_level(docx);
-        let positions = blocks.iter().enumerate().map(|(k, b)| (b.path.clone(), k)).collect();
+        let positions = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(k, b)| Some((b.key?, k)))
+            .collect();
+        let facts = version.facts();
         Facts {
             version,
             docx,
             formatting: Formatting::read(docx),
             wanted: pages.map(|p| p.iter().copied().collect()),
-            by_path,
+            by_key,
             by_block,
             by_table,
+            places,
             blocks,
             positions,
             reads,
@@ -215,15 +212,15 @@ impl<'a> Facts<'a> {
         self.scope.as_ref().is_none_or(|s| s.about(subjects))
     }
 
-    /// The layout model's table at `path` (nested ones too), found by an index of the
+    /// The layout model's table `key` (nested ones too), found by an index of the
     /// version's tables made once.
-    pub(crate) fn model_table(&self, path: &str) -> Option<&'a Arc<ooxml_word_model::model::Table>> {
+    pub(crate) fn model_table(&self, key: BlockKey) -> Option<&'a Arc<ooxml_word_model::model::Table>> {
         let index = self.model_tables.get_or_init(|| {
             let mut out = HashMap::new();
             tables::index_tables(&self.version.layout().document.body, &mut out);
             out
         });
-        index.get(path).copied()
+        index.get(&key).copied()
     }
 
     /// `table` (of the version's layout model) resolved as the layout resolved it: from the
@@ -304,24 +301,23 @@ impl<'a> Facts<'a> {
         self.wanted.is_none()
     }
 
-    /// The body lines of the paragraph at `path`, in drawing order.
+    /// The body lines of the paragraph `key`, in drawing order.
     #[must_use]
-    pub fn lines_of(&self, path: &str) -> &[Drawn<'a>] {
-        self.by_path.get(path).map_or(&[], Vec::as_slice)
+    pub fn lines_of(&self, key: Option<BlockKey>) -> &[Drawn<'a>] {
+        key.and_then(|key| self.by_key.get(&key)).map_or(&[], Vec::as_slice)
     }
 
-    /// The 1-based pages the paragraph at `path` is drawn on, in order (`pages_of`).
+    /// The 1-based pages the paragraph `key` is drawn on, in order (`pages_of`).
     #[must_use]
-    pub fn pages_of(&self, path: &str) -> Vec<usize> {
-        pages(self.lines_of(path))
+    pub fn pages_of(&self, key: Option<BlockKey>) -> Vec<usize> {
+        pages(self.lines_of(key))
     }
 
-    /// The 1-based pages the body table at `path` (nested too) draws a line of text on, in
+    /// The 1-based pages the body table `key` (nested too) draws a line of text on, in
     /// order (`_table_pages`).
     #[must_use]
-    pub fn table_pages(&self, path: &str) -> Vec<usize> {
-        self.by_table
-            .get(path)
+    pub fn table_pages(&self, key: Option<BlockKey>) -> Vec<usize> {
+        key.and_then(|key| self.by_table.get(&key))
             .map(|p| p.iter().copied().collect())
             .unwrap_or_default()
     }
@@ -330,17 +326,20 @@ impl<'a> Facts<'a> {
     /// for another part's (docx-agent counts the main part's paragraphs only).
     #[must_use]
     pub fn table_pages_of(&self, id: &str) -> Vec<usize> {
-        self.version
-            .path_of(id)
-            .map(|path| self.table_pages(&path))
-            .unwrap_or_default()
+        self.table_pages(self.names().key_of_id(StoryIx::BODY, id))
     }
 
-    /// The top-level block at `path`, with its place among them.
+    /// The top-level block `key`, with its place among them.
     #[must_use]
-    pub fn block_at(&self, path: &str) -> Option<(usize, &Block<'a>)> {
-        let k = *self.positions.get(path)?;
+    pub fn block_at(&self, key: BlockKey) -> Option<(usize, &Block<'a>)> {
+        let k = *self.positions.get(&key)?;
         Some((k, self.blocks.get(k)?))
+    }
+
+    /// Where the body paragraph `key`, one of those whose lines the facts hold, is among
+    /// the body's blocks.
+    pub(crate) fn place_of(&self, key: BlockKey) -> Option<&In> {
+        self.places.get(&key)
     }
 
     /// Where a top-level block is first drawn: its first page and its lines' top there
@@ -349,7 +348,7 @@ impl<'a> Facts<'a> {
     pub fn first_line(&self, block: &Block<'_>) -> Option<(usize, Px)> {
         match block.kind {
             BlockKind::Paragraph => {
-                let found = self.lines_of(&block.path);
+                let found = self.lines_of(block.key);
                 let page = found.first()?.page;
                 found
                     .iter()
@@ -360,7 +359,7 @@ impl<'a> Facts<'a> {
             }
             BlockKind::Table => self
                 .by_block
-                .get(block.path.as_str())?
+                .get(&block.key?)?
                 .iter()
                 .map(|d| (d.page, d.line.top))
                 .min(),
@@ -465,11 +464,6 @@ impl<'a> Facts<'a> {
 fn pages(drawn: &[Drawn<'_>]) -> Vec<usize> {
     let set: BTreeSet<usize> = drawn.iter().map(|d| d.page).collect();
     set.into_iter().collect()
-}
-
-/// The path of the paragraph a run of its lines draws.
-fn path_of(run: &[LineFact]) -> &str {
-    run.first().map_or("", |line| &line.path)
 }
 
 /// The story a layout path is in (docx-agent's `_story_kind`).

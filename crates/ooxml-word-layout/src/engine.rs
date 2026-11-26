@@ -75,18 +75,18 @@ pub struct LayoutMemo {
     story_texts: std::sync::OnceLock<Arc<crate::page_stories::StoryTexts>>,
     /// Where each page's line numbers count from.
     line_numbers: std::sync::OnceLock<Arc<crate::paint::LineNumbers>>,
-    /// The paths its drawn lines can be of.
-    line_paths: std::sync::OnceLock<Arc<crate::facts::LinePaths>>,
+    /// The keys its drawn lines can be of.
+    line_keys: std::sync::OnceLock<Arc<crate::facts::LineKeys>>,
     /// The list labels of the text boxes anchored in the body.
     text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<String, Option<String>>>>,
     /// Each page's facts, made when first asked.
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
     /// Its body's paragraphs in document order, cells included.
     paragraphs: std::sync::OnceLock<Arc<[Arc<ooxml_word_model::model::Paragraph>]>>,
-    /// Each page's body paragraph paths, in the order first drawn.
-    page_paths: std::sync::OnceLock<Arc<[Arc<[ooxml_word_model::value::Text]>]>>,
-    /// Each body paragraph path's first page.
-    first_pages: std::sync::OnceLock<Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>>>,
+    /// Each page's body paragraphs' keys, in the order first drawn.
+    page_keys: std::sync::OnceLock<Arc<[Arc<[ooxml_word_model::ids::BlockKey]>]>>,
+    /// Each body paragraph's first page, by key.
+    first_pages: std::sync::OnceLock<Arc<std::collections::HashMap<ooxml_word_model::ids::BlockKey, usize>>>,
     /// Per section, the key of the block holding its `w:sectPr`.
     section_holders: std::sync::OnceLock<Arc<[Option<ooxml_word_model::ids::BlockKey>]>>,
     /// Per section, the pages it has content on (`SECTIONPAGES`).
@@ -111,11 +111,11 @@ impl DocumentLayout {
             .get_or_init(|| crate::flow::body_paragraphs(&self.document.body).0.into())
     }
 
-    /// The paths its drawn lines can be of, made when first asked.
-    pub(crate) fn line_paths(&self) -> &crate::facts::LinePaths {
+    /// The keys its drawn lines can be of, made when first asked.
+    pub(crate) fn line_keys(&self) -> &crate::facts::LineKeys {
         self.memo
-            .line_paths
-            .get_or_init(|| Arc::new(crate::facts::LinePaths::of(self)))
+            .line_keys
+            .get_or_init(|| Arc::new(crate::facts::LineKeys::of(self)))
     }
 
     /// Page `page`'s facts (0-based, blank pages counted), made when first asked; `None`
@@ -131,44 +131,42 @@ impl DocumentLayout {
             .as_ref()
     }
 
-    /// Each body paragraph path's first page (0-based), made when first asked without
+    /// Each body paragraph's first page (0-based), by key, made when first asked without
     /// placing a line: what its facts' [`crate::facts::LayoutFacts::first_pages`] say. A
     /// field update's page numbers read it for every field and reference.
-    pub fn first_pages(&self) -> &Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>> {
+    pub fn first_pages(&self) -> &Arc<std::collections::HashMap<ooxml_word_model::ids::BlockKey, usize>> {
         self.memo
             .first_pages
             .get_or_init(|| Arc::new(crate::facts::first_pages_of(self)))
     }
 
-    /// Each page's body paragraph paths, each once, in the order first drawn (its part of
+    /// Each page's body paragraphs' keys, each once, in the order first drawn (its part of
     /// [`DocumentLayout::first_pages`]), made when first asked.
-    pub fn page_paths(&self) -> &Arc<[Arc<[ooxml_word_model::value::Text]>]> {
-        self.memo.page_paths.get_or_init(|| {
+    pub fn page_keys(&self) -> &Arc<[Arc<[ooxml_word_model::ids::BlockKey]>]> {
+        self.memo.page_keys.get_or_init(|| {
             (0..self.page_count())
-                .map(|k| crate::facts::page_paths_of(self, k))
+                .map(|k| crate::facts::page_keys_of(self, k))
                 .collect()
         })
     }
 
     /// [`DocumentLayout::first_pages`], made from `before`'s pages (the version laid out
-    /// before it) where `before` made them: a page kept as `before` laid it out takes its
-    /// paths from there, the rest are walked -- all walked where the body's paragraphs'
-    /// paths differ. Equal to [`DocumentLayout::first_pages`] made alone.
+    /// before it) where `before` made them: a page kept as `before` laid it out, of blocks
+    /// with the same keys, takes its keys from there; the rest are walked. Equal to
+    /// [`DocumentLayout::first_pages`] made alone.
     pub fn first_pages_after(
         &self,
         before: &DocumentLayout,
-    ) -> &Arc<std::collections::HashMap<ooxml_word_model::value::Text, usize>> {
-        if let Some(known) = before.memo.page_paths.get() {
-            if self.mode15 == before.mode15 && self.line_paths() == before.line_paths() {
-                self.memo.page_paths.get_or_init(|| {
-                    (0..self.page_count())
-                        .map(|k| {
-                            crate::facts::kept_page_paths(self, before, known, k)
-                                .unwrap_or_else(|| crate::facts::page_paths_of(self, k))
-                        })
-                        .collect()
-                });
-            }
+    ) -> &Arc<std::collections::HashMap<ooxml_word_model::ids::BlockKey, usize>> {
+        if let Some(known) = before.memo.page_keys.get() {
+            self.memo.page_keys.get_or_init(|| {
+                (0..self.page_count())
+                    .map(|k| {
+                        crate::facts::kept_page_keys(self, before, known, k)
+                            .unwrap_or_else(|| crate::facts::page_keys_of(self, k))
+                    })
+                    .collect()
+            });
         }
         self.first_pages()
     }

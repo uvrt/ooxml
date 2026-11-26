@@ -46,6 +46,10 @@ pub struct EngineStats {
     /// same page, and pages read so with only their stories painted again (they showed
     /// other values: another page count).
     pub pages_read: (u64, u64, u64),
+    /// Versions given whose change from the version given before was taken from the delta
+    /// given with them (its base that version), and those whose change was found by
+    /// comparing the two packages.
+    pub changes_from: (u64, u64),
 }
 
 impl EngineStats {

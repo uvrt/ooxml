@@ -14,7 +14,6 @@ use ooxml_word_layout::paginate::{LaidPage, Pagination};
 use ooxml_word_layout::paint::PagePaint;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::model::Block;
-use ooxml_word_model::value::Text;
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -134,11 +133,7 @@ pub fn facts_weight(facts: &LayoutFacts) -> usize {
         .map(|p| {
             size_of::<PageFacts>()
                 + p.lines.capacity() * size_of::<LineFact>()
-                + p.blocks
-                    .iter()
-                    .map(|b| size_of::<Text>() + 2 * size_of::<usize>() + b.len())
-                    .sum::<usize>()
-                + p.anchors.capacity() * size_of::<ooxml_word_model::ids::Anchor>()
+                + p.blocks.capacity() * size_of::<ooxml_word_model::ids::Anchor>()
         })
         .sum();
     pages + facts.keeps.len() * (size_of::<usize>() + size_of::<BlockKeeps>() + 32)
