@@ -224,12 +224,21 @@ pub(crate) fn write_text_as(
     let wrote = sink.set_paragraph_text(&mut work, text)?;
     // a paragraph stamped before gets a new text id, drawn where the change is applied; an
     // id given at open and not written counts as fresh (WordDoc::id_written)
-    let written = found.state == IdState::Ok && found_written;
+    // (kept where the commit's version has the part's ids still unwritten: DrawFrom::Renewed)
+    let written = found.state == IdState::Ok;
     let mut draws = Vec::new();
     if written {
         let prefix = w14_prefix(tree.root(), &found.path);
+        let seed = Arc::from(format!("{}\0text", found.part));
         draws.push(Draw {
-            from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
+            from: if found_written {
+                DrawFrom::Seed(seed)
+            } else {
+                DrawFrom::Renewed {
+                    seed,
+                    part: Arc::from(found.part.as_str()),
+                }
+            },
             node: 0,
             at: Vec::new(),
             attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),

@@ -241,6 +241,14 @@ impl WordDoc {
         }
     }
 
+    /// Whether `part`'s ids given at open have been written in the version the transaction
+    /// working on this version began on (every part has, but one read with ids given at
+    /// open and not written since).
+    fn begun_written(&self, part: &str) -> bool {
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_)))
+    }
+
     /// Note that an edit of the transaction stamped the document ([`WordDoc::id_written`]).
     pub(crate) fn note_stamped(&self) {
         self.stamped.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -403,6 +411,14 @@ impl WordDoc {
         let mut added = IdsChange::default();
         for draw in draws {
             let value = match &draw.from {
+                DrawFrom::Renewed { part, .. } if !self.begun_written(part) => continue,
+                DrawFrom::Renewed { seed, .. } => {
+                    let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
+                    ids.apply(&change);
+                    added.values.extend(change.values);
+                    added.cursors.extend(change.cursors);
+                    values.into_iter().next().ok_or_else(stale)?
+                }
                 DrawFrom::Seed(seed) => {
                     let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
                     ids.apply(&change);
