@@ -141,7 +141,8 @@ pub(super) fn plan<'a, 'e>(
         return Err(ToolError::failure(
             Failure::Limit,
             format!("{} cells in one call; at most {MOST_CELLS}", places.len()),
-        ));
+        )
+        .with_limit(MOST_CELLS, places.len()));
     }
     // all read first, once each
     let values = cell_values(cells, editing, retry)?;

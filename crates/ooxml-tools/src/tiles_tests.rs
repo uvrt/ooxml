@@ -65,6 +65,11 @@ fn tall_tiles_are_narrowed_to_the_widest_that_fit() {
         "30 pages in 1 column(s) make the sheet over the 2576 px limit even at a tile width of 160: at most 10 pages at these columns; or more columns"
     );
     assert_eq!(refused.field(), Some("pages"));
+    // round 60, R142: the limit in details
+    assert_eq!(
+        serde_json::Value::Object(refused.details().clone()),
+        serde_json::json!({"limit": 10, "given": 30})
+    );
 }
 
 #[test]
@@ -78,6 +83,10 @@ fn bounds_are_refused_with_the_way_out() {
     assert!(refused.way_out().is_some());
     let many = tiling_of(TileOptions::default(), 31, SHEET).unwrap_err();
     assert_eq!(many.code().as_str(), "limit");
+    assert_eq!(
+        serde_json::Value::Object(many.details().clone()),
+        serde_json::json!({"limit": 30, "given": 31})
+    );
 }
 
 fn base64(bytes: &[u8], out: &mut String) {

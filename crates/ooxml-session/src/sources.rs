@@ -786,6 +786,7 @@ impl CallSources<'_> {
                     dataset.cells()
                 ),
             )
+            .with_limit(max, dataset.cells())
             .at(place));
         }
         let version = self.heads.head(&doc).and_then(|v| i64::try_from(v).ok());

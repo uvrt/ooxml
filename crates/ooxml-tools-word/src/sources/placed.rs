@@ -289,11 +289,13 @@ pub(crate) fn fits(
     let address = &block.rows.address;
     let (need_rows, need_columns) = block.size();
     let header = !block.header.is_empty();
-    let error = |message: String, field: &str, options: Vec<String>| -> ToolError {
+    // (`limit`: the most a table takes and what the source gives, a limit refusal's details)
+    let error = |message: String, field: &str, options: Vec<String>, (most, given): (usize, usize)| -> ToolError {
         let way_out = WayOut::names(options).unwrap_or_else(|| WayOut::call(retry.clone()));
         match room {
             Some(_) => ToolError::refusal(Refusal::Refused, message, way_out).at(field),
             None => ToolError::failure(Failure::Limit, message)
+                .with_limit(most, given)
                 .at(field)
                 .with_way_out(way_out),
         }
@@ -317,6 +319,7 @@ pub(crate) fn fits(
             ),
             "from",
             fewer.into_iter().collect(),
+            (max_rows, need_rows),
         ));
     }
     if need_columns > max_columns {
@@ -329,6 +332,7 @@ pub(crate) fn fits(
             format!("{address}: {need_columns} columns picked; {fix}: pick fewer in from_columns"),
             "from_columns",
             Vec::new(),
+            (max_columns, need_columns),
         ));
     }
     if need_rows * need_columns > MAX_CELLS {
@@ -342,6 +346,7 @@ pub(crate) fn fits(
                 thousands(MAX_CELLS)
             ),
         )
+        .with_limit(MAX_CELLS, need_rows * need_columns)
         .at("from"));
     }
     Ok(())

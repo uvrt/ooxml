@@ -599,6 +599,7 @@ fn the_session_keeps_at_most_max_datasets_and_an_id_may_be_reused() {
     let full = sess.call(DERIVE, json!({"doc": "d1", "id": "c"}));
     let error = full.failed("limit");
     assert_eq!(error["valid_options"], json!(["d:a", "d:b"]));
+    assert_eq!(error["details"], json!({"limit": 2, "given": 2}));
     assert_eq!(
         error["message"],
         "2 datasets are kept; at most 2: reuse an id to replace one"
