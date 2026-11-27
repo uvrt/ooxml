@@ -292,3 +292,21 @@ fn each_paragraphs_kind_and_size_are_words() {
         .collect();
     assert_eq!(small_by_key(Value::Object(all)), word);
 }
+
+/// The team's minimums (round 60: body 10, table 8.5, caption 7, footnote 8): each kind is held
+/// to its own -- body text at 9 pt, a cell's at 8 and a footnote's at 7.5 are reported beside
+/// a caption at 6.5, though all are above the smallest minimum (docx-agent 0.1 reported only
+/// the text below that, 7 pt). Header, footer and endnote text is not checked.
+#[test]
+fn each_kind_is_held_to_its_own_minimum_not_the_smallest() {
+    let team = json!({"body": 10, "table": 8.5, "caption": 7, "footnote": 8});
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(root().join(KINDS_DOCX)).unwrap());
+    let (_, in_cells) = keys_of(&bytes);
+    let expected: std::collections::BTreeMap<String, (String, f64)> = word_kinds(&in_cells)
+        .into_iter()
+        .filter(|(_, (kind, size))| team[kind.as_str()].as_f64().is_some_and(|m| *size < m))
+        .collect();
+    let keys: Vec<&str> = expected.keys().map(String::as_str).collect();
+    assert_eq!(keys, ["Alpha", "Delta", "Echo", "India"]);
+    assert_eq!(small_by_key(team), expected);
+}
