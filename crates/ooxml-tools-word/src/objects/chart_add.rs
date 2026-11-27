@@ -12,21 +12,19 @@
 //! Must not: change the document but through the command.
 
 use super::chart_add_plan::{add_plan, workbook, Finish, Look};
-use super::chart_data::{ChartDataEdit, DataAction, Warnings};
-use super::chart_keeper::{not_supported as chart_not_supported, refused as data_refused, sheets_error};
-use super::chart_read::chart_json;
-use super::chart_style::{add_scale, colour_given, text_look, ChartStyleEdit, StyleAction};
-use super::{EditChart, ScaleArg};
+use super::chart_data::{ChartDataEdit, DataAction};
 use crate::structure::common::{call, outcome, policy, refused, Outcome};
 use crate::Editing;
 use ooxml_chart::data::chart_data;
 use ooxml_chart::edit::create::NewChart;
-use ooxml_chart::edit::SeriesFormat;
+use ooxml_chart::edit::{GraphicEdit, SeriesFormat};
 use ooxml_store::{Command, Txn};
 use ooxml_tools::{ArgEnum, ToolError, ToolResult};
-use ooxml_word_edit::{
-    ChartInserted, ChartParts, EditError, EditGraphic, GraphicEdit, InsertChart, RevisionPolicy, WordDoc,
-};
+use ooxml_tools_chart::keeper::{not_supported as chart_not_supported, refused as data_refused, sheets_error};
+use ooxml_tools_chart::read::chart_json;
+use ooxml_tools_chart::style::{add_scale, colour_given, text_look, ChartStyleEdit, StyleAction};
+use ooxml_tools_chart::{EditChart, ScaleArg, Warnings};
+use ooxml_word_edit::{ChartInserted, ChartParts, EditError, EditGraphic, InsertChart, RevisionPolicy, WordDoc};
 use ooxml_xml::Tree;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -86,7 +84,7 @@ impl AddChart {
 
     /// `step`'s edit, planned on the chart in `part` as `doc` holds it.
     fn planned(&self, step: Step<'_>, doc: &WordDoc, part: &str, address: &str) -> Result<Edit, EditError> {
-        let refuse = |e: ooxml_chart::edit::DataError| data_refused(&e.0);
+        let refuse = |e: ooxml_chart::edit::DataError| EditError::from(data_refused(&e.0));
         let look = match step {
             Step::Gridlines(axis, major, minor) => {
                 return Ok(Edit::Style(StyleAction::Gridlines { axis, major, minor }))

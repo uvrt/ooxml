@@ -12,6 +12,7 @@ ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 ooxml-tools.workspace = true
+ooxml-tools-chart.workspace = true
 ooxml-word-model.workspace = true
 ooxml-word-edit.workspace = true
 ooxml-word-layout.workspace = true
@@ -24,7 +25,6 @@ ooxml-chart.workspace = true
 ooxml-sheets.workspace = true
 ooxml-zip.workspace = true
 serde_json.workspace = true
-unicode-normalization.workspace = true
 
 [dev-dependencies]
 ooxml-derive.workspace = true

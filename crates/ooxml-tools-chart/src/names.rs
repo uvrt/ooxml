@@ -4,14 +4,14 @@
 //! name; a name two share, a name nothing has and a position past the end refused, with the
 //! names there are.
 //!
-//! The loose comparison folds as Python 3.12 does (`chart_fold`: NFKC, then `casefold`,
+//! The loose comparison folds as Python 3.12 does (`fold`: NFKC, then `casefold`,
 //! Unicode 15.0); a text holding a character newer than that is left to the host
 //! ([`Named::NotSupported`]), as is a name of digits outside ASCII (Python's `isdigit` and
 //! `int` disagree on some).
 //!
 //! Must not: change the chart.
 
-use super::chart_fold::loose;
+use crate::fold::loose;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_chart::data::{ChartData, Point};
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
@@ -29,13 +29,15 @@ pub(crate) enum Named {
 }
 
 /// Why an action is not planned: refused, or left to the host.
-pub(crate) enum Stop {
+pub enum Stop {
+    /// The call's refusal.
     Refused(ToolError),
+    /// A form not supported yet.
     NotSupported(&'static str),
 }
 
 /// What `which` names among `names` ([`resolve`]), as a position or why not.
-pub(crate) fn position(
+pub fn position(
     names: &[String],
     which: Option<&String>,
     said: (&str, &str, &str),
@@ -50,7 +52,7 @@ pub(crate) fn position(
 
 /// The series names a call is matched against: each one's name as Python's `str`, `""` for
 /// none.
-pub(crate) fn series_names(data: &ChartData) -> Vec<String> {
+pub fn series_names(data: &ChartData) -> Vec<String> {
     data.series
         .iter()
         .map(|s| s.name.as_ref().map(Point::text).unwrap_or_default())
@@ -59,7 +61,7 @@ pub(crate) fn series_names(data: &ChartData) -> Vec<String> {
 
 /// The category labels a call is matched against (`category_labels`): ISO dates for dates
 /// kept as serials, else each label as Python's `str` (a blank `"None"`).
-pub(crate) fn category_names(data: &ChartData) -> Vec<String> {
+pub fn category_names(data: &ChartData) -> Vec<String> {
     let text = |c: &Option<Point>| c.as_ref().map_or_else(|| "None".to_owned(), Point::text);
     match &data.category_dates {
         None => data.categories.iter().map(text).collect(),

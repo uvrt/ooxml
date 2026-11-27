@@ -2,8 +2,8 @@
 
 use super::{kept, updated};
 use crate::objects::chart_data::DataAction;
+use ooxml_chart::edit::RecordChange;
 use ooxml_chart::edit::{record_text, with_record};
-use ooxml_word_edit::RecordChange;
 use ooxml_xml::{Element, Limits};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;

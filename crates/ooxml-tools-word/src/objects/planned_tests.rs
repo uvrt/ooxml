@@ -482,9 +482,10 @@ mod sync {
 mod edit_chart {
     use super::*;
     use crate::objects::chart_data::{ChartDataEdit, DataAction};
-    use crate::objects::chart_names::{category_names, series_names};
-    use crate::objects::edit_chart::{chart_plan, planned};
-    use crate::objects::edit_chart_args::EditChart;
+    use crate::objects::edit_chart::planned;
+    use crate::objects::graphics::WordGraphics;
+    use ooxml_tools_chart::names::{category_names, series_names};
+    use ooxml_tools_chart::{planner, EditChart};
     use ooxml_word_edit::EditGraphic;
     use ooxml_word_model::docx::drawings::graphics;
     use ooxml_word_model::docx::graphics::chart_part;
@@ -532,13 +533,18 @@ mod edit_chart {
         tx: &mut Txn<'_, WordDoc>,
     ) -> Result<(EditGraphic<ChartDataEdit>, ()), ToolError> {
         let read = retry();
-        let edit = |data: &ooxml_chart::data::ChartData, _: &ooxml_xml::Element, lang: String| {
-            planned(call, data, &read, &lang).map(|action| ChartDataEdit {
+        let edit = |data: &ooxml_chart::data::ChartData, _: &ooxml_xml::Element, lang: &str| {
+            planned(call, data, &read, lang).map(|action| ChartDataEdit {
                 address: call.target.clone(),
                 action,
             })
         };
-        chart_plan(call, editing, tx, &edit)
+        let writer = WordGraphics {
+            editing,
+            doc: &call.doc,
+        };
+        let plan = planner(call, &edit);
+        writer.planned(tx, &call.target, &plan)
     }
 
     fn part_of(editor: &Editor, part: &str) -> Vec<u8> {

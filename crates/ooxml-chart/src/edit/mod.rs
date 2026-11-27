@@ -4,7 +4,8 @@
 //! none, taken out for a blank), a series' name given as a literal where it has none, and
 //! each source's reference read for its formula (`c:f`), so the caller keeps the embedded
 //! workbook in step; and the chart part's own record of where its values came from
-//! ([`record_text`], [`with_record`]).
+//! ([`record_text`], [`with_record`]); and what an edit of a graphic's parts makes, as data
+//! each format's host applies ([`GraphicEdit`]).
 //!
 //! The tree is immutable: each change copies the path from the root down to the element it
 //! changes ([`ChartTree`] holds the root as changed so far).
@@ -16,6 +17,7 @@ mod axes;
 mod combine;
 pub mod create;
 mod format;
+mod graphic;
 mod look;
 mod looks;
 mod make;
@@ -31,6 +33,7 @@ mod title;
 
 pub use axes::ScaleChange;
 pub use format::{points_to_emu, text_size, Colour, TextLook};
+pub use graphic::{GraphicEdit, GraphicError, GraphicParts, PartWrite, RecordChange};
 pub use look::{labels_show_values, LabelLook};
 pub use looks::SeriesFormat;
 pub use point_labels::{PointLabels, LABEL_POSITIONS};

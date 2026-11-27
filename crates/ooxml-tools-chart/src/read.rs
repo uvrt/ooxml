@@ -8,13 +8,13 @@
 //! Must not: change the chart, or word what ooxml-edit words as its own exceptions (those
 //! reads are [`Unreadable`], left to the host).
 
-use super::chart_workbook::{workbook_values, Unreadable};
+use crate::workbook::{workbook_values, Unreadable};
 use ooxml_chart::data::{
     axis_names, axis_scale, blanks, chart_data, gap_width, is_dot, number_formats, point_labels, series_elements,
     series_look, ChartData, Look, Point, Said, Scale,
 };
+use ooxml_chart::data::{point_json, points_json};
 use ooxml_opc::Package;
-use ooxml_word_model::docx::graphics::{point_json, points_json};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
 
@@ -49,7 +49,7 @@ pub(crate) fn chart_read_json(
 }
 
 /// ooxml-edit's `chart_json`, the chart by its `id`.
-pub(crate) fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
+pub fn chart_json(id: &str, root: &Element, data: &ChartData) -> Map<String, Value> {
     let mut out = Map::new();
     out.insert("id".into(), Value::from(id));
     let kind = if is_dot(root) {

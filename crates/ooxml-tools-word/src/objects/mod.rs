@@ -13,27 +13,20 @@ mod cell_fills;
 mod cell_values;
 mod chart_add;
 mod chart_add_plan;
-mod chart_block;
 mod chart_data;
-mod chart_fold;
-mod chart_keeper;
-mod chart_names;
-mod chart_read;
 mod chart_record;
-mod chart_style;
-mod chart_workbook;
 mod controls;
 mod drawings;
 mod drawings_args;
 mod drawings_picture;
 mod edit_chart;
-mod edit_chart_args;
 mod edit_table;
 mod edit_table_args;
 mod edit_table_cells;
 mod edit_table_pending;
 mod format_table;
 mod format_table_args;
+mod graphics;
 mod made_by;
 #[cfg(test)]
 mod planned_tests;
@@ -50,11 +43,6 @@ mod table_view;
 pub use controls::word_controls;
 pub use drawings::word_drawings;
 pub use drawings_args::{Against, ControlAction, ControlType, DrawingAction, WordControls, WordDrawings, Wrap, ZOrder};
-pub use edit_chart::{edit_chart, edit_chart_read};
-pub use edit_chart_args::{
-    Blanks, ChartAction, ChartAxis, ChartBox, ChartPosition, ChartType, Dash, EditChart, Gridlines, Marker, ScaleArg,
-    ScaleKey, SeriesArg, SeriesType, StyleArg, TextPart,
-};
 pub use edit_table::word_edit_table;
 pub use edit_table_args::{CellArg, KeyPair, Loose, Position, Side, TableAction, WordEditTable};
 pub use format_table::{kept_together_said, word_format_table};

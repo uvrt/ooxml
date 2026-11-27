@@ -9,11 +9,11 @@
 //! Must not: change the chart's caches (`ooxml_chart::edit` does), or open the workbook but
 //! through the [`Keeper`].
 
-use super::chart_keeper::{not_supported, refused, Keeper};
+use crate::keeper::{not_supported, refused, Keeper};
 use ooxml_base::pyfmt::repr_str;
+use ooxml_chart::edit::GraphicError;
 use ooxml_chart::edit::{ChartTree, Which, POINT_SOURCES};
 use ooxml_sheets::{parse_formula, Area, Axis, Cell, SheetRange, Shift, Write};
-use ooxml_word_edit::EditError;
 use std::collections::BTreeSet;
 
 /// One source of a series as the block reads it: its kind, formula and range.
@@ -26,12 +26,12 @@ pub(crate) struct Src {
 
 /// A series' sources, by kind.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct SerSources {
+pub struct SerSources {
     pub(crate) sources: Vec<(Which, Src)>,
 }
 
 impl SerSources {
-    pub(crate) fn of(chart: &ChartTree, series: usize) -> Result<SerSources, EditError> {
+    pub(crate) fn of(chart: &ChartTree, series: usize) -> Result<SerSources, GraphicError> {
         let mut sources = Vec::new();
         for which in [
             Which::Name,
@@ -77,16 +77,17 @@ impl SerSources {
 }
 
 /// Every series' sources.
-pub(crate) fn all_sources(chart: &ChartTree) -> Result<Vec<SerSources>, EditError> {
+pub fn all_sources(chart: &ChartTree) -> Result<Vec<SerSources>, GraphicError> {
     (0..chart.series_count()).map(|s| SerSources::of(chart, s)).collect()
 }
 
 /// The chart's data as lines of cells (`_Block`): `down` where points run down a column.
 #[derive(Debug, Clone)]
-pub(crate) struct Block {
+pub struct Block {
     pub(crate) sheet: String,
     pub(crate) down: bool,
-    pub(crate) start: u32,
+    /// Where the points start along each line.
+    pub start: u32,
     pub(crate) count: u32,
 }
 
@@ -103,12 +104,12 @@ fn line_of(range: &SheetRange, down: bool) -> (u32, u32, u32) {
 impl Block {
     /// `Chart._block`: `None` where there is no workbook to keep in step (the edit is then
     /// cache only, its reason noted).
-    pub(crate) fn find(
+    pub fn find(
         address: &str,
         series: &[SerSources],
         keeper: &mut Keeper<'_>,
         count: usize,
-    ) -> Result<Option<Block>, EditError> {
+    ) -> Result<Option<Block>, GraphicError> {
         let sources: Vec<&Src> = series
             .iter()
             .flat_map(|s| s.point_sources().map(|(_, src)| src))
@@ -234,14 +235,14 @@ impl Block {
     }
 
     /// `_check_free`: every cell at `positions` of the lines `across` empty.
-    pub(crate) fn check_free(
+    pub fn check_free(
         &self,
         address: &str,
         keeper: &mut Keeper<'_>,
         series: &[SerSources],
         positions: &[u32],
         across: Option<&[u32]>,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         let lines: Vec<u32> = match across {
             Some(lines) => lines.to_vec(),
             None => self.lines(series).into_iter().map(|(_, _, a)| a).collect(),
@@ -261,7 +262,7 @@ impl Block {
     }
 
     /// Every ranged source's formula given `count` cells of its line (`set_range`).
-    fn resize(&self, chart: &mut ChartTree, series: &[SerSources], count: u32) -> Result<(), EditError> {
+    fn resize(&self, chart: &mut ChartTree, series: &[SerSources], count: u32) -> Result<(), GraphicError> {
         for (at, ser) in series.iter().enumerate() {
             for (which, source) in ser.point_sources() {
                 if let Some(range) = &source.range {
@@ -276,7 +277,7 @@ impl Block {
 
     /// `_insert_line_cells`: a category's cells put in at `position` in every line, the
     /// later cells moved along, the new ones written (styled as their neighbour).
-    pub(crate) fn insert_line(
+    pub fn insert_line(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,
@@ -284,7 +285,7 @@ impl Block {
         position: u32,
         label: Option<&str>,
         values: &[Option<f64>],
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         let target = self.start + position;
         let last = self.start + self.count - 1;
         let lines = self.lines(series);
@@ -321,13 +322,13 @@ impl Block {
 
     /// `_delete_line_cells`: a category's cells taken out of every line, the later cells
     /// moved back.
-    pub(crate) fn delete_line(
+    pub fn delete_line(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,
         series: &[SerSources],
         index: u32,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         let target = self.start + index;
         let last = self.start + self.count - 1;
         let lines = self.lines(series);
@@ -374,7 +375,7 @@ impl Block {
     /// `_append_series_cells`: the new series (at `new`) given the next free line, its name in
     /// the header cell where the names live in the sheet.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn append_series(
+    pub fn append_series(
         &self,
         address: &str,
         chart: &mut ChartTree,
@@ -383,7 +384,7 @@ impl Block {
         new: usize,
         name: Option<&str>,
         values: &[Option<f64>],
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         let lines = self.lines(series);
         let value_lines = self.value_lines(series);
         let across = lines.iter().map(|(_, _, a)| *a).max().unwrap_or(0) + 1;
@@ -446,7 +447,7 @@ impl Block {
         series: &[SerSources],
         own: usize,
         labels: &[String],
-    ) -> Result<String, EditError> {
+    ) -> Result<String, GraphicError> {
         let lines = self.lines(series);
         let across = lines.iter().map(|(_, _, a)| *a).max().unwrap_or(0) + 1;
         let header = self.header(series);
@@ -485,13 +486,13 @@ impl Block {
 
     /// `_delete_series_cells`: the doomed series' cells cleared and, where the series sit
     /// side by side, the later series' lines moved back one.
-    pub(crate) fn delete_series(
+    pub fn delete_series(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,
         series: &[SerSources],
         doomed: usize,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         let header = self.header(series);
         let Some(gone) = series.get(doomed) else { return Ok(()) };
         if let Some(labels) = gone.range(Which::Labels) {
@@ -593,7 +594,7 @@ fn direction(ranges: &[&SheetRange], series: &[SerSources]) -> bool {
 }
 
 /// `_label_for`: a category label as a cell value -- numeric categories' a number.
-fn label_for(source: Option<&Src>, given: Write) -> Result<Write, EditError> {
+fn label_for(source: Option<&Src>, given: Write) -> Result<Write, GraphicError> {
     let numeric = source.is_some_and(|s| matches!(s.kind.as_str(), "numRef" | "numLit"));
     match given {
         Write::Text(text) if numeric => match ooxml_chart::data::decode_number(&text) {
@@ -607,7 +608,7 @@ fn label_for(source: Option<&Src>, given: Write) -> Result<Write, EditError> {
     }
 }
 
-fn spell(range: &SheetRange) -> Result<String, EditError> {
+fn spell(range: &SheetRange) -> Result<String, GraphicError> {
     range
         .formula()
         .map_err(|_| not_supported("a formula ooxml-sheets cannot spell"))
