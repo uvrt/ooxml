@@ -222,8 +222,6 @@ def test_describe_lists_headings_sections_comments_and_pages(box, session):
     assert data["sections"][0]["id"] == "s:body" and data["comments"]["threads"] >= 1
 
 
-@pytest.mark.xfail(strict=True, raises=NotImplementedError,
-                   reason="Phase 3 E1b: the application's datasets in a session on the Rust host")
 def test_describe_lists_the_sessions_datasets_without_their_values(box, session):
     """Round 5, T11: a dataset a document may place from is in describe (ooxml-edit
     0.30.0)."""
@@ -1450,7 +1448,9 @@ def app_keep(call, text):
     return Result(summary=f"Kept {text!r}", data={"kept": len(KEPT)})
 
 
-def test_a_batch_runs_a_tool_the_application_registered():
+def test_a_batch_refuses_a_tool_the_application_registered_call_it_alone():
+    """Decision D1 (Phase 3 E1b): the application's own tool runs beside the Rust host, alone; inside
+    a batch it is refused with the way out, and the batch's other ops apply."""
     KEPT.clear()
     with Toolbox(TOOLS + [app_keep], formats=[FORMAT], groups=GROUPS) as own:
         session = own.session(clock=lambda: CLOCK_AT)
@@ -1459,11 +1459,12 @@ def test_a_batch_runs_a_tool_the_application_registered():
             {"tool": "word_set_text", "arguments": {"doc": d, "target": "p:16425160",
                                                     "text": "Scope of work"}},
             {"tool": "app_keep", "arguments": {"text": "renamed the heading"}}])
-        assert KEPT == ["renamed the heading"]
-        assert result.data["ops"][1] == {"op": 1, "tool": "app_keep",
-                                         "summary": "Kept 'renamed the heading'",
-                                         "data": {"kept": 1}}
+        assert KEPT == []
+        assert result.data["ops"][1]["error"]["message"] == (
+            "app_keep is the application's own tool, which cannot run inside a batch: call it alone")
         assert text(own, session, "p:16425160") == "Scope of work"
+        assert ok(own, session, "app_keep", text="renamed the heading").data == {"kept": 1}
+        assert KEPT == ["renamed the heading"]
 
 
 @pytest.mark.parametrize("tool_name, arguments, done", [

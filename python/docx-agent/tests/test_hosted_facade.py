@@ -2,8 +2,10 @@
 ``Result`` with today's signatures, docx-agent's documents held and its calls run by the Rust
 host (``ooxml_core.Host``, one per toolbox; ``HostSession``, one per session).
 
-- Which toolbox runs on the host: the rule until E1b (every format the host's, no tool of the
-  application's own), pinned.
+- Which toolbox runs on the host: every format the host's (a Python-held format keeps the Python
+  host until E1b-2), the application's own tools beside it.
+- The application's tools keep their datasets, outputs and images in the Rust session (E1b,
+  decision D3): read back as kept, a dataset kept again read fresh.
 - The session clock reaches the host as a value: a new document's created date is the clock's.
 - A call's ``Result`` is built from the reply's JSON, its ``ToolError`` from the reply's error,
   and its record is appended to the session's log.
@@ -55,7 +57,7 @@ def opened(box, **given):
     return session, doc
 
 
-# -- which toolbox runs on the host (until E1b) ------------------------------------------------
+# -- which toolbox runs on the host ---------------------------------------------------------------
 
 
 def test_a_toolbox_of_the_hosts_formats_and_tools_runs_its_sessions_on_the_host(box):
@@ -64,13 +66,12 @@ def test_a_toolbox_of_the_hosts_formats_and_tools_runs_its_sessions_on_the_host(
     assert isinstance(session.view(roles=["review"]), type(session.view()))
 
 
-def test_until_e1b_a_toolbox_with_tools_of_its_own_runs_on_the_python_host():
+def test_a_toolbox_with_tools_of_its_own_runs_on_the_host():
     with Toolbox([*TOOLS, app_note], formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
-        session = toolbox.session()
-    assert type(session) is Session, "E1b's shared stores move it onto the host"
+        assert isinstance(toolbox.session(), HostedSession)
 
 
-def test_until_e1b_a_toolbox_with_a_python_format_runs_on_the_python_host():
+def test_until_e1b_2_a_toolbox_with_a_python_format_runs_on_the_python_host():
     import dataclasses
 
     python_format = dataclasses.replace(FORMAT, kind="grid", host=None, owner=None)
@@ -134,9 +135,7 @@ def test_roles_set_on_the_session_hold_its_calls(box):
 
 
 def test_an_application_tool_runs_in_the_facade_and_in_a_batch_is_refused_call_it_alone():
-    # (the seam: a toolbox with a tool of its own on the host, which the rule leaves on the
-    # Python host until E1b; E1b deletes the seam with the rule)
-    with Toolbox([*TOOLS, app_note], formats=[FORMAT], groups=GROUPS, workers=0, _rust_host=True) as toolbox:
+    with Toolbox([*TOOLS, app_note], formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
         session, doc = opened(toolbox)
         assert isinstance(session, HostedSession)
         alone = toolbox.dispatch(session, "app_note", {"text": "hi"})
@@ -149,6 +148,140 @@ def test_an_application_tool_runs_in_the_facade_and_in_a_batch_is_refused_call_i
         assert refused["message"] == ("app_note is the application's own tool, which cannot run inside a batch: "
                                       "call it alone")
         assert batch.data["applied"] == 1
+
+
+@tool("app_peek", "Test only: an application's own tool that names a document.", {"doc": string("Document id.")})
+def app_peek(call, doc):
+    return Result(summary="peeked")
+
+
+def test_an_application_tool_naming_a_document_the_host_holds_is_refused_with_the_way_out():
+    with Toolbox([*TOOLS, app_peek], formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        session, doc = opened(toolbox)
+        refused = toolbox.dispatch(session, "app_peek", {"doc": doc})
+        assert not refused.ok and refused.error.code == "refused", refused.to_json()
+        assert refused.error.details == {"held_by_host": [doc]}
+        assert "read or change it with the host's tools" in refused.error.message
+        assert session.log[-1].tool == "app_peek" and session.log[-1].code == "refused"
+
+
+# -- the application's tools' stores: the Rust session's (E1b, decision D3) ------------------------
+
+
+ROWS = [{"Region": "North", "Units": 3, "Day": dt.date(2026, 1, 5)},
+        {"Region": "South", "Units": 2.5, "Day": None}]
+
+
+@tool("app_keep", "Test only: keep a made-up dataset.", {"id": string("Its id."), "units": string("North's units.")},
+      documents=())
+def app_keep(call, id, units):
+    from ooxml_edit.tools import Dataset
+
+    rows = [dict(ROWS[0], Units=int(units)), ROWS[1]]
+    call.define_dataset(id, Dataset.from_records(rows, types={"Units": "number"}), source=None)
+    return Result(summary=f"kept d:{id}")
+
+
+@tool("app_show", "Test only: show images.", {"count": string("How many.")}, documents=())
+def app_show(call, count):
+    call.session.reserve_images(int(count))
+    return Result(summary="shown")
+
+
+@pytest.fixture(scope="module")
+def own_box():
+    from ooxml_edit.tools import Limits
+
+    with Toolbox([*TOOLS, app_keep, app_show], formats=[FORMAT], groups=GROUPS, workers=0,
+                 limits=Limits(image_budget=3)) as toolbox:
+        yield toolbox
+
+
+def test_an_application_tools_dataset_is_kept_in_the_rust_session_and_placed_from(own_box):
+    session, doc = opened(own_box)
+    assert own_box.dispatch(session, "app_keep", {"id": "sales", "units": "3"}).ok
+    assert session.dataset_ids() == ["d:sales"]
+    entry = session.dataset("d:sales")
+    assert entry.dataset.records() == ROWS, "the values exactly as kept"
+    assert not entry.stale and not entry.closed and entry.doc is None
+    placed = own_box.dispatch(session, "word_insert_markdown", {"doc": doc, "at": "end",
+                                                               "markdown": "North: {{d:sales/North/Units}}."})
+    assert placed.ok, placed.to_json()
+    assert "North: 3." in own_box.dispatch(session, "word_read", {"doc": doc}).data
+    described = own_box.dispatch(session, "describe", {"doc": doc}).data["datasets"]
+    assert described == [{"id": "d:sales", "columns": ["Region", "Units", "Day"], "types": {"Units": "number"},
+                          "rows": 2}]
+
+
+def test_a_dataset_kept_again_is_read_fresh_and_one_dropped_is_gone(own_box):
+    session, _doc = opened(own_box)
+    assert own_box.dispatch(session, "app_keep", {"id": "sales", "units": "3"}).ok
+    first = session.dataset("d:sales")
+    assert session.dataset("d:sales") is first, "one view while the keeping is the same"
+    assert own_box.dispatch(session, "app_keep", {"id": "sales", "units": "7"}).ok
+    again = session.dataset("d:sales")
+    assert again is not first and again.serial != first.serial
+    assert again.dataset.rows[0][1] == 7
+    session.drop_dataset("d:sales")
+    with pytest.raises(ToolError) as refused:
+        session.dataset("d:sales")
+    assert refused.value.code == "not_found"
+    from ooxml_edit.tools import Dataset, DatasetEntry
+
+    session.keep_datasets([DatasetEntry("sales", Dataset(("Region",), [("West",)]))])
+    assert session.dataset("d:sales").dataset.rows == (("West",),), "kept again after a drop: read fresh"
+
+
+def test_a_dataset_the_host_kept_reads_back_from_its_json(own_box):
+    from ooxml_edit.tools import Dataset, DatasetEntry
+    from ooxml_edit.tools.hosted_data import HostDatasets, OtherValue
+
+    session, _doc = opened(own_box)
+    given = Dataset(("a", "b"), [(dt.datetime(2026, 1, 5, 9, 30), float("nan")), (2 ** 70, "x")],
+                    sources=[[("A1",), ()], [(), ("B2",)]], keys=1, formats=(None, "0.0"),
+                    markdown={(1, 1): "**x**"})
+    session.keep_datasets([DatasetEntry("odd", given)])
+    fresh = HostDatasets(session.rust).get("d:odd").dataset      # (no copy of its own: read from the JSON)
+    assert fresh.rows == ((dt.datetime(2026, 1, 5, 9, 30), OtherValue("not a finite number")), (2 ** 70, "x"))
+    assert fresh.sources == given.sources and fresh.keys == 1 and fresh.formats == (None, "0.0")
+    assert fresh.markdown_at(1, 1) == "**x**"
+
+
+def test_the_datasets_limit_is_the_rust_sessions(own_box):
+    from ooxml_edit.tools import Dataset, DatasetEntry, Limits
+
+    session = own_box.session(limits=Limits(max_datasets=1))
+    session.keep_datasets([DatasetEntry("one", Dataset(("a",), [(1,)]))])
+    with pytest.raises(ToolError) as refused:
+        session.keep_datasets([DatasetEntry("two", Dataset(("a",), [(1,)]))])
+    assert refused.value.code == "limit" and session.dataset_ids() == ["d:one"]
+
+
+def test_an_application_tools_images_count_against_the_rust_sessions_budget(own_box):
+    session, _doc = opened(own_box)
+    assert session.images_remaining() == 3
+    assert own_box.dispatch(session, "app_show", {"count": "2"}).ok
+    assert session.images_remaining() == 1
+    over = own_box.dispatch(session, "app_show", {"count": "2"})
+    assert not over.ok and over.error.code == "limit" and over.error.details["budget"] == "session", over.to_json()
+    session.release_images(1)
+    assert session.images_remaining() == 2
+
+
+def test_an_application_output_is_kept_in_the_rust_session_until_taken(own_box):
+    from ooxml_edit.tools.session import Output
+
+    session, doc = opened(own_box)
+    session.add_output(Output("notes.txt", "txt", b"hello", validate={"new": []}))
+    assert own_box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"}).ok
+    taken = session.take_outputs()
+    assert [(o.name, o.data[:2]) for o in taken] == [("notes.txt", b"he"), ("out.docx", b"PK")]
+    assert taken[0].validate == {"new": []} and session.take_outputs() == []
+    handed = []
+    session = own_box.session(on_output=handed.append)
+    doc = session.open(word_docs.blank(), "report.docx")
+    assert own_box.dispatch(session, "save_document", {"doc": doc, "name": "out.docx", "format": "docx"}).ok
+    assert [o.name for o in handed] == ["out.docx"] and session.take_outputs() == []
 
 
 # -- a turn ------------------------------------------------------------------------------------------

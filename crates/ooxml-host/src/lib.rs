@@ -38,7 +38,7 @@ mod wrap;
 
 pub use catalogue::{Catalogue, Entry, Own};
 pub use check_values::KeptIndex;
-pub use documents::{DocumentLimits, Held, OpenRefused, Opening, Saved};
+pub use documents::{DocumentLimits, Held, KeptDataset, OpenRefused, Opening, Saved};
 pub use own::{Batch, CloseDocument, NewDocument, NewKind, NotYet, OpenDocument, OwnCall, ReadBlob, SessionTools};
 pub use pipeline::{caller_key, NotRun};
 pub use records::{digest, shape, CallRecord, RetryKeys};

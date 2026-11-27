@@ -95,6 +95,12 @@ impl OutputStore {
         }
     }
 
+    /// The outputs saved since the last take, kept.
+    #[must_use]
+    pub fn outputs(&self) -> &[Output] {
+        &self.outputs
+    }
+
     /// The outputs saved since the last take, handed over and forgotten.
     pub fn take(&mut self) -> Vec<Output> {
         std::mem::take(&mut self.outputs)

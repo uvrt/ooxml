@@ -95,3 +95,56 @@ fn describe_lists_the_sessions_datasets_never_their_values() {
     let none = call(&session(), "describe", json!({"doc": "d1"}));
     assert!(none["data"].get("datasets").is_none(), "{none}");
 }
+
+#[test]
+fn a_dataset_the_application_kept_reads_back_with_its_serial_and_goes_stale_with_its_document() {
+    use ooxml_session::datasets::DocMeta;
+    let s = session();
+    let made =
+        |units: i64| Arc::new(Dataset::new(vec!["units".into()], vec![vec![Cell::Int(units.to_string())]]).unwrap());
+    let meta = DocMeta {
+        doc: "d1".into(),
+        kind: ooxml_session::DocKind::Pptx,
+        name: "deck.pptx".into(),
+    };
+    let serials = s
+        .keep_datasets(vec![DatasetEntry::new("units", made(3), Some(&meta))])
+        .unwrap();
+    let kept = s.kept_dataset("units").unwrap();
+    assert_eq!(serials, vec![kept.serial]);
+    assert!(!kept.stale && !kept.closed);
+    assert_eq!(kept.entry.version(), Some(0), "of the document's head when kept");
+    let reply = call(&s, "toy_set", json!({"doc": "d1", "target": "a", "text": "changed"}));
+    assert_eq!(reply["ok"], json!(true), "{reply}");
+    assert!(s.kept_dataset("units").unwrap().stale, "its document changed since");
+    s.keep_datasets(vec![DatasetEntry::new("units", made(4), None)])
+        .unwrap();
+    let again = s.kept_dataset("units").unwrap();
+    assert_ne!(again.serial, kept.serial, "kept again: another serial");
+    assert!(!again.stale);
+    s.drop_dataset("d:units").unwrap();
+    assert!(s.kept_dataset("units").is_none());
+    assert_eq!(s.drop_dataset("d:units").unwrap_err().code().as_str(), "not_found");
+}
+
+#[test]
+fn the_applications_images_and_outputs_are_the_sessions() {
+    let s = session();
+    assert_eq!(s.images_remaining(), Some(40));
+    s.images(39, true).unwrap();
+    assert_eq!(s.images(2, false).unwrap_err().code().as_str(), "limit");
+    s.release_images(9);
+    assert_eq!(s.images_remaining(), Some(10));
+    s.add_output(ooxml_session::outputs::Output {
+        name: "notes.txt".into(),
+        format: "txt".into(),
+        data: Arc::from(&b"hello"[..]),
+        doc: None,
+        validate: None,
+        state: None,
+    });
+    let taken = s.take_outputs();
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].name, "notes.txt");
+    assert!(s.take_outputs().is_empty());
+}
