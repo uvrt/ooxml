@@ -194,7 +194,7 @@ def _on_python_host(request):
     from ooxml_edit.tools import hosted
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(hosted, "runs_on_host", lambda toolbox, forced=None: False)
+        patch.setattr(hosted, "runs_on_host", lambda toolbox: False)
         yield
 
 

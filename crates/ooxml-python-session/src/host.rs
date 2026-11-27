@@ -527,10 +527,15 @@ impl PyHostSession {
     }
 
     /// The files tools saved since the last take, each `(name, format, doc, bytes,
-    /// validate, state)`.
-    fn take_outputs(&self, py: Python<'_>) -> Vec<OutputRow> {
-        self.inner
-            .take_outputs()
+    /// validate, state)`; with `keep`, kept to be taken later.
+    #[pyo3(signature = (*, keep = false))]
+    fn take_outputs(&self, py: Python<'_>, keep: bool) -> Vec<OutputRow> {
+        let outputs = if keep {
+            self.inner.outputs()
+        } else {
+            self.inner.take_outputs()
+        };
+        outputs
             .into_iter()
             .map(|o| {
                 let state = o.state.as_deref().and_then(|s| s.downcast_ref::<String>()).cloned();
@@ -544,6 +549,109 @@ impl PyHostSession {
                 )
             })
             .collect()
+    }
+
+    /// Keep datasets the application's own host defined (its producers' and its tools'):
+    /// `entries` JSON text, a list of entries as `ooxml_session`'s `DatasetEntry::from_json`
+    /// reads them, all or none: `(the serial each was kept under, None)`, or `(None, the
+    /// refusal's JSON text)` (`limit`).
+    ///
+    /// # Errors
+    /// `ValueError` for entries that are not such a list.
+    fn keep_datasets(&self, py: Python<'_>, entries: &str) -> PyResult<(Option<Vec<u64>>, Option<String>)> {
+        let given = json_of(entries, "entries")?;
+        let entries = given
+            .as_array()
+            .ok_or_else(|| PyValueError::new_err("entries: a JSON list"))?
+            .iter()
+            .map(ooxml_session::datasets::DatasetEntry::from_json)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(PyValueError::new_err)?;
+        let session = &self.inner;
+        Ok(match py.detach(|| session.keep_datasets(entries)) {
+            Ok(serials) => (Some(serials), None),
+            Err(error) => (None, Some(compact(&error.to_json()))),
+        })
+    }
+
+    /// The dataset `id` (no `d:`) as the application reads it: `(serial, entry, values,
+    /// stale, closed)` -- `entry` the JSON text of its id, origin, time and source; `values`
+    /// the JSON text of its dataset, `None` where `have` is its serial already (the caller's
+    /// copy is of this keeping); `None` where there is no such dataset.
+    #[pyo3(signature = (id, have = None))]
+    fn dataset(
+        &self,
+        py: Python<'_>,
+        id: &str,
+        have: Option<u64>,
+    ) -> Option<(u64, String, Option<String>, bool, bool)> {
+        let session = &self.inner;
+        py.detach(|| {
+            let kept = session.kept_dataset(id)?;
+            let values = (have != Some(kept.serial)).then(|| compact(&Value::Object(kept.entry.dataset.to_json())));
+            Some((
+                kept.serial,
+                compact(&Value::Object(kept.entry.meta_json())),
+                values,
+                kept.stale,
+                kept.closed,
+            ))
+        })
+    }
+
+    /// Every dataset's address (`d:` and its id), in the order defined.
+    fn dataset_ids(&self) -> Vec<String> {
+        self.inner.stores().datasets.ids()
+    }
+
+    /// Forget the dataset `address` names: `None`, or the refusal's JSON text (`not_found`).
+    fn drop_dataset(&self, address: &str) -> Option<String> {
+        self.inner.drop_dataset(address).err().map(|e| compact(&e.to_json()))
+    }
+
+    /// Keep a file a tool of the application's own host saved: `validate` JSON text,
+    /// `state` the document's state beside the bytes (text).
+    ///
+    /// # Errors
+    /// `ValueError` for `validate` that is no JSON.
+    #[pyo3(signature = (name, format, data, *, doc = None, validate = None, state = None))]
+    #[allow(clippy::too_many_arguments)] // (Output's fields, as Python passes them)
+    fn add_output(
+        &self,
+        name: String,
+        format: String,
+        data: &[u8],
+        doc: Option<String>,
+        validate: Option<&str>,
+        state: Option<String>,
+    ) -> PyResult<()> {
+        let validate = validate.map(|v| json_of(v, "validate")).transpose()?;
+        self.inner.add_output(ooxml_session::outputs::Output {
+            name,
+            format,
+            data: Arc::from(data),
+            doc,
+            validate,
+            state: state.map(|s| Arc::new(s) as Arc<dyn std::any::Any + Send + Sync>),
+        });
+        Ok(())
+    }
+
+    /// The images the budgets still allow now; `None` where neither caps.
+    fn images_remaining(&self) -> Option<usize> {
+        self.inner.images_remaining()
+    }
+
+    /// Whether `count` images fit the budgets, counted with `reserve`: `None`, or the
+    /// refusal's JSON text (`limit`, naming the budget).
+    #[pyo3(signature = (count, *, reserve = false))]
+    fn images(&self, count: usize, reserve: bool) -> Option<String> {
+        self.inner.images(count, reserve).err().map(|e| compact(&e.to_json()))
+    }
+
+    /// Give back `count` images reserved that the model is never sent.
+    fn release_images(&self, count: usize) {
+        self.inner.release_images(count);
     }
 
     /// The roles its calls hold unless narrowed.

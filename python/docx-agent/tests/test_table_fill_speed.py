@@ -177,8 +177,9 @@ def test_the_result_says_where_the_time_went(toolbox):
     _, _, results, timings, _ = _run(toolbox, {}, [{"grow": True}], {})
     timing = timings[0]
     assert list(timing)[:6] == ["resolve", "check", "rows", "cells", "record", "result"]
-    # (the Rust session spaces the text as it writes the cells: its "spacing" is in "cells")
-    assert "validate" in timing
+    # (the Rust session spaces the text as it writes the cells: its "spacing" is in "cells"; on the
+    # Rust host the checks after the edit, validation among them, are in the result's own timing)
+    assert "validate" not in timing
     assert all(isinstance(v, float) and v >= 0 for v in timing.values())
     assert len(json.dumps(timing)) < 300                       # a small part of the result's budget
 
@@ -206,11 +207,10 @@ def test_the_update_says_where_its_time_went(toolbox):
     session.open(toc_number_cases.CASES["n-tab"], "toc.docx")
     result = toolbox.dispatch(session, "word_fields", {"doc": "d1", "action": "update"})
     assert result.ok, result.to_json()
-    timing = result.data["timing"]
-    # the update ahead of the lock where docx-agent's handler makes it (its copy laid out first);
-    # the Rust session's update has no such part (lane P2e6)
-    assert list(timing)[:2] in (["ahead", "update"], ["update", "validate"]) and "validate" in timing
-    assert len(json.dumps(timing)) < 200
+    # the Rust host's update says where its time went in the result's own timing (lane P2e6: no
+    # part ahead of the lock), not in its data
+    assert "timing" not in result.data
+    assert result.timing["total"] >= result.timing["work"] > 0
 
 
 # -- set_cells by position: one pass too (a thousand cells took 80 s one by one) ----------------

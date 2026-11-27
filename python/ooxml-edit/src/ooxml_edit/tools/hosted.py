@@ -18,12 +18,14 @@ A format whose documents the Rust host holds says so with :attr:`~.session.Docum
 A toolbox that :func:`runs_on_host` makes one :class:`Hosting`: one host per
 toolbox (decision D7; one per other set of limits, font folders or locale a session is given),
 and a
-:class:`HostedSession` -- today's :class:`~.session.Session`, its documents, blobs, outputs and
-log the Rust ``HostSession``'s -- per :meth:`~.dispatch.Toolbox.session`.  Each call is routed
-(:meth:`Hosting.route`): a tool of the host's catalogue runs in Rust, with the interpreter lock
-let go; an application's own tool (``tool(...)``, decision D1) runs here, in the Python
-dispatcher, and inside a Rust ``batch`` or ``read_batch`` is refused with the way out "call it
-alone".  A :class:`~.results.Result` is built from the reply's JSON (:class:`HostResult`), its
+:class:`HostedSession` -- today's :class:`~.session.Session`, its documents, blobs, outputs,
+image budgets, datasets (:mod:`.hosted_data`) and log the Rust ``HostSession``'s -- per
+:meth:`~.dispatch.Toolbox.session`.  Each call is routed (:meth:`Hosting.route`): a tool of the
+host's catalogue runs in Rust, with the interpreter lock let go; an application's own tool
+(``tool(...)``, decision D1) runs here, in the Python dispatcher -- refused when it names a
+document the host holds (:meth:`HostedSession.held_in_python`), its datasets, outputs and images
+kept in the Rust session -- and inside a Rust ``batch`` or ``read_batch`` is refused with the way
+out "call it alone".  A :class:`~.results.Result` is built from the reply's JSON (:class:`HostResult`), its
 ``ToolError`` from the reply's error, and the call's record is appended to the session's log.
 
 Nothing calls back from Rust into Python: the session clock's moment of a call is handed over
@@ -44,6 +46,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
 
 from ..errors import ArgumentError
+from .hosted_data import HostDatasets, tool_error
 from .limits import LimitError, Limits
 from .logs import CallRecord, log_call, log_internal, logger
 from .results import Image, Result, ToolError
@@ -54,22 +57,18 @@ if TYPE_CHECKING:
     from .dispatch import Toolbox
 
 
-def runs_on_host(toolbox: "Toolbox", forced: bool | None = None) -> bool:
-    """Whether ``toolbox``'s sessions run on the Rust host.
+def runs_on_host(toolbox: "Toolbox") -> bool:
+    """Whether ``toolbox``'s sessions run on the Rust host: every format is one the Rust host
+    holds (:attr:`~.session.DocumentFormat.host`).  The application's own tools run beside
+    it, in the facade (decision D1), their datasets, outputs and images the Rust session's.
 
-    The rule until Phase 3 E1b, in one place: every format is one the Rust host holds
-    (:attr:`~.session.DocumentFormat.host`), and the toolbox has no tool of the application's
-    own -- a session holding a Python-held document, or a tool writing Python datasets, keeps
-    the host's formats on the Python host until the session's stores are shared (E1b drops both clauses,
-    and :class:`~.dispatch.Toolbox`'s ``_rust_host`` with them).
-
-    ``forced``: the toolbox's ``_rust_host`` (a test's, for a toolbox with tools of its own).
+    A toolbox with no format the Rust host holds (the format libraries held in Python alone) keeps the
+    plain :class:`~.session.Session` and its stores until Phase 4 deletes them.  Until Phase 3
+    E1b-2, a toolbox with any such Python-held format keeps every format on the Python host
+    (a call of the host's reading a Python-held document's rows needs the values channel E1b-2
+    brings).
     """
-    if not toolbox.formats or any(fmt.host is None for fmt in toolbox.formats.values()):
-        return False
-    if forced is not None:
-        return forced
-    return not own_tools(toolbox)
+    return bool(toolbox.formats) and all(fmt.host is not None for fmt in toolbox.formats.values())
 
 
 def own_tools(toolbox: "Toolbox") -> list[str]:
@@ -315,9 +314,10 @@ _REFUSALS = {"argument": ArgumentError, "limit": LimitError, "unreadable": Argum
 
 
 class HostedSession(Session):
-    """A :class:`~.session.Session` whose documents, blobs, outputs and call log the Rust
-    host's session (:attr:`rust`, the core's ``HostSession``) holds: today's signatures,
-    its work done in Rust."""
+    """A :class:`~.session.Session` whose documents, blobs, outputs, image budgets, datasets
+    and call log the Rust host's session (:attr:`rust`, the core's ``HostSession``) holds:
+    today's signatures, its work done in Rust.  The application's own tools, which run here
+    (decision D1), keep their datasets and outputs and count their images in it too."""
 
     def __init__(self, hosting: Hosting, formats: Iterable[Any], **given: Any) -> None:
         self.hosting = hosting
@@ -327,6 +327,8 @@ class HostedSession(Session):
         font_dirs, locale = font_dirs_of(given.get("font_dirs")), given.get("locale")
         #: The Rust host's session.
         self.rust = hosting.host(limits, font_dirs, locale_of(locale)).session(locale=locale)
+        #: The session's datasets, the Rust session's (:mod:`.hosted_data`).
+        self.data = HostDatasets(self.rust)
         super().__init__(formats, **given)
         if self.numbers != hosting.toolbox.numbers:
             self.rust.set_number_rules(json.dumps(_rules(self.numbers)))
@@ -386,6 +388,22 @@ class HostedSession(Session):
             raise ToolError("not_found", f"no open document {doc_id!r}", field="doc", valid_options=open_now)
         return doc_id
 
+    def held_in_python(self, tool: str, doc_ids: Iterable[str]) -> None:
+        """Refuse a call the Python dispatcher runs -- an application's own tool (decision
+        D1) -- that names a document the Rust host holds: there is no Python document of it
+        to hold."""
+        doc_ids = list(doc_ids)
+        if not doc_ids:
+            return
+        open_now = set(self.rust.documents())
+        held = [doc for doc in doc_ids if doc in open_now]
+        if held:
+            raise ToolError(
+                "refused", f"{tool} is the application's own tool, and {', '.join(held)} is held by the Rust "
+                "host, which keeps no Python document of it: read or change it with the host's tools (an "
+                "application's tool that needs a document's bytes names no document and reads them with "
+                "session.save)", field="doc", details={"held_by_host": held})
+
     def kind_of(self, doc_id: str) -> str:
         """The kind of the open document ``doc_id``, as its format names it."""
         return self.rust.document(self._named(doc_id))[0]
@@ -393,6 +411,15 @@ class HostedSession(Session):
     def entry(self, doc_id: str) -> Any:
         raise ArgumentError(f"{doc_id} is held by the Rust host, which keeps no Python entry of it: "
                             "read it with a tool, or save it")
+
+    def provenance(self, doc_id: str) -> dict[str, dict[str, Any]]:
+        """:meth:`Session.provenance`: where the values placed in ``doc_id`` from sources came
+        from, as the host reads the records its head keeps; empty for a document that keeps
+        none."""
+        found = self.rust.version(self._named(doc_id)).records()
+        if found is None:
+            return {}
+        return {str(address): dict(record) for address, record in json.loads(found).get("provenance", ())}
 
     def refs(self, doc_id: str) -> dict[str, str]:
         """:meth:`Session.refs`: the document's refs as they are now, a copy."""
@@ -426,30 +453,53 @@ class HostedSession(Session):
         count, error = self.rust.history(self._named(doc_id), steps, redo=redo,
                                          context=json.dumps(dict(caller), default=str) if caller else None)
         if error is not None:
-            error = json.loads(error)
-            raise ToolError(error["code"], error["message"], field=error.get("field"),
-                            valid_options=error.get("valid_options"), details=error.get("details"),
-                            try_call=error.get("try_call"))
+            raise tool_error(error)
         return count
 
-    # -- datasets: the Rust HostSession's from E1b -------------------------------------------------
+    # -- datasets: the Rust session's (decision D3; :mod:`.hosted_data`) ----------------------
+
+    @property                               # type: ignore[override]
+    def datasets(self) -> Mapping[str, Any]:
+        """The datasets by id, each read from the Rust session when asked for."""
+        return self.data.mapping()
+
+    @datasets.setter
+    def datasets(self, value: Any) -> None:
+        if value:                           # (Session.__init__ starts it empty)
+            raise AttributeError("a session on the Rust host keeps its datasets with keep_datasets()")
 
     def keep_datasets(self, entries: Iterable[Any]) -> None:
-        if list(entries):           # (keeping none keeps nothing)
-            raise NotImplementedError("a session on the Rust host keeps the application's datasets from Phase 3 "
-                                      "E1b: until then, keep them in a toolbox with a tool of the application's own")
+        self.data.keep(entries)
 
     def dataset(self, address: str, *, field: str | None = None) -> Any:
-        raise NotImplementedError("a session on the Rust host holds its datasets from Phase 3 E1b")
+        return self.data.get(address, field=field)
 
     def dataset_ids(self) -> list[str]:
-        raise NotImplementedError("a session on the Rust host holds its datasets from Phase 3 E1b")
+        return self.data.ids()
 
     def dataset_entries(self) -> list[Any]:
-        raise NotImplementedError("a session on the Rust host holds its datasets from Phase 3 E1b")
+        return list(self.data.entries())
 
     def drop_dataset(self, address: str) -> None:
-        raise NotImplementedError("a session on the Rust host holds its datasets from Phase 3 E1b")
+        self.data.drop(address)
+
+    # -- images: the Rust session's budgets -----------------------------------------------------
+
+    def images_remaining(self) -> int | None:
+        return self.rust.images_remaining()
+
+    def check_images(self, count: int) -> None:
+        refused = self.rust.images(count)
+        if refused is not None:
+            raise tool_error(refused)
+
+    def reserve_images(self, count: int) -> None:
+        refused = self.rust.images(count, reserve=True)
+        if refused is not None:
+            raise tool_error(refused)
+
+    def release_images(self, count: int) -> None:
+        self.rust.release_images(count)
 
     # -- blobs and outputs -----------------------------------------------------------------------
 
@@ -459,6 +509,37 @@ class HostedSession(Session):
             return self.rust.add_blob(data, name, mime)
         except ValueError as exc:
             raise LimitError(str(exc)) from None
+
+    def add_output(self, output: Output) -> None:
+        """A file a tool of the application's own host saved: handed to ``on_output``, else
+        kept in the Rust session until taken."""
+        if self.on_output is not None:
+            self.on_output(output)
+            return
+        if output.state is not None and not isinstance(output.state, str):
+            raise TypeError("an output's state on the Rust host is text (its format's)")
+        self.rust.add_output(output.name, output.format, output.data, doc=output.doc,
+                             validate=json.dumps(output.validate) if output.validate is not None else None,
+                             state=output.state)
+
+    def take_outputs(self) -> list[Output]:
+        """The outputs saved since the last take, handed over and forgotten."""
+        return self._outputs(keep=False)
+
+    @property                               # type: ignore[override]
+    def outputs(self) -> list[Output]:
+        """The outputs saved since the last take, kept in the Rust session (a copy)."""
+        return self._outputs(keep=True)
+
+    @outputs.setter
+    def outputs(self, value: Any) -> None:
+        if value:                           # (Session.__init__ starts it empty)
+            raise AttributeError("a session on the Rust host keeps its outputs: add_output() adds one")
+
+    def _outputs(self, *, keep: bool) -> list[Output]:
+        return [Output(name, format, bytes(data), doc=doc, validate=json.loads(validate) if validate else None,
+                       state=state)
+                for name, format, doc, data, validate, state in self.rust.take_outputs(keep=keep)]
 
     def blob(self, handle: str) -> Blob:
         found = self.rust.blob(handle)
@@ -481,10 +562,11 @@ class HostedSession(Session):
     def kept(self, result: Result, comments: Sequence[Mapping[str, Any]]) -> None:
         """What a call answered kept here: the files its tools saved, as outputs; its record,
         in the log (logged as the Python host logs it)."""
-        if result.tool == "save_document":     # (the one tool that saves files for the application)
-            for name, format, doc, data, validate, state in self.rust.take_outputs():
-                self.add_output(Output(name, format, bytes(data), doc=doc,
-                                       validate=json.loads(validate) if validate else None, state=state))
+        if result.tool == "save_document" and self.on_output is not None:
+            # (the one tool that saves files for the application: handed over now, as the
+            # application asked; else the Rust session keeps them until taken)
+            for output in self.take_outputs():
+                self.on_output(output)
         made = _record_of(result, comments)
         if made is None:
             return

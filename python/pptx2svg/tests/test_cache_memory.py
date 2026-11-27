@@ -62,20 +62,21 @@ def with_picture(parts: dict[str, bytes], part: str, media: str, data: bytes,
         b"</p:spTree>", picture(shape_id, rel_id, x).encode() + b"</p:spTree>")
 
 
-def picture_deck(version: int = 0, slide_seed=lambda number: number) -> dict[str, bytes]:
-    """The sample deck with one noise picture on its master and one on each slide (slide
-    ``n``'s is ``slide_seed(n)``'s noise, each in a part of its own); ``version`` changes
-    slide 1's title, as an edit would."""
+def picture_deck(version: int = 0, slide_seed=lambda number: number,
+                 side: int = 96) -> dict[str, bytes]:
+    """The sample deck with one noise picture, ``side`` pixels square, on its master and one
+    on each slide (slide ``n``'s is ``slide_seed(n)``'s noise, each in a part of its own);
+    ``version`` changes slide 1's title, as an edit would."""
     parts = parts_of("sample.pptx")
     types = "[Content_Types].xml"
     parts[types] = parts[types].replace(
         b'<Default Extension="xml"',
         b'<Default Extension="png" ContentType="image/png"/><Default Extension="xml"')
     with_picture(parts, "ppt/slideMasters/slideMaster1.xml", "ppt/media/master.png",
-                 noise_png(1000), 9100, 8 * 914400)
+                 noise_png(1000, side), 9100, 8 * 914400)
     for number in range(1, 7):
         with_picture(parts, f"ppt/slides/slide{number}.xml", f"ppt/media/slide{number}.png",
-                     noise_png(slide_seed(number)), 9200 + number, 457200)
+                     noise_png(slide_seed(number), side), 9200 + number, 457200)
     if version:
         first = "ppt/slides/slide1.xml"
         parts[first] = parts[first].replace(b"</p:spTree>", (
@@ -127,11 +128,14 @@ def test_a_picture_shown_on_every_slide_is_one_string():
 
 
 def test_versions_of_a_deck_hold_each_picture_once():
+    # Pictures 256 pixels square (about 260 KB of text each), not the other tests' small
+    # ones: next to those, what a slide's own objects weigh is the interpreter's object
+    # layout (twice as much on 3.10 as on 3.12) rather than the cache's.
     cache = ModelCache()
-    plain = drawn(open_parts(picture_deck()))
+    plain = drawn(open_parts(picture_deck(side=256)))
     first = None
     for version in range(1, 21):
-        parts = picture_deck(version)
+        parts = picture_deck(version, side=256)
         convert_pptx_to_model(open_parts(parts), ConvertOptions(cache=cache))
         stats = cache.stats()
         if first is None:
@@ -140,9 +144,10 @@ def test_versions_of_a_deck_hold_each_picture_once():
         assert stats.entries == 6 + version - 1
         assert stats.images == 7 and stats.image_bytes == first.image_bytes
         assert (stats.entry_bytes, stats.image_bytes) == recount(cache)
-    assert drawn(open_parts(picture_deck()), cache=cache) == plain
-    # One picture's text is most of what a slide holds; the slides' own objects are small.
-    assert stats.entry_bytes < stats.image_bytes
+    assert drawn(open_parts(picture_deck(side=256)), cache=cache) == plain
+    # One picture's text is most of what a slide holds; the slides' own objects are small:
+    # the 25 slides kept weigh less than half the seven pictures.
+    assert 2 * stats.entry_bytes < stats.image_bytes
 
 
 def test_the_cache_never_holds_more_than_its_budget():

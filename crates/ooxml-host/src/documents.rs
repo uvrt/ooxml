@@ -5,7 +5,10 @@
 //! where the application names none, within the session's room for documents ([`Opening`],
 //! [`OpenRefused`], today's words); what the session keeps of each beside its versions
 //! ([`Held`]: where it came from, its size); its bytes and state of one version
-//! ([`Saved`]); the application's undo and redo; the files tools saved for it.
+//! ([`Saved`]); the application's undo and redo; the files tools saved for it; and what
+//! the application's own host (the Python host of pptx and xlsx, and the application's
+//! tools, until Phase 4) keeps in the session's stores through it: datasets
+//! ([`KeptDataset`]), outputs, the images shown.
 //!
 //! Must not: run a tool, or hold the stores' lock while a package is parsed or written.
 
@@ -198,27 +201,100 @@ impl HostSession {
     }
 
     /// Datasets the application keeps itself (ooxml-edit's `Session.keep_datasets`): each
-    /// defined as a call would define it, a redefined id replaced.
+    /// defined as a call would define it, a redefined id replaced; the serial each was kept
+    /// under, in order.
     ///
     /// # Errors
     /// `limit`: the session would keep over its limit (nothing is kept).
     pub fn keep_datasets(
         &self,
         entries: Vec<ooxml_session::datasets::DatasetEntry>,
-    ) -> Result<(), ooxml_tools::ToolError> {
-        let heads: Vec<(String, u64)> = self
-            .session
-            .documents()
-            .into_iter()
-            .filter_map(|id| Some((id.to_string(), self.session.snapshot(&id).ok()?.number())))
-            .collect();
+    ) -> Result<Vec<u64>, ooxml_tools::ToolError> {
+        let heads = self.heads_now();
         let heads = |doc: &str| heads.iter().find(|(d, _)| d == doc).map(|(_, n)| *n);
-        self.stores().datasets.keep(entries, &heads)
+        let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
+        let mut stores = self.stores();
+        stores.datasets.keep(entries, &heads)?;
+        Ok(ids.iter().filter_map(|id| stores.datasets.serial(id)).collect())
+    }
+
+    /// The dataset `id` (no `d:`) as the application reads it ([`KeptDataset`]); `None`
+    /// where there is none.
+    #[must_use]
+    pub fn kept_dataset(&self, id: &str) -> Option<KeptDataset> {
+        let heads = self.heads_now();
+        let heads = |doc: &str| heads.iter().find(|(d, _)| d == doc).map(|(_, n)| *n);
+        let stores = self.stores();
+        let entry = stores.datasets.find(id)?;
+        Some(KeptDataset {
+            serial: stores.datasets.serial(id)?,
+            stale: entry.stale(&heads),
+            closed: entry.closed(),
+            entry: entry.clone(),
+        })
+    }
+
+    /// Forget the dataset `address` names (the application's housekeeping).
+    ///
+    /// # Errors
+    /// `not_found`, naming the datasets there are.
+    pub fn drop_dataset(&self, address: &str) -> Result<(), ooxml_tools::ToolError> {
+        let retry = ooxml_tools::TryCall {
+            tool: "drop_dataset".into(),
+            arguments: Map::new(),
+            fill: Vec::new(),
+        };
+        self.stores().datasets.drop_dataset(address, &retry)
+    }
+
+    /// Keep `output` for the application, as a tool of its own host saved it.
+    pub fn add_output(&self, output: Output) {
+        self.stores().outputs.add(output);
     }
 
     /// The files tools saved for the application since it last took them.
     pub fn take_outputs(&self) -> Vec<Output> {
         self.stores().outputs.take()
+    }
+
+    /// The files tools saved for the application since it last took them, kept for it.
+    #[must_use]
+    pub fn outputs(&self) -> Vec<Output> {
+        self.stores().outputs.outputs().to_vec()
+    }
+
+    /// The images the session's budgets still allow now; `None` where neither caps.
+    #[must_use]
+    pub fn images_remaining(&self) -> Option<usize> {
+        self.stores().images.remaining()
+    }
+
+    /// Refuse with `limit` when `count` images would pass a budget, counting none; with
+    /// `reserve`, count them.
+    ///
+    /// # Errors
+    /// The budget `count` passes.
+    pub fn images(&self, count: usize, reserve: bool) -> Result<(), ooxml_tools::ToolError> {
+        let mut stores = self.stores();
+        if reserve {
+            stores.images.reserve(count)
+        } else {
+            stores.images.check(count)
+        }
+    }
+
+    /// Give back `count` images reserved that the model is never sent.
+    pub fn release_images(&self, count: usize) {
+        self.stores().images.release(count);
+    }
+
+    /// Each open document's id and its head's number now.
+    fn heads_now(&self) -> Vec<(String, u64)> {
+        self.session
+            .documents()
+            .into_iter()
+            .filter_map(|id| Some((id.to_string(), self.session.snapshot(&id).ok()?.number())))
+            .collect()
     }
 
     /// The format of `bytes` named `name`: `kind`'s where it is given, else the first that
@@ -315,4 +391,19 @@ fn given_doc_id(doc_id: &str) -> Result<DocId, OpenRefused> {
             repr_str(doc_id)
         ))
     })
+}
+
+/// A dataset kept in a session as the application's own host reads it: the entry, the
+/// serial it was kept under (never given to another keeping: a copy read of it is that
+/// keeping's alone), and whether it is stale and its source closed, now.
+#[derive(Debug, Clone)]
+pub struct KeptDataset {
+    /// The entry.
+    pub entry: ooxml_session::datasets::DatasetEntry,
+    /// Its serial ([`ooxml_session::datasets::DatasetStore::serial`]).
+    pub serial: u64,
+    /// Whether it is stale now.
+    pub stale: bool,
+    /// Whether its source document is closed.
+    pub closed: bool,
 }
