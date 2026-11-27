@@ -141,7 +141,11 @@ impl Host<'_> {
                 let rows = t
                     .rows
                     .iter()
-                    .map(|row| row.iter().map(|cell| cell.iter().map(|b| self.block(b)).collect()).collect())
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| cell.iter().map(|b| self.block(b)).collect())
+                            .collect()
+                    })
                     .collect();
                 let key = self
                     .found(t.unkeyed.as_ref())

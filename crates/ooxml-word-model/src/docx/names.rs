@@ -239,7 +239,11 @@ pub(crate) fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
         let paragraph = element_at(root, place.get(..=host)?)?;
         let steps = crate::read::paths::text_box_path(paragraph, place.get(host + 1..=content)?)?;
         let content_element = element_at(root, place.get(..=content)?)?;
-        return path_below(content_element, format!("{host_path}/{steps}"), place.get(content + 1..)?);
+        return path_below(
+            content_element,
+            format!("{host_path}/{steps}"),
+            place.get(content + 1..)?,
+        );
     }
     if let Some(path) = note_path(root, place) {
         return path;

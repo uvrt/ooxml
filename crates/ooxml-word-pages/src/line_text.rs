@@ -128,8 +128,7 @@ impl LinePlace {
             Some(key) => story_of(names, key),
             None => named.as_deref().map_or("body", story_kind),
         });
-        let in_table =
-            at.as_ref().is_some_and(In::in_table) || named.as_deref().is_some_and(|p| p.contains("/w:tc["));
+        let in_table = at.as_ref().is_some_and(In::in_table) || named.as_deref().is_some_and(|p| p.contains("/w:tc["));
         let kind = match story {
             "body" if in_table => "table",
             "footnotes" => "footnote",

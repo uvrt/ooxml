@@ -173,7 +173,10 @@ impl DocumentLayout {
 
     /// The list labels of the text boxes anchored in its body
     /// ([`crate::geometry::text_box::text_box_labels`]), made when first asked.
-    pub fn text_box_labels(&self, model: &mut Model) -> Arc<std::collections::HashMap<crate::naming::ItemName, Option<String>>> {
+    pub fn text_box_labels(
+        &self,
+        model: &mut Model,
+    ) -> Arc<std::collections::HashMap<crate::naming::ItemName, Option<String>>> {
         Arc::clone(
             self.memo
                 .text_box_labels

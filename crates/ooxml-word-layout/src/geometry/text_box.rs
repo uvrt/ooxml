@@ -92,17 +92,8 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<It
                         }
                     }
                     Block::Paragraph(p) => {
-                        // by its key; one no index keys by its steps below its drawing's paragraph
-                        let name = match p.key {
-                            Some(key) => ItemName::Anchored(Anchor::whole(key)),
-                            None => {
-                                let own = p.unkeyed.as_deref().unwrap_or_default();
-                                let path = prefix.map_or_else(|| own.to_owned(), |at| format!("{at}/{own}"));
-                                ItemName::Path(Text::from(path.as_str()))
-                            }
-                        };
                         let label = self.label(p);
-                        self.out.insert(name, label);
+                        self.out.insert(box_label_key(p, prefix), label);
                     }
                 }
             }
@@ -160,6 +151,19 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<It
     };
     count.paragraphs(&document.body);
     count.out
+}
+
+/// What a text box's paragraph's label is counted under ([`text_box_labels`]): its key; one
+/// no index keys, its steps below its drawing's paragraph (`prefix`, that paragraph's path).
+fn box_label_key(paragraph: &Paragraph, prefix: Option<&str>) -> ItemName {
+    match paragraph.key {
+        Some(key) => ItemName::Anchored(Anchor::whole(key)),
+        None => {
+            let own = paragraph.unkeyed.as_deref().unwrap_or_default();
+            let path = prefix.map_or_else(|| own.to_owned(), |at| format!("{at}/{own}"));
+            ItemName::Path(Text::from(path.as_str()))
+        }
+    }
 }
 
 /// A text box's blocks as laid out in it: each top-level block its story's index does not
@@ -451,11 +455,8 @@ fn box_labels(
     paragraphs
         .iter()
         .map(|p| {
-            let name = match p.key {
-                Some(key) => Some(ItemName::Anchored(Anchor::whole(key))),
-                None => p.unkeyed.clone().map(ItemName::Path),
-            };
-            if let Some(found) = name.and_then(|n| counted.get(&n)) {
+            // (an unkeyed paragraph's path is its laid-out one already: story_blocks)
+            if let Some(found) = counted.get(&box_label_key(p, None)) {
                 return found.clone();
             }
             let pp = model.resolve_paragraph_props(document, p);

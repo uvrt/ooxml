@@ -355,7 +355,10 @@ pub fn text_box_path(paragraph: &Element, below: &[u32]) -> Option<String> {
     }
     let (textbox, _, rest) = next(shape, below_shape).filter(|(c, ..)| local(c) == "textbox")?;
     next(textbox, rest).filter(|(c, _, rest)| local(c) == "txbxContent" && rest.is_empty())?;
-    steps.push(format!("{prefix}:{name}[{}]/{inner}/v:textbox/w:txbxContent", same_before(run, k, name)));
+    steps.push(format!(
+        "{prefix}:{name}[{}]/{inner}/v:textbox/w:txbxContent",
+        same_before(run, k, name)
+    ));
     Some(steps.join("/"))
 }
 
@@ -368,7 +371,10 @@ fn next<'a, 'p>(node: &'a Element, at: &'p [u32]) -> Option<(&'a Element, u32, &
 /// The 1-based count, among `parent`'s child elements up to the one at index `k`, of those
 /// named `name` (by local name): a reader's step index.
 fn same_before(parent: &Element, k: u32, name: &str) -> usize {
-    indexed(parent).take_while(|(j, _)| *j <= k).filter(|(_, c)| local(c) == name).count()
+    indexed(parent)
+        .take_while(|(j, _)| *j <= k)
+        .filter(|(_, c)| local(c) == name)
+        .count()
 }
 
 /// The element at child indexes `at` below `node`.
