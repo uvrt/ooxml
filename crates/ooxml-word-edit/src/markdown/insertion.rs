@@ -10,6 +10,7 @@
 
 use super::writer::Writer;
 use super::{InsertMarkdown, KeptSettings, MarkdownInserted};
+use crate::format::list_indent::ListIndent;
 use crate::marks::{clean_properties, insert_in_order, mark, mark_record, pass_mark};
 use crate::names::{W, W14};
 use crate::placing::{Place, Stretch, BLOCKS};
@@ -145,6 +146,9 @@ pub(crate) fn insert(
         removed.push(id.clone());
     }
     let mut writer = Writer::new(&part, &command.style_map, command.options.clone());
+    if writer.like.any() {
+        writer.like.followed_at(position_of(work, insert_before, &docx));
+    }
     let mut elements = writer.blocks(sink, work, blocks)?;
     let (kept, unnamed) = keep_settings(sink, work, &writer, &donors)?;
     let root = work.root();
@@ -243,6 +247,14 @@ fn cell_indents(sink: &EditSink<'_, '_>, work: &Work, writer: &Writer<'_>) -> Re
     let docx = sink.docx()?;
     let formatting = Formatting::read(&docx);
     Ok(super::cell_indents::cell_indent_warnings(&formatting, &tables))
+}
+
+/// The position of the paragraph `node`, where the new blocks go before one (its first line
+/// and text are stops for an item moved in a one-level list, [`crate::format::list_indent`]).
+fn position_of(work: &Work, node: Option<Id>, docx: &Docx) -> Option<ListIndent> {
+    let node = node.filter(|n| work.is(*n, W, "p"))?;
+    let paragraph = work.build_element(node)?;
+    Some(ListIndent::of(&Formatting::read(docx).paragraph(&paragraph, None)))
 }
 
 /// The block (or section properties) after `node`.

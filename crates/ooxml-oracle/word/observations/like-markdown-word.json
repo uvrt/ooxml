@@ -1,5 +1,5 @@
 {
- "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/like_markdown_probe.py (document and cases in cases/like_markdown_cases.py): 'word-added', items added to each list as a person adds them, tracked (Enter at the end of the last item, the text typed, Word's list indent for an item a level down; per paragraph key its runs as [kind, text], its mark's revision and its own pPr settings with their values); 'tools-opened', whether it opened and saved the tools' tracked word_insert_markdown like; 'word-labels'/'tools-labels', each key's text and settings after Word's Accept All and convert numbers to text, of Word's document and of the tools'; 'tools-reject', the same after Word's Reject All of the tools' document. Regenerate with python crates/ooxml-oracle/word/probes/like_markdown_probe.py.",
+ "_about": "What Word 16.106 for Mac wrote for crates/ooxml-oracle/word/probes/like_markdown_probe.py (document and cases in cases/like_markdown_cases.py): 'word-added', items added to each list as a person adds them, tracked (Enter at the end of the last item, the text typed, Word's list indent for an item a level down; per paragraph key its runs as [kind, text], its mark's revision and its own pPr settings with their values); 'tools-opened', whether it opened and saved the tools' tracked word_insert_markdown like; 'word-labels'/'tools-labels', each key's text and settings after Word's Accept All and convert numbers to text, of Word's document and of the tools'; 'tools-reject', the same after Word's Reject All of the tools' document; 'word-indents', per case of INDENTS (a document of its own) each paragraph's settings after Word's list indent of new items typed after a one-level list, or of an existing item. Regenerate with python crates/ooxml-oracle/word/probes/like_markdown_probe.py.",
  "word": "16.106 (macOS), Dutch interface",
  "word-added": {
   "paragraphs": {
@@ -118,16 +118,42 @@
       "Detail below."
      ]
     ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "720"
+      }
+     },
+     "ind": {
+      "left": "720"
+     }
+    }
+   },
+   "Lower": {
+    "runs": [
+     [
+      "ins",
+      "Lower still."
+     ]
+    ],
     "mark": null,
     "settings": {
      "pStyle": {
       "val": "Lijstopsomteken"
      },
      "tabs": {
-      "tab": "num"
+      "tab": {
+       "val": "num",
+       "pos": "1068"
+      }
      },
      "ind": {
-      "left": "720"
+      "left": "1068"
      }
     }
    },
@@ -203,6 +229,215 @@
      }
     }
    },
+   "Between": {
+    "runs": [
+     [
+      "text",
+      "Between stays."
+     ]
+    ],
+    "mark": null,
+    "settings": {}
+   },
+   "Mango": {
+    "runs": [
+     [
+      "text",
+      "Mango first."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Nectar": {
+    "runs": [
+     [
+      "text",
+      "Nectar second."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Olive": {
+    "runs": [
+     [
+      "ins",
+      "Olive third."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Pear": {
+    "runs": [
+     [
+      "ins",
+      "Pear below."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "720"
+      }
+     },
+     "ind": {
+      "left": "720"
+     }
+    }
+   },
+   "Quince": {
+    "runs": [
+     [
+      "ins",
+      "Quince lower."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926"
+     }
+    }
+   },
+   "Sierra": {
+    "runs": [
+     [
+      "text",
+      "Sierra point."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     }
+    }
+   },
+   "Tango": {
+    "runs": [
+     [
+      "text",
+      "Tango point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     }
+    }
+   },
+   "Union": {
+    "runs": [
+     [
+      "ins",
+      "Union point."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     }
+    }
+   },
+   "Victor": {
+    "runs": [
+     [
+      "ins",
+      "Victor below."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1068"
+      }
+     },
+     "ind": {
+      "left": "1068"
+     }
+    }
+   },
+   "Whiskey": {
+    "runs": [
+     [
+      "ins",
+      "Whiskey lower."
+     ]
+    ],
+    "mark": "ins",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1428"
+      }
+     },
+     "ind": {
+      "left": "1428"
+     }
+    }
+   },
+   "Xray": {
+    "runs": [
+     [
+      "ins",
+      "Xray lowest."
+     ]
+    ],
+    "mark": null,
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1776"
+      }
+     },
+     "ind": {
+      "left": "1776"
+     }
+    }
+   },
    "After": {
     "runs": [
      [
@@ -236,7 +471,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -255,7 +493,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -274,7 +515,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -293,7 +537,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -312,7 +559,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -331,7 +581,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -350,7 +603,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -369,10 +625,35 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "720"
+      }
      },
      "ind": {
       "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Lower": {
+    "text": "\tLower still.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "1068"
+      }
+     },
+     "ind": {
+      "left": "1068",
       "hanging": "360"
      }
     }
@@ -409,6 +690,252 @@
     "settings": {
      "ind": {
       "left": "1440",
+      "hanging": "360"
+     }
+    }
+   },
+   "Between": {
+    "text": "Between stays.",
+    "settings": {}
+   },
+   "Mango": {
+    "text": "5.\tMango first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Nectar": {
+    "text": "6.\tNectar second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Olive": {
+    "text": "7.\tOlive third.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Pear": {
+    "text": "8.\tPear below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "720"
+      }
+     },
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Quince": {
+    "text": "9.\tQuince lower.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Sierra": {
+    "text": "\tSierra point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Tango": {
+    "text": "\tTango point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Union": {
+    "text": "\tUnion point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Victor": {
+    "text": "\tVictor below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "1068"
+      }
+     },
+     "ind": {
+      "left": "1068",
+      "hanging": "360"
+     }
+    }
+   },
+   "Whiskey": {
+    "text": "\tWhiskey lower.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "1428"
+      }
+     },
+     "ind": {
+      "left": "1428",
+      "hanging": "360"
+     }
+    }
+   },
+   "Xray": {
+    "text": "\tXray lowest.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "1776"
+      }
+     },
+     "ind": {
+      "left": "1776",
       "hanging": "360"
      }
     }
@@ -437,7 +964,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -456,7 +986,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -475,7 +1008,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -494,7 +1030,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -513,7 +1052,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -532,7 +1074,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -551,7 +1096,10 @@
       "numId": "0"
      },
      "tabs": {
-      "tab": "left"
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
      },
      "ind": {
       "left": "360",
@@ -560,17 +1108,45 @@
     }
    },
    "Detail": {
-    "text": "o\tDetail below.",
+    "text": "\tDetail below.",
     "settings": {
      "pStyle": {
-      "val": "Lijstopsomteken2"
+      "val": "Lijstopsomteken"
      },
      "numPr": {
       "ilvl": "0",
       "numId": "0"
      },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "720"
+      }
+     },
      "ind": {
-      "left": "1440",
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Lower": {
+    "text": "\tLower still.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1068"
+      }
+     },
+     "ind": {
+      "left": "1068",
       "hanging": "360"
      }
     }
@@ -607,6 +1183,252 @@
     "settings": {
      "ind": {
       "left": "1440",
+      "hanging": "360"
+     }
+    }
+   },
+   "Between": {
+    "text": "Between stays.",
+    "settings": {}
+   },
+   "Mango": {
+    "text": "5.\tMango first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Nectar": {
+    "text": "6.\tNectar second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Olive": {
+    "text": "7.\tOlive third.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "360"
+      }
+     },
+     "ind": {
+      "left": "360",
+      "hanging": "360"
+     }
+    }
+   },
+   "Pear": {
+    "text": "8.\tPear below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "720"
+      }
+     },
+     "ind": {
+      "left": "720",
+      "hanging": "360"
+     }
+    }
+   },
+   "Quince": {
+    "text": "9.\tQuince lower.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Sierra": {
+    "text": "\tSierra point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Tango": {
+    "text": "\tTango point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Union": {
+    "text": "\tUnion point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "left",
+       "pos": "926"
+      }
+     },
+     "ind": {
+      "left": "926",
+      "hanging": "360"
+     }
+    }
+   },
+   "Victor": {
+    "text": "\tVictor below.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1068"
+      }
+     },
+     "ind": {
+      "left": "1068",
+      "hanging": "360"
+     }
+    }
+   },
+   "Whiskey": {
+    "text": "\tWhiskey lower.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1428"
+      }
+     },
+     "ind": {
+      "left": "1428",
+      "hanging": "360"
+     }
+    }
+   },
+   "Xray": {
+    "text": "\tXray lowest.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     },
+     "numPr": {
+      "ilvl": "0",
+      "numId": "0"
+     },
+     "tabs": {
+      "tab": {
+       "val": "num",
+       "pos": "1776"
+      }
+     },
+     "ind": {
+      "left": "1776",
       "hanging": "360"
      }
     }
@@ -680,11 +1502,904 @@
      }
     }
    },
+   "Between": {
+    "text": "Between stays.",
+    "settings": {}
+   },
+   "Mango": {
+    "text": "Mango first.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Nectar": {
+    "text": "Nectar second.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstnummering"
+     }
+    }
+   },
+   "Sierra": {
+    "text": "Sierra point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     }
+    }
+   },
+   "Tango": {
+    "text": "Tango point.",
+    "settings": {
+     "pStyle": {
+      "val": "Lijstopsomteken3"
+     }
+    }
+   },
    "After": {
     "text": "After stays.",
     "settings": {}
    }
   },
   "revisions": false
+ },
+ "word-indents": {
+  "alone-bullet": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1428"
+     }
+    },
+    "ind": {
+     "left": "1428"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1776"
+     }
+    },
+    "ind": {
+     "left": "1776"
+    }
+   },
+   "After": {}
+  },
+  "alone-number": {
+   "Head": {},
+   "Mango": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    }
+   },
+   "Nectar": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1428"
+     }
+    },
+    "ind": {
+     "left": "1428"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstnummering"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1776"
+     }
+    },
+    "ind": {
+     "left": "1776"
+    }
+   },
+   "After": {}
+  },
+  "alone-bullet3": {
+   "Head": {},
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Tango": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1428"
+     }
+    },
+    "ind": {
+     "left": "1428"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1776"
+     }
+    },
+    "ind": {
+     "left": "1776"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "2136"
+     }
+    },
+    "ind": {
+     "left": "2136"
+    }
+   },
+   "After": {}
+  },
+  "tab567-bullet": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "927"
+     }
+    },
+    "ind": {
+     "left": "927"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1287"
+     }
+    },
+    "ind": {
+     "left": "1287"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1494"
+     }
+    },
+    "ind": {
+     "left": "1494"
+    }
+   },
+   "After": {}
+  },
+  "tab567-bullet3": {
+   "Head": {},
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Tango": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "927"
+     }
+    },
+    "ind": {
+     "left": "927"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1287"
+     }
+    },
+    "ind": {
+     "left": "1287"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1494"
+     }
+    },
+    "ind": {
+     "left": "1494"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1854"
+     }
+    },
+    "ind": {
+     "left": "1854"
+    }
+   },
+   "After": {}
+  },
+  "next-list": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "926"
+     }
+    },
+    "ind": {
+     "left": "926"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1286"
+     }
+    },
+    "ind": {
+     "left": "1286"
+    }
+   },
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "After": {}
+  },
+  "next-gap": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1428"
+     }
+    },
+    "ind": {
+     "left": "1428"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1776"
+     }
+    },
+    "ind": {
+     "left": "1776"
+    }
+   },
+   "Gap": {},
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "After": {}
+  },
+  "next-plain": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "926"
+     }
+    },
+    "ind": {
+     "left": "926"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1286"
+     }
+    },
+    "ind": {
+     "left": "1286"
+    }
+   },
+   "Plain": {
+    "ind": {
+     "left": "926",
+     "hanging": "360"
+    }
+   },
+   "After": {}
+  },
+  "next-hanging": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1260"
+     }
+    },
+    "ind": {
+     "left": "1260"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1360"
+     }
+    },
+    "ind": {
+     "left": "1360"
+    }
+   },
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    },
+    "ind": {
+     "left": "1000",
+     "hanging": "100"
+    }
+   },
+   "After": {}
+  },
+  "before-list": {
+   "Head": {},
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Kilo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "Lima": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "720"
+     }
+    },
+    "ind": {
+     "left": "720"
+    }
+   },
+   "Mike": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Nova": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1428"
+     }
+    },
+    "ind": {
+     "left": "1428"
+    }
+   },
+   "Oscar": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1776"
+     }
+    },
+    "ind": {
+     "left": "1776"
+    }
+   },
+   "After": {}
+  },
+  "existing-alone": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "After": {}
+  },
+  "existing-after-list": {
+   "Head": {},
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "926"
+     }
+    },
+    "ind": {
+     "left": "926"
+    }
+   },
+   "Bravo": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    }
+   },
+   "After": {}
+  },
+  "existing-before-list": {
+   "Head": {},
+   "Alpha": {
+    "pStyle": {
+     "val": "Lijstopsomteken"
+    },
+    "tabs": {
+     "tab": {
+      "val": "num",
+      "pos": "1068"
+     }
+    },
+    "ind": {
+     "left": "1068"
+    }
+   },
+   "Sierra": {
+    "pStyle": {
+     "val": "Lijstopsomteken3"
+    }
+   },
+   "After": {}
+  }
  }
 }

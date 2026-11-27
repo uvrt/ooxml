@@ -794,6 +794,7 @@ dependencies = [
  "ooxml-schema",
  "ooxml-store",
  "ooxml-style-names",
+ "ooxml-text",
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",
