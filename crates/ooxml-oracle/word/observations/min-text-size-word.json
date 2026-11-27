@@ -1,0 +1,65 @@
+{
+ "_about": "What Word 16.106 for Mac read and wrote for crates/ooxml-oracle/word/probes/min_text_size_probe.py (the document in cases/min_text_size_cases.py): 'word-kinds', per paragraph key the story type, font size and style Word gives it (its built-in style's name where it is one); 'word-caption', the caption Word's own insert caption made (its style id and name); 'tools-opened', whether Word opened the document and saved it. Regenerate with python crates/ooxml-oracle/word/probes/min_text_size_probe.py.",
+ "word": "16.106 (macOS), Dutch interface",
+ "word-kinds": {
+  "Alpha": {
+   "story": "main text story",
+   "size": 9.0,
+   "style": "Standaard"
+  },
+  "Bravo": {
+   "story": "main text story",
+   "size": 11.0,
+   "style": "Standaard"
+  },
+  "Charlie": {
+   "story": "main text story",
+   "size": 9.0,
+   "style": "Bijschrift"
+  },
+  "Delta": {
+   "story": "main text story",
+   "size": 8.0,
+   "style": "Tabelraster"
+  },
+  "Echo": {
+   "story": "main text story",
+   "size": 6.5,
+   "style": "Bijschrift"
+  },
+  "Foxtrot": {
+   "story": "main text story",
+   "size": 11.0,
+   "style": "Standaard"
+  },
+  "India": {
+   "story": "footnotes story",
+   "size": 7.5,
+   "style": "Voetnoottekst"
+  },
+  "Juliet": {
+   "story": "endnotes story",
+   "size": 6.0,
+   "style": "Eindnoottekst"
+  },
+  "Golf": {
+   "story": "primary header story",
+   "size": 7.0,
+   "style": "Koptekst"
+  },
+  "Hotel": {
+   "story": "primary footer story",
+   "size": 6.0,
+   "style": "Voettekst"
+  }
+ },
+ "word-caption": {
+  "text": "Table 1: Word's own",
+  "style_id": "Bijschrift",
+  "style_name": "caption"
+ },
+ "tools-opened": {
+  "outcome": "done",
+  "detail": ""
+ }
+}

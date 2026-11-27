@@ -104,8 +104,11 @@ pub(super) fn add_plan(args: &EditChart, lang: String, read: &TryCall) -> Result
         Labels::Text(t) => t.len(),
         Labels::Numbers(n) => n.len(),
     };
-    if count.saturating_mul(data.len().max(1)) > MAX_ADD_VALUES {
-        return Err(ToolError::failure(Failure::Limit, "at most 10,000 chart values").at("data"));
+    let values = count.saturating_mul(data.len().max(1));
+    if values > MAX_ADD_VALUES {
+        return Err(ToolError::failure(Failure::Limit, "at most 10,000 chart values")
+            .with_limit(MAX_ADD_VALUES, values)
+            .at("data"));
     }
     let legend = legend(args.position, read)?;
     let look = look(args, kind).map_err(|e| data_error(&e.0, read))?;

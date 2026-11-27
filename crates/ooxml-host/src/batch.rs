@@ -155,12 +155,7 @@ impl HostSession {
         going.docs.clone_from(&named);
         let primary = named.first().cloned();
         let settings = &self.host.settings;
-        if ops.len() > settings.max_batch_ops {
-            let error = ToolError::failure(
-                Failure::Limit,
-                format!("{} ops; at most {} per batch", ops.len(), settings.max_batch_ops),
-            )
-            .at("ops");
+        if let Some(error) = too_many_ops(ops.len(), settings.max_batch_ops) {
             return self.at_primary(ToolResult::failed(error), primary.as_deref());
         }
         let notes: Vec<String> = planned
@@ -1390,4 +1385,14 @@ fn not_run(timeout: Duration, first: usize, total: usize, elapsed: f64) -> (Stri
 /// The refusal of a document that is not open.
 fn not_open(doc: &str) -> ToolError {
     ToolError::failure(Failure::Internal, format!("no open document {doc}")).at("doc")
+}
+
+/// The refusal of a batch of `count` ops where it may hold `most`, its numbers in details
+/// (round 60, R142); `None` where they fit.
+fn too_many_ops(count: usize, most: usize) -> Option<ToolError> {
+    (count > most).then(|| {
+        ToolError::failure(Failure::Limit, format!("{count} ops; at most {most} per batch"))
+            .with_limit(most, count)
+            .at("ops")
+    })
 }

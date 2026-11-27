@@ -122,6 +122,7 @@ impl Session {
                     ops.len()
                 ),
             )
+            .with_limit(MAX_OPS, ops.len())
             .at("ops"));
         }
         let own = context.limits.result_chars;

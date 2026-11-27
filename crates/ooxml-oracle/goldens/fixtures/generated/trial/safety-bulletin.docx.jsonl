@@ -158,7 +158,7 @@
 {"digest":"sha256:f68dc39c9fbb6900e70bbee88cb9ef5d","id":"objects:32008224f0ac1981","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ce6781bceffe4c6e68cbf1968e2cf8d0","id":"objects:14ae916a854c55ba","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7805b82adf4ac4706d2da1116171a5d9","id":"objects:8942a1d46da86df5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0c9b16d3ed74f195e0752e990e28f407","id":"objects:4415bb7d8cf2c66f","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:d1124801b544341c9bf5faca7339f447","id":"objects:4415bb7d8cf2c66f","source":"R142 (round 60, user decision limits-in-details-2026-11-25): a limit refusal says its numbers in details"}
 {"digest":"sha256:efd06bb00d173b35aa2540649c0ad3a4","id":"objects:64a3cb18703ae473","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ed71fe18ba9c60e973ccf35ec0e10af1","id":"objects:631617f946f28875","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:47720124c4843bc51b3f65aad071551f","id":"objects:eca259b37bab047d","source":"frozen Python a512c901, unmeasured"}
@@ -1748,5 +1748,5 @@
 {"digest":"sha256:1bf45d3f17515e8cbc35ae5695062d34","id":"read:362e783cf480b73b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4c01e05c8537a0ae1b562ca4c6670f86","id":"laid:12c6c9ee998e7ae7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9c0b954c861612597062a5526362f6c6","id":"laid:e4b6143ad84c9aa3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9c0b954c861612597062a5526362f6c6","id":"laid:dcc5aa32af0dbc1b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:8021989da6daabcaf1f1db187cc4de57","id":"laid:dcc5aa32af0dbc1b","source":"R140 fix, user decision 2026-11-27: each kind against its own minimum (0.1 filtered by the smallest)"}
 {"digest":"sha256:8143ab8642e2729d477cfafde6f6b65c","id":"laid:26b6cb7b9f6317d8","source":"frozen Python a512c901, unmeasured"}

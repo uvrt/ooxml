@@ -15,8 +15,10 @@
 # its `decision` -- a user decision whose new answer it is; only
 # "structured-problems-2026-11-25" (one problems shape in every reply: an edit's
 # checks.validate gives the problems it added and fixed as {code, part, element, message,
-# severity}) or "optimistic-batches-2026-11-25" (a batch on one document runs optimistically,
-# holding nothing, and run again where it conflicts: what it says of itself says so) -- and its `cause`, citing the pull request that changed the answer.  An entry
+# severity}), "optimistic-batches-2026-11-25" (a batch on one document runs optimistically,
+# holding nothing, and run again where it conflicts: what it says of itself says so) or
+# "limits-in-details-2026-11-25" (round 60, R142: a limit refusal says its limit and what the
+# call gave in details) -- and its `cause`, citing the pull request that changed the answer.  An entry
 # without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
 # release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
 # file's subset: `[[difference]]` tables of strings, integers and lists of strings.
@@ -55,6 +57,11 @@ decision = "structured-problems-2026-11-25"
 tool = "describe"
 fields = ["result.data.problems"]
 cause = "Phase 3 E1a (ooxml-host): describe's problems, those the document opened with, are each {code, part, element, message, severity}"
+
+[[difference]]
+decision = "limits-in-details-2026-11-25"
+fields = ["result.error.details.limit", "result.error.details.given"]
+cause = "Round 60 R142 (lane ph3-forms-3; ooxml-tools, ooxml-tools-word, ooxml-host, ooxml-session): a limit refusal says its numbers in details as well as its message, {\"limit\": the most the call may hold, \"given\": what it held} (a fact count only its limit): check's and render's ranges, check's copies, render's pages and images per call, a sheet's tiles, word_set_cells' cells, a chart's values, a table placed from a source (rows, columns, cells), batch and read_batch ops, the datasets a session keeps, a dataset's and a source's values"
 
 [[difference]]
 decision = "optimistic-batches-2026-11-25"

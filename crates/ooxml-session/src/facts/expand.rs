@@ -344,7 +344,10 @@ pub fn expand(
         count += 1;
         if count > MAX_FACTS {
             return Err(
-                ToolError::failure(Failure::Limit, format!("more than {MAX_FACTS} references in one text")).at(field),
+                ToolError::failure(Failure::Limit, format!("more than {MAX_FACTS} references in one text"))
+                    // (the count stops at the first over the limit: no `given`)
+                    .with_detail("limit", Value::from(MAX_FACTS))
+                    .at(field),
             );
         }
         let (written, record) = resolve(&address, field)?;
