@@ -3,6 +3,22 @@
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
 `ooxml_core`. Its version is the `crates/python` crate's.
 
+## 0.12.2 -- v2026.11.27
+
+### Added
+
+- The Word tools behind docx-agent 0.2.4's forms (round 60): `replace_text`'s `range` and `regex` (R139),
+  `word_insert_markdown`'s `at: "replace:..."` and `like` for list levels (R141), and `like` under a
+  one-level list moving as Word's list indent moves it (F-2c). docx-agent's CHANGELOG has the detail.
+
+### Fixed
+
+- The first edit of a large Word document whose paragraphs, rows and drawings had no ids (Word stamps none)
+  is linear in its blocks, not quadratic: a part's ids are drawn in one draw per seed, and the id map's
+  repeat check, renames, aliases and rewrite no longer walk everything per block. An 80,922-block document's
+  first edit: over 20 minutes before, 3.8 s now; 7,101 blocks: 12.4 s before, 0.42 s now. Every part's bytes
+  and renames are the same as one draw per block gave (272 fixtures and corpus documents compared).
+
 ## 0.12.1 -- v2026.11.26
 
 ### Added
