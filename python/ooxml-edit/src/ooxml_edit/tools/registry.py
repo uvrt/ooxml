@@ -328,8 +328,8 @@ class Tool:
     #: runs, so the handler reads the document as it finds it.  Not part of the definition
     #: (:meth:`same_definition`).
     aheads: dict[str | None, Handler] = field(default_factory=dict)
-    #: The document kind of the format library that offers this tool (:func:`offered_by`:
-    #: xlsx-agent's tools are ``"xlsx"``'s), whatever kinds its handlers serve; ``None``: the
+    #: The document kind of the format library that offers this tool (:func:`offered_by`: a
+    #: library's tools are its kind's), whatever kinds its handlers serve; ``None``: the
     #: application's own (``tool(...)``), or a tool several libraries share.  Not part of the
     #: definition (:meth:`same_definition`).
     library: str | None = None
