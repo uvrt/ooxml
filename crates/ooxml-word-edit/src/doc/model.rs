@@ -257,6 +257,7 @@ impl DocModel for WordDoc {
         }
         self.spaced = 0;
         self.as_given = false;
+        self.begun = Some(self.package.clone());
     }
 
     fn set_up(&mut self, setup: &Setup) {

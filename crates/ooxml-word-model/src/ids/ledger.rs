@@ -132,15 +132,23 @@ impl IdPool {
             None => self.after_last(seed),
         };
         let mut out = Vec::with_capacity(count);
+        // the seed's sequence taken out while it is drawn from (a draw at open takes tens of
+        // thousands of values), grown as far as the draw reaches
+        let mut sequence = self.sequences.remove(seed).unwrap_or_default();
         while out.len() < count {
-            let value = self.sequence(seed, k + 1).get(k).copied().unwrap_or(0);
+            if sequence.len() <= k {
+                let target = (k + 1).max(2 * sequence.len()).max(k + count - out.len() + 16);
+                let start = sequence.len();
+                sequence.extend((start..target).map(|n| sequence_value(seed, n)));
+            }
+            let value = sequence.get(k).copied().unwrap_or(0);
             k += 1;
-            if value == 0 || self.values.contains(&value) {
+            if value == 0 || !self.values.insert(value) {
                 continue;
             }
-            self.values.insert(value);
             out.push(format!("{value:08X}"));
         }
+        self.sequences.insert(seed.to_owned(), sequence);
         self.cursors.insert(seed.to_owned(), k);
         out
     }

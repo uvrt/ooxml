@@ -13,9 +13,8 @@ use super::declared::ensured_head;
 use super::namespaces::cleaned;
 use crate::docx::live_paths;
 use crate::ids::{valid_long_hex, BlockId, IdState, PartIds, Renames, TableId, W14, WP, WP14};
-use ooxml_xml::{Attribute, Element, Head, Name, Node, QName};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::ops::Bound;
+use ooxml_xml::{Attribute, Children, Element, Head, Name, Node, QName};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Attributes to set on an element, in order: each one's name (with the prefix it is
@@ -182,11 +181,9 @@ impl Unstamped<'_> {
         for (path, (attrs, _)) in self.drawings.iter().zip(drawn) {
             sets.push((path.clone(), attrs));
         }
-        let mut root = rewrite(
-            self.root,
-            &[],
-            &sets.iter().map(|(p, s)| (&**p, s)).collect::<BTreeMap<_, _>>(),
-        );
+        let mut sorted: Vec<(&[u32], &Attrs)> = sets.iter().map(|(p, s)| (&**p, s)).collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        let mut root = rewrite(self.root, 0, &sorted);
         if !self.paragraphs.is_empty() {
             root = ensured(&root, false);
         }
@@ -225,21 +222,17 @@ impl Unstamped<'_> {
                 None => fresh.next().cloned().unwrap_or_default(),
             })
             .collect();
+        // the names, one pair per prefix the attributes are written with
+        let mut named: HashMap<String, [Name; 2]> = HashMap::new();
         let out = paths
             .iter()
             .zip(&pairs)
             .map(|(path, pair)| {
                 let prefix = prefix_at(self.root, path, namespace, usual);
-                let attrs: Attrs = locals
-                    .iter()
-                    .zip(pair)
-                    .map(|(local, value)| {
-                        (
-                            Arc::new(QName::new(Some(&prefix), local, Some(namespace))),
-                            value.clone(),
-                        )
-                    })
-                    .collect();
+                let names = named.entry(prefix).or_insert_with_key(|prefix| {
+                    locals.map(|local| Arc::new(QName::new(Some(prefix), local, Some(namespace))))
+                });
+                let attrs: Attrs = names.iter().cloned().zip(pair.iter().cloned()).collect();
                 let [first, _] = pair;
                 (attrs, first.clone())
             })
@@ -286,44 +279,90 @@ pub fn prefix_at(root: &Element, path: &[u32], namespace: &str, usual: &str) -> 
     found.unwrap_or_else(|| usual.to_owned())
 }
 
-/// `element` (at `place`) with the attributes of `sets` set on the elements they name,
-/// every unchanged subtree shared.
-fn rewrite(element: &Arc<Element>, place: &[u32], sets: &BTreeMap<&[u32], &Attrs>) -> Arc<Element> {
-    // the paths below `place` follow it in the map's order (one range, not every path:
-    // walking all of them at every element is quadratic in a part's blocks)
-    let below: Vec<u32> = sets
-        .range::<[u32], _>((Bound::Excluded(place), Bound::Unbounded))
-        .map(|(p, _)| *p)
-        .take_while(|p| p.starts_with(place))
-        .filter_map(|p| p.get(place.len()).copied())
-        .collect();
-    let mut children = element.children().clone();
-    let mut done = BTreeSet::new();
-    for k in below {
-        if !done.insert(k) {
-            continue;
-        }
-        let Some(Node::Element(child)) = element.children().get(k as usize) else {
+/// `element` with the attributes of `sets` set on the elements they name: each a path
+/// below `element` from `depth` on, sorted (an element's own before its descendants'); every
+/// unchanged subtree shared. One walk down the paths, each consumed once.
+fn rewrite(element: &Arc<Element>, depth: usize, sets: &[(&[u32], &Attrs)]) -> Arc<Element> {
+    let own = sets
+        .iter()
+        .take_while(|(p, _)| p.len() == depth)
+        .map(|(_, a)| *a)
+        .last();
+    let below = sets
+        .get(sets.iter().take_while(|(p, _)| p.len() == depth).count()..)
+        .unwrap_or_default();
+    // the children `below` reaches, each with its paths (contiguous: the paths are sorted)
+    let mut edited: Vec<(usize, Node)> = Vec::new();
+    let mut at = 0;
+    while let Some((first, _)) = below.get(at) {
+        let Some(&k) = first.get(depth) else {
+            at += 1;
             continue;
         };
-        let mut path = place.to_vec();
-        path.push(k);
-        let edited = rewrite(child, &path, sets);
-        if let Some(spliced) = children.splice(k as usize..k as usize + 1, vec![Node::Element(edited)]) {
-            children = spliced;
+        let end = at
+            + below
+                .get(at..)
+                .unwrap_or_default()
+                .iter()
+                .take_while(|(p, _)| p.get(depth) == Some(&k))
+                .count();
+        if let Some(Node::Element(child)) = element.children().get(k as usize) {
+            let group = below.get(at..end).unwrap_or_default();
+            edited.push((k as usize, Node::Element(rewrite(child, depth + 1, group))));
         }
+        at = end;
     }
-    match sets.get(place) {
-        Some(attributes) => {
-            let mut head: Head = (**element.head()).clone();
-            for (name, value) in attributes.iter() {
-                head = with_attribute(&head, name, value);
+    let children = if edited.is_empty() {
+        element.children().clone()
+    } else if edited.len() > SPLICES {
+        // many children: built once (a splice each copies a path of the rope)
+        let mut nodes: Vec<Node> = element.children().iter().cloned().collect();
+        for (k, node) in edited {
+            if let Some(slot) = nodes.get_mut(k) {
+                *slot = node;
             }
+        }
+        Children::from_vec(nodes)
+    } else {
+        let mut children = element.children().clone();
+        for (k, node) in edited {
+            if let Some(spliced) = children.splice(k..k + 1, vec![node]) {
+                children = spliced;
+            }
+        }
+        children
+    };
+    match own {
+        Some(sets) => {
+            // the head's attributes copied once, each set in its place or added after them
+            let head = element.head();
+            let mut attributes = head.attributes.to_vec();
+            for (name, value) in sets.iter() {
+                match attributes
+                    .iter_mut()
+                    .find(|a| a.name.is(name.namespace(), name.local()))
+                {
+                    Some(a) => a.value = Arc::from(value.as_str()),
+                    None => attributes.push(Attribute {
+                        name: Arc::clone(name),
+                        value: Arc::from(value.as_str()),
+                    }),
+                }
+            }
+            let head = Head {
+                name: head.name.clone(),
+                namespaces: head.namespaces.clone(),
+                attributes: attributes.into(),
+            };
             Arc::new(Element::from_head(Arc::new(head), children))
         }
         None => Arc::new(element.with_children(children)),
     }
 }
+
+/// How many children of one element are spliced in place; past it the children are built
+/// again in one pass.
+const SPLICES: usize = 32;
 
 /// `head` with the attribute `name` set to `value`: in its place when the element has it,
 /// else after the others.

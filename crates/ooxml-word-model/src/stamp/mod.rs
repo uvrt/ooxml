@@ -125,6 +125,23 @@ impl WordPackage {
         }
     }
 
+    /// The package as its bytes are, each block read with the id they give it (none, by
+    /// place): what a comparison with the bytes a save writes reads (an edit's `touched`
+    /// names what its bytes changed, the ids the open gave and the edit wrote among them).
+    #[must_use]
+    pub fn as_saved(&self) -> WordPackage {
+        WordPackage {
+            package: self.package.as_saved(),
+            given: Arc::default(),
+        }
+    }
+
+    /// Whether a part is read with ids given at open and not written yet.
+    #[must_use]
+    pub fn has_unwritten(&self) -> bool {
+        !self.package.unwritten().is_empty()
+    }
+
     /// The package.
     #[must_use]
     pub fn package(&self) -> &Package {

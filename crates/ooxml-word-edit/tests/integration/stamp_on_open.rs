@@ -224,7 +224,9 @@ fn an_id_given_at_open_counts_as_fresh_at_its_blocks_first_write() {
     let shared = editor(&bytes);
     let target = paragraphs(shared.store().snapshot().doc())[1].clone();
     let given = text_id(shared.store().snapshot().doc(), &target);
-    let first = shared.run(&Caller::anonymous(), &set_text(&target, "Written.")).unwrap();
+    let first = shared
+        .run(&Caller::anonymous(), &set_text(&target, "Written."))
+        .unwrap();
     assert_eq!(text_id(first.version.doc(), &target), given, "the first write keeps it");
     let second = shared.run(&Caller::anonymous(), &set_text(&target, "Again.")).unwrap();
     assert_ne!(text_id(second.version.doc(), &target), given, "a later write renews it");

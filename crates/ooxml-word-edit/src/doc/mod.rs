@@ -128,6 +128,10 @@ pub struct WordDoc {
     spaced: usize,
     /// Whether the transaction writes its text as given ([`Setup::as_given`]).
     as_given: bool,
+    /// The package the transaction working on this version began on: an id it read with
+    /// ids given at open and not written is fresh for the whole transaction
+    /// ([`WordDoc::id_written`]).
+    begun: Option<WordPackage>,
 }
 
 /// How a run's transaction writes ([`ooxml_store::DocModel::set_up`]).
@@ -219,6 +223,7 @@ impl WordDoc {
             redrawn: redrawn::Redrawn::default(),
             spaced: 0,
             as_given: false,
+            begun: None,
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
@@ -343,6 +348,7 @@ impl WordDoc {
             redrawn: self.redrawn.clone(),
             spaced: self.spaced,
             as_given: self.as_given,
+            begun: self.begun.clone(),
         }
     }
 
@@ -448,24 +454,30 @@ impl WordDoc {
         Ok(package)
     }
 
-    /// Whether the id of the block at `path` of `part` has been written: it is the one the
-    /// part's saved form holds there. An id given at open and not written yet has been seen by
-    /// no reader of the file, so it counts as fresh at its block's first write: that write
-    /// keeps it whole (a text edit does not renew its textId), as an edit that stamped the
-    /// block itself kept the pair it drew; later writes renew as usual.
+    /// Whether the id of the block at `path` of `part` (in this version) has been written:
+    /// the version the transaction began on saves it there. An unwritten id counts as fresh
+    /// at its block's first write -- an id given at open has been seen by no reader of the
+    /// file, so the transaction that first writes its block keeps it whole (a text edit does
+    /// not renew its textId), as an edit that stamped the block itself kept the pair it drew;
+    /// later transactions renew as usual.
     #[must_use]
     pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
-        if !matches!(self.package.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
             return true;
         }
-        let id = |tree: Option<Tree>| {
-            tree.and_then(|t| {
-                ooxml_word_model::docx::at_path(t.root(), path)
-                    .and_then(|e| e.attribute(Some(crate::names::W14), "paraId").map(str::to_owned))
-            })
-        };
-        let now = id(self.package.tree(part).ok().flatten());
-        now.is_some() && now == id(self.package.saved_tree(part).ok().flatten())
+        let tree = self.package.tree(part).ok().flatten();
+        let now = tree.as_ref().and_then(|t| {
+            ooxml_word_model::docx::at_path(t.root(), path)
+                .and_then(|e| e.attribute(Some(crate::names::W14), "paraId"))
+                .and_then(ooxml_word_model::ids::hex_value)
+        });
+        let Some(now) = now else { return true };
+        // a value the open gave is never one the saved part holds (draws skip those)
+        base.saved_tree(part)
+            .ok()
+            .flatten()
+            .is_some_and(|saved| ooxml_word_model::ids::used_long_hex(&[&**saved.root()]).contains(&now))
     }
 
     /// The package with `part` put in place as another writer wrote it (`tree`), every

@@ -377,6 +377,23 @@ impl Package {
         named.into_iter().map(|(_, n)| n.to_owned()).collect()
     }
 
+    /// This version as its bytes are: every unwritten part its saved form, the tree it is
+    /// read as left aside.
+    #[must_use]
+    pub fn as_saved(&self) -> Package {
+        let mut next = self.clone();
+        for (name, slot) in self.slots.iter() {
+            if let PartVersion::Unwritten(unwritten) = &slot.content {
+                let slot = Slot {
+                    content: (*unwritten.saved).clone(),
+                    ..slot.clone()
+                };
+                next.slots = next.slots.insert(name, slot).0;
+            }
+        }
+        next
+    }
+
     /// A version with every unwritten part written: each one its tree, the content every
     /// reader read already (the same by identity), saved as that tree writes.
     #[must_use]
