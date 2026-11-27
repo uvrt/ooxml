@@ -1,6 +1,7 @@
 //! Owns: each page's summary as digested ([`DigestCache`]), kept across a generation's
-//! versions by the page as laid out -- its `LaidPage` and the flow items it draws, by
-//! identity -- and its context ([`crate::page_context`]): a page another version lays out
+//! versions by the page as drawn -- what its `LaidPage` is drawn as, kept by a page copied
+//! from it moved only in its flow's places (an insert before it), which draws the flow items
+//! it drew, moved with it -- and its context ([`crate::page_context`]): a page another version lays out
 //! the same, in the same context, is taken as digested, not painted again, where it draws
 //! the same blocks under the same keys (a summary names its body lines by id, an id is its
 //! block's key's: the keys are checked, never part of the memo's key, ADR-008). It holds its
@@ -17,7 +18,7 @@ use crate::summary::PageSummary;
 use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_word_layout::flow::FlowItem;
-use ooxml_word_layout::paginate::LaidPage;
+use ooxml_word_layout::paginate::{DrawnAs, LaidPage};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 
@@ -58,23 +59,14 @@ impl WeakItem {
             _ => false,
         }
     }
-
-    /// Whether it is `other`.
-    fn same(&self, other: &WeakItem) -> bool {
-        match (self, other) {
-            (WeakItem::Para(a), WeakItem::Para(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (WeakItem::Table(a), WeakItem::Table(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            (WeakItem::Stop(a), WeakItem::Stop(b)) => std::ptr::eq(a.as_ptr(), b.as_ptr()),
-            _ => false,
-        }
-    }
 }
 
-/// A page as laid out, held weakly: its laid page and the flow items it draws, by
-/// identity.
+/// A page as laid out, held weakly: its laid page, what it is drawn as and the flow items
+/// it draws, by identity.
 #[derive(Clone)]
 pub(crate) struct PageRef {
     page: Weak<LaidPage>,
+    drawn: Weak<DrawnAs>,
     items: Arc<[WeakItem]>,
 }
 
@@ -91,6 +83,7 @@ impl PageRef {
     pub(crate) fn of(key: &PageKey) -> PageRef {
         PageRef {
             page: Arc::downgrade(&key.page),
+            drawn: Arc::downgrade(&key.page.drawn_as),
             items: key.items.iter().map(WeakItem::of).collect(),
         }
     }
@@ -102,11 +95,16 @@ impl PageRef {
             && self.items.iter().zip(&key.items).all(|(w, item)| w.is(item))
     }
 
-    /// Whether it is the same page as `other`.
-    pub(crate) fn same(&self, other: &PageRef) -> bool {
-        std::ptr::eq(self.page.as_ptr(), other.page.as_ptr())
-            && self.items.len() == other.items.len()
-            && self.items.iter().zip(other.items.iter()).all(|(a, b)| a.same(b))
+    /// Whether it draws as `key`'s page does: drawn as the same laid page -- the very one,
+    /// or one copied from it moved only in its flow's places, which draws the flow items it
+    /// drew, moved with it ([`DrawnAs`]).
+    pub(crate) fn drawn_as(&self, key: &PageKey) -> bool {
+        std::ptr::eq(self.drawn.as_ptr(), Arc::as_ptr(&key.page.drawn_as))
+    }
+
+    /// Whether it draws as `other` does: drawn as the same laid page.
+    pub(crate) fn drawn_alike(&self, other: &PageRef) -> bool {
+        std::ptr::eq(self.drawn.as_ptr(), other.drawn.as_ptr())
     }
 
     /// Whether a version still holds its laid page.
@@ -118,6 +116,7 @@ impl PageRef {
     /// what the value holds).
     pub(crate) fn weight(&self) -> usize {
         std::mem::size_of::<LaidPage>()
+            + std::mem::size_of::<DrawnAs>()
             + self.items.len()
                 * (std::mem::size_of::<WeakItem>() + std::mem::size_of::<ooxml_word_layout::flow::ParaItem>())
     }
@@ -214,8 +213,8 @@ impl DigestCache {
         context: Digest,
         epoch: u64,
     ) -> Option<Arc<PageSummary>> {
-        let found = self.memo.get(&(Arc::as_ptr(&key.page) as usize, context, epoch))?;
-        (found.page.is(key) && found.blocks == *blocks).then_some(found.summary)
+        let found = self.memo.get(&(drawn(key), context, epoch))?;
+        (found.page.drawn_as(key) && found.blocks == *blocks).then_some(found.summary)
     }
 
     /// Keep `summary` as the page `key`'s, drawing the blocks `blocks`, in `context` and
@@ -233,12 +232,17 @@ impl DigestCache {
             blocks,
             summary,
         };
-        self.memo
-            .insert((Arc::as_ptr(&key.page) as usize, context, epoch), kept);
+        self.memo.insert((drawn(key), context, epoch), kept);
     }
 
     /// Its counters: entries and bytes held among them.
     pub(crate) fn stats(&self) -> MemoStats {
         self.memo.stats()
     }
+}
+
+/// What the memo knows a page by: what it is drawn as (its allocation is kept while a kept
+/// entry holds it weakly, so the address names no other).
+fn drawn(key: &PageKey) -> usize {
+    Arc::as_ptr(&key.page.drawn_as) as usize
 }
