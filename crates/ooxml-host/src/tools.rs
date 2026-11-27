@@ -92,7 +92,7 @@ fn open_document(call: &OwnCall<'_>) -> Result<ToolResult<Value>, ToolError> {
 fn not_opened(blob: &Blob, refused: OpenRefused, call: &OwnCall<'_>) -> ToolError {
     match refused {
         OpenRefused::Limit(message) => ToolError::failure(Failure::Limit, message),
-        OpenRefused::Argument(message) | OpenRefused::Unreadable(message) => {
+        OpenRefused::Argument(message) | OpenRefused::State(message) | OpenRefused::Unreadable(message) => {
             if is_text(blob) {
                 return ToolError::refusal(
                     Refusal::InvalidArguments,
@@ -171,7 +171,9 @@ fn new_document(call: &OwnCall<'_>) -> Result<ToolResult<Value>, ToolError> {
         .filter(|t| !t.is_empty())
         .map(|_| blob(call, "template_blob"))
         .transpose()?;
-    let created = revision_date(session.context().clock.now());
+    let created = call
+        .date
+        .map_or_else(|| revision_date(session.context().clock.now()), str::to_owned);
     let made = NewDocument {
         size: text(call, "size"),
         title: text(call, "title"),

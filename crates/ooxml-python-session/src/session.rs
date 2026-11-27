@@ -85,7 +85,7 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
 
 /// A state's text as docx-agent's `load_state` reads it: a string, or bytes read as ASCII;
 /// any other value (bytes that are not ASCII too) refused, named by its type.
-fn state_text(state: &Bound<'_, PyAny>) -> PyResult<String> {
+pub(crate) fn state_text(state: &Bound<'_, PyAny>) -> PyResult<String> {
     if let Ok(text) = state.extract::<String>() {
         return Ok(text);
     }

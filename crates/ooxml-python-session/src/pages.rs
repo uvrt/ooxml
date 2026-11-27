@@ -30,10 +30,12 @@ impl PyPageSetup {
     /// up on `decimal`, drawing glyphs at `glyph_size` (`"device"` or `"exact"`); a chart's
     /// numbers and dates written with `decimal` and `numbers` -- `(thousands, date_order,
     /// list_separator)` -- in `locale`'s language; their memory counted in `budget` (a
-    /// `MemoryBudget`; else one of their own) -- as `WordPages` takes them.
+    /// `MemoryBudget`; else one of their own) -- as `WordPages` takes them; `raster` (a
+    /// `PageRaster`) the faces `render` draws the pages with (`None`: `render` refused as not
+    /// supported, unless a call's layout hands its own).
     #[new]
     #[pyo3(signature = (fonts, *, locale = "en-US", decimal = '.', glyph_size = "device",
-                        numbers = (',', "mdy".to_owned(), ','), budget = None))]
+                        numbers = (',', "mdy".to_owned(), ','), budget = None, raster = None))]
     fn new(
         fonts: PyRef<'_, PyWordFonts>,
         locale: &str,
@@ -41,6 +43,7 @@ impl PyPageSetup {
         glyph_size: &str,
         numbers: (char, String, char),
         budget: Option<PyRef<'_, PyMemoryBudget>>,
+        raster: Option<PyRef<'_, crate::raster::PyPageRaster>>,
     ) -> PyResult<Self> {
         let options = engine_options(locale, decimal, glyph_size, numbers)?;
         let memory = budget.map_or_else(|| MemoryBudget::new(OWN_BUDGET), |b| Arc::clone(&b.inner));
@@ -48,7 +51,7 @@ impl PyPageSetup {
             inner: SessionPages {
                 setup: PageSetup::new(fonts.setup(), options),
                 memory,
-                raster: None,
+                raster: raster.map(|r| Arc::clone(&r.inner)),
             },
         })
     }

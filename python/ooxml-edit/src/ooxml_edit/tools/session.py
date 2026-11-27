@@ -435,6 +435,10 @@ class DocumentFormat:
     #: within :meth:`~.owned.OwnedEntry.serving`; ``None``: the call runs as any other (the
     #: owner changed nothing).
     serve: Callable[..., Any] | None = None
+    #: Phase 3 E1: the Rust host that holds the format's documents and runs its tools
+    #: (:mod:`.hosted`: ``make``, ``pages``, ``catalogue``).  ``None``: the format's
+    #: documents are the Python host's.
+    host: Any = None
 
 
 #: :attr:`DocumentEntry.render_keys` and :attr:`DocumentEntry.font_keys`, in entries.

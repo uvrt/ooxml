@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pptx-agent"
-version = "0.1.25"
+version = "0.1.26"
 description = "An AI-editable PowerPoint layer: inspect, mutate and re-render .pptx decks losslessly"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -26,16 +26,16 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: XML",
 ]
 # Why each dependency, and why at its version: CONTRIBUTING.md, "Dependencies".
-dependencies = ["lxml>=4.9", "ooxml-common>=0.45.1", "ooxml-edit>=0.129.0", "markdown-it-py>=3.0",
+dependencies = ["lxml>=4.9", "ooxml-common>=0.45.2", "ooxml-edit>=0.129.1", "markdown-it-py>=3.0",
                 "mdit-py-plugins>=0.4"]
 
 [project.optional-dependencies]
 # Rendering is delegated to pptx2svg; it is optional so the edit layer can be used headless.
-render = ["pptx2svg>=0.3.9"]
-png = ["pptx2svg[png]>=0.3.9"]
+render = ["pptx2svg>=0.3.10"]
+png = ["pptx2svg[png]>=0.3.10"]
 # Pillow: golden p5's grader compares the logos (tests/golden/grading/check_p5.py).  ruff:
 # the linter, which CI's build job runs at the same pin ([tool.ruff] below).
-dev = ["pytest>=7", "lxml>=4.9", "pptx2svg>=0.3.9", "pillow>=10", "ruff==0.17.2"]
+dev = ["pytest>=7", "lxml>=4.9", "pptx2svg>=0.3.10", "pillow>=10", "ruff==0.17.2"]
 
 [project.urls]
 Homepage = "https://github.com/uvrt/pptx-agent"

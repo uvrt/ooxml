@@ -1112,7 +1112,8 @@ certain that a deck opens: the test suite's opt-in oracle drives it.
 touched and validates the deck; `check` and `save_document` measure the slides they name
 (every slide at a save). Measuring asks pptx2svg for the slides as they are now, from the
 open package's parts -- no zip is written and read -- and a slide resolved before is taken
-from one cache per process (`pptx2svg.ModelCache`, 512 slides) when the bytes it was
+from one cache per process (`pptx2svg.ModelCache`: 256 MB of slides and their pictures,
+each picture held once, at most 512 slides) when the bytes it was
 resolved from are the same: its part, and everything its relationships reach (layout,
 master, theme, pictures, charts), with the presentation's settings and its place in the
 deck. After an edit of one slide, that slide is resolved again; after a layout, master or
@@ -1123,6 +1124,11 @@ bytes -- kept for every deck of the process, at most 8,192 parts -- and checks t
 together (content types, relationship targets, orphans, the slide list) every time, so a
 call's validation re-reads only the parts it changed, and a save's is the same full
 answer. Results are the same as working everything out afresh, byte for byte.
+
+A host logs and bounds that cache with `pptx_agent.edit.resolved`'s `model_cache_stats()`
+(entries, bytes held by slides and by pictures, hits, misses, the budget),
+`set_model_cache_budget(bytes)` and `clear_model_cache()`. Each process has its own: with
+worker processes, `toolbox.pool.broadcast(set_model_cache_budget, budget)` sets theirs.
 
 ### Undo and batches
 

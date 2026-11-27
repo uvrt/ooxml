@@ -27,6 +27,7 @@ mod originals;
 mod pages;
 mod placements;
 mod planned;
+pub mod problems;
 mod refusal;
 mod registrar;
 mod review;

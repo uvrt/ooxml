@@ -163,7 +163,10 @@ def test_validate_problems_are_found_in_their_blocks(box, made):
     session = box.session()
     d1 = session.open(_styled_wrongly(data, chapters[0][1]), "report.docx")
     first = _ok(box, session, "check", doc=d1, include=["validate"], range=[_span(chapters[0])]).data["validate"]
-    assert [p for p in first["problems"] if "style-missing" in p] == ["[style-missing] word/document.xml: pStyle NoSuchStyle"]
+    # (each problem as {code, part, element, message, severity}: user decision 2026-11-25)
+    assert [p for p in first["problems"] if p["code"] == "style-missing"] == [
+        {"code": "style-missing", "part": "word/document.xml", "element": "pStyle NoSuchStyle",
+         "message": "[style-missing] word/document.xml: pStyle NoSuchStyle", "severity": "problem"}]
     assert first["elsewhere"] == 0
     second = _ok(box, session, "check", doc=d1, include=["validate"], range=[_span(chapters[1])]).data["validate"]
     assert second["problems"] == [] and second["elsewhere"] == 1 and second["baseline"] == 1
@@ -172,7 +175,7 @@ def test_validate_problems_are_found_in_their_blocks(box, made):
 def _codes(box, session, doc: str, target: str) -> set[str]:
     """The codes of the problems ``check`` finds in a range of one block."""
     found = _ok(box, session, "check", doc=doc, include=["validate"], range=[target]).data["validate"]["problems"]
-    return {problem[1:problem.index("]")] for problem in found}
+    return {problem["code"] for problem in found}
 
 
 def test_problems_in_blocks_by_what_they_carry(box):
@@ -206,7 +209,7 @@ def test_problems_in_blocks_by_what_they_carry(box):
 
     d = opened("located.docx")
     whole = _ok(box, session, "check", doc=d, include=["validate"]).data["validate"]["problems"]
-    codes = {problem[1:problem.index("]")] for problem in whole}
+    codes = {problem["code"] for problem in whole}
     assert {"bookmark-unpaired", "cell-not-ending-in-paragraph"} <= codes
     first = _codes(box, session, d, first_id)
     assert "bookmark-unpaired" in first and "cell-not-ending-in-paragraph" not in first

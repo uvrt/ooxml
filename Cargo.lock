@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "ooxml-python"
-version = "0.12.1"
+version = "0.12.2"
 dependencies = [
  "ooxml-python-session",
  "pyo3",
@@ -607,6 +607,7 @@ dependencies = [
  "ooxml-base",
  "ooxml-derive",
  "ooxml-fonts",
+ "ooxml-host",
  "ooxml-numfmt",
  "ooxml-raster",
  "ooxml-session",
@@ -793,6 +794,7 @@ dependencies = [
  "ooxml-schema",
  "ooxml-store",
  "ooxml-style-names",
+ "ooxml-text",
  "ooxml-word-model",
  "ooxml-xml",
  "ooxml-zip",

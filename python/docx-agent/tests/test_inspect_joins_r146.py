@@ -44,7 +44,7 @@ def _deleted(box, following: str):
     ok(box, made, "word_insert_markdown", doc="d1", at="end",
        markdown=f"# Annex\n\nIntro text.\n\n{NEXT[following]}\n\nAfter text.")
     session = box.session(clock=CLOCK)
-    session.open(made.entry("d1").snapshot(), "annex.docx")
+    session.open(made.save("d1").data, "annex.docx")
     blocks = ok(box, session, "word_inspect", doc="d1", target="body").data["blocks"]
     intro = next(b["id"] for b in blocks if b.get("t") == "Intro text.")
     ok(box, session, "word_set_tracking", doc="d1", on=True, author="Reviewer")

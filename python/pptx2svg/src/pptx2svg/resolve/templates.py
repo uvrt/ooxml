@@ -56,6 +56,7 @@ def resolve_template(
     now=None,
     locale=None,
     warnings: list | None = None,
+    images=None,
 ) -> m.Slide:
     """The template view of the layout or master ``part_path`` (see the module); a
     :class:`~pptx2svg.model.Slide` with ``slide_number`` 0 and ``template`` set.  What
@@ -92,6 +93,8 @@ def resolve_template(
         context.now = now
     if locale is not None:
         context.locale = locale
+    if images is not None:
+        context.images = images
 
     elements: list[m.SlideElement] = []
     show_master = layout.show_master_shapes if layout is not None else True

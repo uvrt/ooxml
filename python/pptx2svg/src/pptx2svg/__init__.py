@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Mapping, Sequence
 
 from . import model
-from .cache import ModelCache
+from .cache import CacheStats, ModelCache
 from .model import Slide, SlideSize
 from .opc import OpcPackage
 from .parse.parts import read_presentation
@@ -60,9 +60,10 @@ from ooxml_common.drawingml.rules import POWERPOINT as POWERPOINT_RULES
 from ooxml_common.locales import EN_US, Locale
 from ooxml_common.text.symbol_fonts import recorded_font_metrics
 
-__version__ = "0.3.9"
+__version__ = "0.3.10"
 
 __all__ = [
+    "CacheStats",
     "ConvertOptions",
     "DEFAULT_FONT_MAPPING",
     "DefaultTextMeasurer",

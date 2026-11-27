@@ -12,7 +12,7 @@
 
 use crate::session::HostSession;
 use ooxml_session::outputs::Output;
-use ooxml_session::problems::Validation;
+use ooxml_session::problems::{Problem, Validation};
 use ooxml_session::{AnyVersion, DocId, FormatDoc};
 use ooxml_tools::{Outcome, Refusal, ToolError, ToolResult, WayOut};
 use serde_json::{Map, Value};
@@ -25,16 +25,13 @@ const LISTED: usize = 20;
 /// The formats `save_document` writes a document's text copy in: it carries no state.
 const TEXT_COPIES: [&str; 2] = ["markdown", "outline"];
 
-/// The gate's report as today's replies say it: each problem as its text.
+/// The gate's report: each problem in the one shape (user decision 2026-11-25, structured
+/// problems).
 fn report(validation: &Validation) -> Map<String, Value> {
-    let texts = |items: &[ooxml_session::problems::Problem]| {
-        Value::Array(items.iter().map(|p| Value::from(p.message.as_str())).collect())
-    };
-    let mut out = Map::new();
-    out.insert("new".into(), texts(&validation.new));
-    out.insert("fixed".into(), texts(&validation.fixed));
-    out.insert("baseline".into(), Value::from(validation.baseline));
-    out
+    match validation.to_json() {
+        Value::Object(out) => out,
+        _ => Map::new(),
+    }
 }
 
 /// `check`'s `validation`: the problems saving would refuse as new (at most [`LISTED`],
@@ -43,13 +40,7 @@ fn report(validation: &Validation) -> Map<String, Value> {
 #[must_use]
 pub fn validation_fact(validation: &Validation) -> Map<String, Value> {
     let texts = |items: &[ooxml_session::problems::Problem]| {
-        Value::Array(
-            items
-                .iter()
-                .take(LISTED)
-                .map(|p| Value::from(p.message.as_str()))
-                .collect(),
-        )
+        Value::Array(items.iter().take(LISTED).map(Problem::to_json).collect())
     };
     let mut out = Map::new();
     out.insert("new".into(), texts(&validation.new));
@@ -119,13 +110,14 @@ impl HostSession {
         let Some(file) = files.into_iter().next() else {
             return;
         };
-        let report = format.validation(at).map(|v| report(&v));
-        let new: Vec<Value> = report
-            .as_ref()
-            .and_then(|r| r.get("new"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let validation = format.validation(at);
+        let report = validation.as_ref().map(report);
+        // (the way out lists each new problem by its words, as every refusal's options are)
+        let new: Vec<Value> = validation
+            .iter()
+            .flat_map(|v| &v.new)
+            .map(|p| Value::from(p.message.as_str()))
+            .collect();
         if !new.is_empty() && !self.host.settings.allow_new_problems {
             let message = format!("saving would add {} validation problem(s); fix them first", new.len());
             let way_out = WayOut::options(new).unwrap_or_else(|| WayOut::one(Value::from("check")));
@@ -225,7 +217,8 @@ impl HostSession {
     }
 }
 
-/// `describe`'s `problems`: those the document opened with (at most 20), after its controls.
+/// `describe`'s `problems`: those the document opened with (at most 20), after its controls, in
+/// the one problems shape.
 fn describe_problems(format: &dyn FormatDoc, result: &mut ToolResult<Value>) {
     let Outcome::Done(done) = &mut result.outcome else {
         return;
@@ -236,12 +229,7 @@ fn describe_problems(format: &dyn FormatDoc, result: &mut ToolResult<Value>) {
     if !data.contains_key("controls") {
         return;
     }
-    let problems: Vec<Value> = format
-        .baseline()
-        .iter()
-        .take(20)
-        .map(|p| Value::from(p.message.as_str()))
-        .collect();
+    let problems: Vec<Value> = format.baseline().iter().take(20).map(Problem::to_json).collect();
     let mut out = Map::new();
     for (key, value) in std::mem::take(data) {
         let controls = key == "controls";

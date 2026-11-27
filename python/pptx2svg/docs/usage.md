@@ -170,8 +170,16 @@ model = convert_pptx_to_model(open_parts(parts), options)   # parts: {name: byte
   ones as the very objects it resolved before -- **read-only**. Layouts, masters and themes
   are parsed once per their bytes too, so decks made from one template share those parses.
   Not kept: a slide on which a date field drew the clock (`now`), and every slide of a
-  conversion with a `metafile_converter` or `templates`. Bounded (512 slides, 256 parsed
-  parts by default; least recently used out first) and safe to share between threads.
+  conversion with a `metafile_converter` or `templates`. Safe to share between threads.
+- **What it holds.** A picture's base64 text is held once, by the digest of its bytes,
+  however many slides, versions and decks show it (a layout's picture under every slide,
+  a picture unchanged across every edit). The resolved slides and their pictures are kept
+  within `budget` bytes (256 MB by default; `ModelCache(budget=...)`, or set
+  `cache.budget`, which lets go of slides at once to fit) and at most 512 slides, least
+  recently used out first; parsed parts within 256. `cache.stats()` says what is held: a
+  `CacheStats` of `entries` and `entry_bytes` (the slides, their pictures left out),
+  `images` and `image_bytes` (the pictures, each once), `bytes` (the two), `parts`,
+  `hits`, `misses`, `budget` and `limit`. `cache.clear()` lets go of everything.
 
 The output is the same with or without either, byte for byte. Without a cache, a
 conversion still reads only the slides it is asked for.

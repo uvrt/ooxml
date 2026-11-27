@@ -64,6 +64,9 @@ pub(crate) struct Going {
     /// How long its commits held its documents' commit locks and waited for them and their
     /// gates.
     pub(crate) lock: ooxml_session::LockSpent,
+    /// The moment the application dates the call's writes by ([`CallAs::date`]); `None`:
+    /// the session's clock.
+    pub(crate) date: Option<String>,
 }
 
 impl Going {
@@ -77,6 +80,7 @@ impl Going {
             pinned: None,
             lock: ooxml_session::LockSpent::default(),
             values: ooxml_tools::written::CallValues::default(),
+            date: None,
         }
     }
 }
@@ -90,12 +94,26 @@ impl HostSession {
     /// # Errors
     /// [`NotRun`] for the application's mistake (roles the session does not hold).
     pub fn call(&self, name: &str, arguments: Value, how: &CallAs) -> Result<ToolResult<Value>, NotRun> {
+        self.call_recorded(name, arguments, how).map(|(result, _)| result)
+    }
+
+    /// [`HostSession::call`], with the call's record as the session's log keeps it.
+    ///
+    /// # Errors
+    /// As [`HostSession::call`].
+    pub fn call_recorded(
+        &self,
+        name: &str,
+        arguments: Value,
+        how: &CallAs,
+    ) -> Result<(ToolResult<Value>, CallRecord), NotRun> {
         let roles = self.narrowed(how.roles).map_err(NotRun::Roles)?;
         let clock = &self.session.context().clock;
         let started = clock.monotonic();
         let cpu = clock.thread_cpu();
         let mut going = Going::new(name, arguments.clone());
         going.values = how.values.clone();
+        going.date.clone_from(&how.date);
         let ran = catch_unwind(AssertUnwindSafe(|| self.go(name, arguments, roles, how, &mut going)));
         let mut result = ran.unwrap_or_else(|panic| {
             let said = panic
@@ -117,8 +135,8 @@ impl HostSession {
         let duration = clock.monotonic().saturating_sub(started);
         let cpu = cpu.zip(clock.thread_cpu()).map(|(then, now)| now.saturating_sub(then));
         result.app.timing = Some(timing(duration, cpu, going.lock));
-        self.record(&going, &result, roles, how, duration);
-        Ok(result)
+        let record = self.record(&going, &result, roles, how, duration);
+        Ok((result, record))
     }
 
     /// The pipeline, its notes and what it named gathered in `going`.
@@ -171,6 +189,7 @@ impl HostSession {
                     session: self,
                     caller,
                     retry,
+                    date: going.date.as_deref(),
                 };
                 return self.host.own.run(&call);
             }
@@ -233,7 +252,7 @@ impl HostSession {
             return repeat;
         }
         // 9. the handler, by the document's format, on the version the call reads
-        let mut context = self.context(caller);
+        let mut context = self.context(caller, going.date.as_deref());
         self.pin(going, &mut context);
         context.values = values;
         context.values.merge(going.values.clone());
@@ -489,13 +508,20 @@ impl HostSession {
         let mut folded = Vec::new();
         if changing {
             refs.own_first(&Value::Object(arguments.clone()), doc, table, retry)?;
+            // A name that folds to one naming another address is refused before the handler
+            // runs, so the refusal changes nothing (docx-agent's `_kept_refs`); one that folds
+            // to none is the tool's to refuse (it may be a place written as a ref).
             kept_names(&mut arguments, |name| {
-                let kept = refs.ref_name(name, None, doc, table, retry).ok()?;
-                (kept != name).then(|| {
-                    folded.push((kept.clone(), name.to_owned()));
-                    kept
-                })
-            });
+                match refs.ref_name(name, None, doc, table, retry) {
+                    Ok(kept) if kept != name => {
+                        folded.push((kept.clone(), name.to_owned()));
+                        Ok(Some(kept))
+                    }
+                    Ok(_) => Ok(None),
+                    Err(taken) if taken.details().contains_key("address") => Err(taken),
+                    Err(_) => Ok(None),
+                }
+            })?;
         }
         Ok(WithRefs {
             arguments,
@@ -505,8 +531,9 @@ impl HostSession {
     }
 
     /// The context a call of this session runs with: who calls, the host's limits, the
-    /// session's blobs and image budgets as they stand.
-    pub(crate) fn context(&self, caller: Option<&Map<String, Value>>) -> CallContext {
+    /// session's blobs and image budgets as they stand, and the moment its writes are dated
+    /// by (`date`, the application's; `None`: the session's clock).
+    pub(crate) fn context(&self, caller: Option<&Map<String, Value>>, date: Option<&str>) -> CallContext {
         let stores = self.stores();
         CallContext {
             caller: caller.map_or_else(Caller::anonymous, |c| Caller::named(&caller_key(c))),
@@ -515,6 +542,7 @@ impl HostSession {
             layout_timeout: self.host.settings.layout_timeout,
             image_budgets: stores.images.budgets(),
             blobs: Some(Arc::new(BlobList(stores.blobs.blobs().to_vec()))),
+            date: date.map(str::to_owned),
             ..CallContext::default()
         }
     }
@@ -603,7 +631,7 @@ impl HostSession {
             .and_then(Value::as_str)
             .map(|d| vec![d.to_owned()])
             .unwrap_or_default();
-        let context = self.context(caller);
+        let context = self.context(caller, going.date.as_deref());
         let id = going.docs.first().and_then(|d| DocId::parse(d));
         let before = id.as_ref().and_then(|id| self.session.snapshot(id).ok());
         let mut result = self.session.call(&going.tool, Value::Object(arguments), &context);
@@ -628,7 +656,7 @@ impl HostSession {
         roles: RoleSet,
         how: &CallAs,
         duration: std::time::Duration,
-    ) {
+    ) -> CallRecord {
         let arguments = match &going.arguments {
             Value::Object(map) => Value::Object(map.clone()),
             other => {
@@ -661,7 +689,8 @@ impl HostSession {
             context: how.context.clone().filter(|c| !c.is_empty()),
             panic: result.app.panic.clone(),
         };
-        self.stores().log.push(record);
+        self.stores().log.push(record.clone());
+        record
     }
 }
 
@@ -754,26 +783,32 @@ fn place_refs(
     })
 }
 
-/// Each ref name a call gives (`ref`, `items[].ref`) as `keep` keeps it, where it says one.
-fn kept_names(arguments: &mut Map<String, Value>, mut keep: impl FnMut(&str) -> Option<String>) {
-    let mut kept = |holder: &mut Map<String, Value>| {
+/// Each ref name a call gives (`ref`, `items[].ref`) as `keep` keeps it, where it says one;
+/// the first refusal `keep` gives.
+fn kept_names(
+    arguments: &mut Map<String, Value>,
+    mut keep: impl FnMut(&str) -> Result<Option<String>, ToolError>,
+) -> Result<(), ToolError> {
+    let mut kept = |holder: &mut Map<String, Value>| -> Result<(), ToolError> {
         let found = holder
             .get("ref")
             .and_then(Value::as_str)
             .filter(|n| !n.is_empty())
             .map(str::to_owned);
         if let Some(name) = found {
-            if let Some(kept) = keep(&name) {
+            if let Some(kept) = keep(&name)? {
                 holder.insert("ref".into(), Value::from(kept));
             }
         }
+        Ok(())
     };
-    kept(arguments);
+    kept(arguments)?;
     if let Some(Value::Array(items)) = arguments.get_mut("items") {
         for item in items.iter_mut() {
             if let Value::Object(item) = item {
-                kept(item);
+                kept(item)?;
             }
         }
     }
+    Ok(())
 }

@@ -161,8 +161,12 @@ def docx_format(*, min_text_size: "float | dict[str, float] | None" = None, asse
 
     if assets is not None:
         raise ValueError("an asset catalogue is not supported yet: give word_drawings a picture as an image blob")
-    owner = RustOwner(min_text_size=_minimums(min_text_size), typography=bool(typography))
-    return dataclasses.replace(FORMAT, owner=owner)
+    from .hosting import WordHosting
+
+    minimums = _minimums(min_text_size)
+    owner = RustOwner(min_text_size=minimums, typography=bool(typography))
+    host = WordHosting(min_text_size=minimums, typography=bool(typography))
+    return dataclasses.replace(FORMAT, owner=owner, host=host)
 
 
 __all__ = ["CORE_TOOLS", "FORMAT", "GROUPS", "PROMPT", "TOOLS", "WORD_TOOLS", "block_of", "blocks_between",

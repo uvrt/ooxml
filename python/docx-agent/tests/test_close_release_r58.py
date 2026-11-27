@@ -18,7 +18,9 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS
 import word_docs
 from tracked_report import build
 
-pytestmark = pytest.mark.any_faces
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = [pytest.mark.any_faces, pytest.mark.python_host]
 
 
 @pytest.fixture(scope="module")

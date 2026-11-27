@@ -340,7 +340,7 @@ def test_each_commit_is_one_version_and_one_step_of_its_callers():
         a, b = session.view(context={"agent": "a"}), session.view(context={"agent": "b"})
         first = call(box, a, "word_set_text", doc=doc, target=layout.bodies[0][0], text="A's.")
         later = call(box, b, "word_set_text", doc=doc, target=layout.bodies[2][0], text="B's.")
-        assert (first.version, later.version) == (session.entry(doc).version - 1, session.entry(doc).version)
+        assert (first.version, later.version) == (session.save(doc).version - 1, session.save(doc).version)
         # A's own undo is refused: B's change came after it, and the document undoes whole.
         refused = box.dispatch(a, "undo", {"doc": doc})
         assert not refused.ok and refused.error.code == "entangled", refused.to_json()

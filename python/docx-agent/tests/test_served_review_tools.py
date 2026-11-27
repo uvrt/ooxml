@@ -16,6 +16,10 @@ from ooxml_edit.tools import Toolbox
 
 import word_docs
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 
 @pytest.fixture(scope="module")
 def toolbox():

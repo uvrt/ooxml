@@ -18,6 +18,10 @@ from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
 import word_docs  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 STEPS = [{"min": 0, "max": 1.99, "fill": "C62828", "label": "Low"},
          {"min": 2, "max": 3.49, "fill": "F9A825", "label": "Mid"},
          {"min": 3.5, "fill": "2E7D32", "label": "High"}]

@@ -222,6 +222,8 @@ def test_describe_lists_headings_sections_comments_and_pages(box, session):
     assert data["sections"][0]["id"] == "s:body" and data["comments"]["threads"] >= 1
 
 
+@pytest.mark.xfail(strict=True, raises=NotImplementedError,
+                   reason="Phase 3 E1b: the application's datasets in a session on the Rust host")
 def test_describe_lists_the_sessions_datasets_without_their_values(box, session):
     """Round 5, T11: a dataset a document may place from is in describe (ooxml-edit
     0.30.0)."""
@@ -450,10 +452,10 @@ def test_comments_add_reply_resolve_in_items_with_refs(box, session):
 @pytest.mark.skipif(not _empty_batches_record_nothing(), reason="needs ooxml-edit's empty-batch fix (PR #7)")
 def test_a_list_action_records_no_undo_step(box, session):
     d = open_doc(session)
-    version = session.entry(d).version
+    version = session.save(d).version
     ok(box, session, "word_comments", doc=d, action="list")
     ok(box, session, "word_fields", doc=d, action="list")
-    assert session.entry(d).version == version
+    assert session.save(d).version == version
     fails(box, session, "undo", "refused", doc=d)
 
 
@@ -774,6 +776,7 @@ def test_new_document_from_a_template_blob_and_save_formats(box, session):
     fails(box, session, "new_document", "invalid_arguments", kind="docx", size="16:9")
 
 
+@pytest.mark.python_host     # (the Python format's validation hook, which the Rust host does not read)
 def test_save_refuses_a_new_validation_problem():
     import dataclasses
 
@@ -967,11 +970,17 @@ def test_render_sheet_narrows_tiles_that_do_not_fit_and_says_so(box, session):
     assert "2584 px wide" in wide.data["sheet"]["shrunk"]["why"]
 
 
-def test_a_check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
+@pytest.mark.python_host     # (the Python host's mirror of the document, until E2)
+def test_a_check_lays_out_with_the_lock_let_go(monkeypatch):
     """The layout a check reads runs with the document's lock let go: an edit made meanwhile
     does not wait, and the check reports the version it laid out.  The check is the Rust
     session's (lane P5b): it lays the version it was given out in the session's call, held
     here until the edit has been committed."""
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as box:
+        _check_lays_out_with_the_lock_let_go(box, box.session(clock=lambda: CLOCK_AT), monkeypatch)
+
+
+def _check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
     import threading
 
     from docx_agent.rust import reads
@@ -997,7 +1006,7 @@ def test_a_check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
             return self.inner.call(tool, *args, **kwargs)
 
     monkeypatch.setattr(mirror, "session", Held(mirror.session))
-    before = session.entry(d).version
+    before = session.save(d).version
     served = reads.served().get("check", 0)
     out = {}
 
@@ -1073,7 +1082,8 @@ def test_find_replace_and_render_are_sent_without_a_decks_parameters(box, sessio
     refused = fails(box, session, "find_text", "invalid_arguments", doc=d, text="the", slides=["1"])
     assert refused.field == "slides" and refused.message == "slides is for decks; for a document use range or stories"
     scoped = fails(box, session, "undo", "invalid_arguments", doc=d, scope="1")   # a document undoes document-wide
-    assert "undoes document-wide" in scoped.message
+    # (host known differences, rule 1: Rust's acceptance refuses the argument a document's undo lacks)
+    assert scoped.message == "unknown argument 'scope'" and scoped.field == "scope"
 
 
 def test_charts_and_smartart(box, session):
@@ -1121,14 +1131,14 @@ def test_a_failing_op_rolls_an_atomic_batch_back_whole(box, session):
         {"tool": "word_insert_text", "arguments": {"doc": d, "find": "EUR 12,500", "text": "!", "ref": "x"}},
         {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}}]})
     assert not result.ok and result.error.details["op"] == 1
-    assert document_bytes(session) == original and session.entry(d).refs == {}
+    assert document_bytes(session) == original and session.refs(d) == {}
 
 
 def test_a_batch_skips_a_failing_op_and_applies_the_rest_as_one_step(box, session):
     # Round 5, T1: one wrong anchor, enum or ref no longer loses the whole batch.
     d = open_doc(session)
     original = document_bytes(session)
-    version = session.entry(d).version
+    version = session.save(d).version
     result = ok(box, session, "batch", ops=[
         {"tool": "word_insert_text", "arguments": {"doc": d, "find": "EUR 12,500", "text": "!", "ref": "x"}},
         {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}},
@@ -1141,25 +1151,25 @@ def test_a_batch_skips_a_failing_op_and_applies_the_rest_as_one_step(box, sessio
     assert errors[1]["code"] == "not_found"
     assert errors[3]["message"].startswith("$added was to be made by ops[2], which failed")
     assert "ops[1] (word_delete)" in result.summary
-    assert session.entry(d).version == version + 1 and set(session.entry(d).refs) == {"x"}
+    assert session.save(d).version == version + 1 and set(session.refs(d)) == {"x"}
     texts = [p["t"] for p in paragraphs(box, session)]
     assert texts[-1] == "Kept." and "Never." not in texts and "New." not in texts
     assert result.checks["validate"]["new"] == []
     ok(box, session, "undo", doc=d)                     # one step takes back what applied
-    assert document_bytes(session) == original and session.entry(d).refs == {}
+    assert document_bytes(session) == original and session.refs(d) == {}
 
 
 def test_a_batch_none_of_whose_ops_applies_is_an_error_and_no_step(box, session):
     d = open_doc(session)
     original = document_bytes(session)
-    version = session.entry(d).version
+    version = session.save(d).version
     result = box.dispatch(session, "batch", {"ops": [
         {"tool": "word_delete", "arguments": {"doc": d, "find": "no such text"}},
         {"tool": "word_set_text", "arguments": {"doc": d, "target": "p:00000000", "text": "x"}}]})
     assert not result.ok and result.error.code == "not_found"
     assert result.error.message.startswith("none of the 2 ops applied: ops[0] (word_delete)")
     assert result.error.details["failed"] == [0, 1]
-    assert session.entry(d).version == version and document_bytes(session) == original
+    assert session.save(d).version == version and document_bytes(session) == original
 
 
 def test_batch_refuses_tracking_changes_and_templates(box, session):
@@ -1213,9 +1223,9 @@ def test_a_creating_call_retried_with_its_key_makes_nothing_new(box, session):
 def test_setting_the_same_text_again_changes_nothing_and_records_no_step(box, session):
     d = open_doc(session)
     same = text(box, session, "p:16425160")
-    version = session.entry(d).version
+    version = session.save(d).version
     ok(box, session, "word_set_text", doc=d, target="p:16425160", text=same)
-    assert session.entry(d).version == version
+    assert session.save(d).version == version
 
 
 def test_a_picture_in_a_paragraph_of_its_own_centred(box, session):
@@ -1396,7 +1406,7 @@ def test_a_folded_ref_that_names_another_range_is_refused(box, session):
                   ref="vatNote")
     assert error.field == "ref" and "already names" in error.message
     assert document_bytes(session) == original
-    assert session.entry(d).refs == {"vat_note": first.data["ranges"][0]}
+    assert session.refs(d) == {"vat_note": first.data["ranges"][0]}
 
 
 def test_a_namespaced_tool_in_a_batch_runs(box, session):
@@ -1468,7 +1478,7 @@ def test_an_empty_items_list_is_a_no_op_with_a_warning(box, session, tool_name, 
     assert result.warnings == [f"items is empty: nothing was {done}"]
     assert result.summary == f"Nothing {done}: items is empty"
     assert document_bytes(session) == original
-    assert not session.entry(d).history.can_undo()
+    assert session.save(d).version == 0, "no step to undo"
     batch = ok(box, session, "batch", ops=[{"tool": tool_name,
                                             "arguments": {"doc": d, "items": [], **arguments}}])
     assert batch.warnings == [f"ops[0]: items is empty: nothing was {done}"]

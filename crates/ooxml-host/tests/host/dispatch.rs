@@ -45,6 +45,32 @@ fn a_ref_defined_is_kept_folded_and_resolved_on_the_declared_paths() {
 }
 
 #[test]
+fn a_folded_ref_naming_another_address_is_refused_before_anything_changes() {
+    let s = session();
+    call(
+        &s,
+        "toy_set",
+        json!({"doc": "d1", "target": "a", "text": "x", "ref": "intro_part"}),
+    );
+    let refused = call(
+        &s,
+        "toy_set",
+        json!({"doc": "d1", "target": "b", "text": "y", "ref": "introPart"}),
+    );
+    assert_eq!(refused["error"]["field"], "ref", "{refused}");
+    assert!(refused["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("already names a"));
+    let read = call(&s, "toy_read", json!({"doc": "d1", "target": "b"}));
+    assert!(
+        !read["data"].as_str().unwrap_or_default().ends_with("<t>y</t>"),
+        "nothing written: {read}"
+    );
+    assert_eq!(read["version"], 1, "no version made");
+}
+
+#[test]
 fn a_retry_key_repeated_makes_nothing_twice() {
     let s = session();
     let first = call(

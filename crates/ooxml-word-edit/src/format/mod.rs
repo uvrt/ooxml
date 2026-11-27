@@ -15,6 +15,7 @@ mod edit;
 mod found;
 pub(crate) mod keeps;
 mod like;
+pub(crate) mod list_indent;
 mod outline;
 pub(crate) mod values;
 

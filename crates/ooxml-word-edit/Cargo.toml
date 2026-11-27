@@ -19,6 +19,7 @@ ooxml-drawingml.workspace = true
 ooxml-style-names.workspace = true
 ooxml-markdown.workspace = true
 ooxml-numfmt.workspace = true
+ooxml-text.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 

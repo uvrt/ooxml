@@ -117,12 +117,12 @@ def test_a_name_another_agent_gave_is_refused_before_anything_is_made(box):
     one, two = session.view(context={"agent": "one"}), session.view(context={"agent": "two"})
     made = box.dispatch(one, "word_insert_markdown", {"doc": doc, "at": "end", "markdown": "First", "ref": "table"})
     assert made.ok, made.to_json()
-    version = session.entry(doc).version
+    version = session.save(doc).version
     refused = box.dispatch(two, "word_insert_markdown", {"doc": doc, "at": "end", "markdown": "Second",
                                                          "ref": "table"})
     assert not refused.ok and refused.error.field == "ref" and refused.error.valid_options == ["table_2"]
     assert "another caller" in refused.error.message and "agent" not in str(refused.to_json())
-    assert session.entry(doc).version == version         # nothing made
+    assert session.save(doc).version == version         # nothing made
     used = box.dispatch(two, "word_insert_markdown", {"doc": doc, "at": "after:$table", "markdown": "Second",
                                                       "ref": "table_2"})
     assert used.ok, used.to_json()

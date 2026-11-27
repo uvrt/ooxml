@@ -13,7 +13,6 @@ import pytest
 from ooxml_common.locales import EN_US, Locale
 from ooxml_edit.tools import Toolbox
 
-from docx_agent.rust import engines, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import word_docs
@@ -135,7 +134,7 @@ def test_from_a_template_the_locale_is_kept_and_the_settings_are_the_templates()
         assert made.ok, made.to_json()
         data = word_docs.saved(session, made.created[0])
         assert _settings(data) == (".", ",") and _language(data) == ("en-US", "en-US")
-        assert engines.locale_of(reads.owned(session.entry(made.created[0]))) == DUTCH
+        assert session.locale == DUTCH          # (what its documents are laid out in)
 
 
 # -- charts ----------------------------------------------------------------------------------------
@@ -214,7 +213,7 @@ def test_the_layout_takes_the_locale(chart_bytes):
         session.open(chart_bytes, "chart.docx")
         result = box.dispatch(session, "check", {"doc": "d1", "include": ["reflow"]})
         assert result.ok, result.error
-        assert engines.locale_of(reads.owned(session.entry("d1"))) == DUTCH
+        assert session.locale == DUTCH          # (what its documents are laid out in)
 
 
 def test_new_document_takes_the_session_locale():
