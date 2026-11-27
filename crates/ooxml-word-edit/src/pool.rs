@@ -333,13 +333,29 @@ impl Ids {
             }
         }
         if !change.aliases.is_empty() {
+            // every value an alias can hold while these are added: one it holds now or one
+            // added (an old id no alias points at is not looked for: a document's first
+            // edit renames every block, and a walk of the aliases per rename is quadratic)
+            let targets: HashSet<&str> = self
+                .aliases
+                .values()
+                .chain(change.aliases.iter().map(|(_, new)| new))
+                .map(String::as_str)
+                .collect();
+            let followed: Vec<bool> = change
+                .aliases
+                .iter()
+                .map(|(old, _)| targets.contains(old.as_str()))
+                .collect();
             let aliases = Arc::make_mut(&mut self.aliases);
-            for (old, new) in &change.aliases {
+            for ((old, new), followed) in change.aliases.iter().zip(followed) {
                 aliases.insert(old.clone(), new.clone());
                 // an alias that pointed at the old id follows it to the new one
-                for value in aliases.values_mut() {
-                    if value == old {
-                        value.clone_from(new);
+                if followed {
+                    for value in aliases.values_mut() {
+                        if value == old {
+                            value.clone_from(new);
+                        }
                     }
                 }
             }
@@ -439,13 +455,16 @@ impl Ids {
         let mut values = sequences.get(seed, k + 2 * count + 16);
         let mut out = Vec::with_capacity(count);
         let mut change = IdsChange::default();
+        // the values drawn so far, to skip a repeat (a document's first edit draws for every
+        // block at once)
+        let mut drawn = HashSet::with_capacity(count);
         while out.len() < count {
             if k >= values.len() {
                 values = sequences.get(seed, 2 * k + 16);
             }
             let value = values.get(k).copied().unwrap_or(0);
             k += 1;
-            if value == 0 || self.contains(value) || change.values.contains(&value) {
+            if value == 0 || self.contains(value) || !drawn.insert(value) {
                 continue;
             }
             change.values.push(value);

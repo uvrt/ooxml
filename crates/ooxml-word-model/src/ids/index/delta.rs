@@ -651,6 +651,7 @@ fn wrapped(
         .copied()
         .chain(delta.came.iter().map(|(k, _)| *k))
         .collect();
+    let renamed_from = delta.renamed_from();
     let mut out = Vec::new();
     for (_, stretch) in runs {
         for k in stretch.clone() {
@@ -664,11 +665,7 @@ fn wrapped(
                 continue;
             }
             // the container child that held the first block before (under its old key)
-            let old_key = delta
-                .renamed
-                .iter()
-                .find(|(_, n)| *n == first.key)
-                .map_or(first.key, |(o, _)| *o);
+            let old_key = renamed_from.get(&first.key).copied().unwrap_or(first.key);
             let Some(was) = old
                 .by_key
                 .get(&old_key)

@@ -13,6 +13,7 @@
 //! block by text (the index does, at the edge).
 
 use super::key::{BlockKey, StoryIx};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// One document's identity in this process, whatever its versions: what tells one
@@ -160,6 +161,17 @@ pub struct BlockDelta {
 }
 
 impl BlockDelta {
+    /// Each renamed block's earlier key, by its later one (the first rename to it), to look
+    /// up per block (a first edit renames every block of the document).
+    #[must_use]
+    pub fn renamed_from(&self) -> HashMap<BlockKey, BlockKey> {
+        let mut from = HashMap::with_capacity(self.renamed.len());
+        for (old, new) in &self.renamed {
+            from.entry(*new).or_insert(*old);
+        }
+        from
+    }
+
     /// Whether no block differs and nothing between them does.
     #[must_use]
     pub fn is_empty(&self) -> bool {

@@ -5,7 +5,9 @@
 //! written as `_fill_cells` writes them -- still leaves the fixture's unstamped row stamped; the
 //! same command run on the store alone (no editor) leaves it as it was. And what that costs per
 //! edit on a long document: `STAMPED_BENCH=<path to a .docx> cargo test --release -p
-//! ooxml-word-edit --test integration -- --ignored --nocapture stamped::`.
+//! ooxml-word-edit --test integration -- --ignored --nocapture stamped::`; and what the first
+//! edit of an unstamped document costs (it stamps every block): `STAMPED_FIRST=<path to a
+//! .docx>` (`STAMPED_ROUNDS`, 3 by default) with the same command.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{editor, fixture, written};
@@ -130,5 +132,58 @@ fn the_commit_time_stamping_on_a_long_document() {
         alone.as_secs_f64() * 1000.0,
         through.as_secs_f64() * 1000.0,
         (through.as_secs_f64() - alone.as_secs_f64()) * 1000.0
+    );
+}
+
+#[test]
+#[ignore = "a timing on a long document: STAMPED_FIRST=<docx> cargo test --release -- --ignored"]
+fn the_first_edit_of_an_unstamped_document() {
+    let Ok(path) = std::env::var("STAMPED_FIRST") else {
+        return;
+    };
+    let rounds: usize = std::env::var("STAMPED_ROUNDS").map_or(3, |r| r.parse().unwrap());
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    let (blocks, target) = {
+        let probe = editor(&bytes);
+        let docx = probe.store().snapshot().doc().docx().unwrap();
+        let blocks: usize = docx
+            .parts
+            .iter()
+            .map(|p| p.ids.paragraphs().len() + p.ids.tables().iter().map(|t| t.rows.len()).sum::<usize>())
+            .sum();
+        let body = docx.body().unwrap();
+        let ids: Vec<String> = body
+            .ids
+            .paragraphs()
+            .iter()
+            .filter(|p| p.path.len() == 2)
+            .map(|p| p.id.clone())
+            .collect();
+        (blocks, ids[ids.len() / 2].clone())
+    };
+    let times: Vec<Duration> = (0..rounds)
+        .map(|_| {
+            let shared = editor(&bytes);
+            let edit = SetText {
+                target: ooxml_word_model::address::Address::from(target.clone()),
+                text: "Written by the first edit.".to_owned(),
+                policy: RevisionPolicy::Untracked,
+            };
+            let started = std::time::Instant::now();
+            let done = shared.run(&Caller::anonymous(), &edit).unwrap();
+            let took = started.elapsed();
+            assert!(done.changed);
+            assert_eq!(unstamped(done.version.doc()), (0, 0));
+            took
+        })
+        .collect();
+    let all: Vec<String> = times
+        .iter()
+        .map(|t| format!("{:.1}", t.as_secs_f64() * 1000.0))
+        .collect();
+    println!(
+        "{blocks} blocks; first set_text, median of {rounds}: {:.1} ms (each: {} ms)",
+        median(times).as_secs_f64() * 1000.0,
+        all.join(", ")
     );
 }
