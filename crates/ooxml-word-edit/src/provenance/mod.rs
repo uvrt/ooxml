@@ -62,6 +62,11 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Followed<'_, C
         }
         Ok(out)
     }
+
+    /// The command's (following refuses only a part that is not XML).
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.0.read_refusal(tx);
+    }
 }
 
 /// The entry of `kind` keyed `key` holding `text` now, made (with the item, where the

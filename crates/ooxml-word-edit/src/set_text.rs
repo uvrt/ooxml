@@ -161,6 +161,11 @@ impl Command<WordDoc> for SetText {
         }
         Ok(out)
     }
+
+    /// Its text, and the paragraph it names (whether it ends a section, for several lines).
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_paragraph(tx, self.target.as_str());
+    }
 }
 
 /// docx-agent's `_set_text` inside an edit: the paragraph `target` names given `text`

@@ -40,10 +40,19 @@ where
             Ok(planned) => planned,
             Err(refusal) => return Ok(Err(refusal)),
         };
-        command.validate(tx.doc())?;
-        let out = command.prepare(tx)?;
-        Ok(Ok((out, plan)))
+        // refused, the edit refuses (taken back by whoever runs it): what the command's
+        // refusal rests on read first (the plan read what it planned by)
+        match command.validate(tx.doc()).and_then(|()| command.prepare(tx)) {
+            Ok(out) => Ok(Ok((out, plan))),
+            Err(refused) => {
+                command.read_refusal(tx);
+                Err(refused)
+            }
+        }
     }
+
+    /// Nothing more: it refuses only where its command refused, which read what it rests on.
+    fn read_refusal(&self, _tx: &mut Txn<'_, WordDoc>) {}
 }
 
 /// `plan` run as one edit through the call's editor ([`Planned`]): the edit, its out the
@@ -114,6 +123,10 @@ pub(crate) mod held {
                 (self.meanwhile)();
             }
             Ok(out)
+        }
+
+        fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+            self.command.read_refusal(tx);
         }
     }
 

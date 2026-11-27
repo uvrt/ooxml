@@ -92,6 +92,14 @@ impl Command<WordDoc> for SetParagraphStyle {
         crate::revision_ids::make_unique(&mut sink)?;
         Ok(out)
     }
+
+    /// The paragraph it names, and the styles where it names one.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_paragraph(tx, self.target.as_str());
+        if self.style.is_some() {
+            crate::refusal::read_styles(tx);
+        }
+    }
 }
 
 /// docx-agent's `set_paragraph_style` inside an edit, without what the edit does once it

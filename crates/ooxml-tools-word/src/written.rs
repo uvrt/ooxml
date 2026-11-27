@@ -298,10 +298,19 @@ where
         let (said, keeps) = (self.finish)(&out, &after);
         if !keeps.is_empty() {
             let keep = KeepText { keeps };
-            keep.validate(tx.doc())?;
-            keep.prepare(tx)?;
+            // refused, the whole edit refuses (taken back by whoever runs it): what the
+            // keeps' refusal rests on read first
+            if let Err(refused) = keep.validate(tx.doc()).and_then(|()| keep.prepare(tx)) {
+                keep.read_refusal(tx);
+                return Err(refused);
+            }
         }
         Ok((out, said))
+    }
+
+    /// The command's: the keeps', where they refused, are read already.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.command.read_refusal(tx);
     }
 }
 

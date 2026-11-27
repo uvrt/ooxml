@@ -141,6 +141,40 @@ impl Command<Cells> for Mix {
         ))?;
         Ok((sum, id))
     }
+
+    /// Nothing: it refuses on its arguments alone (the cell it writes).
+    fn read_refusal(&self, _tx: &mut Txn<'_, Cells>) {}
+}
+
+/// Set `write` to `value` where cell `on` holds something; refused where it is empty. Its
+/// refusal rests on `on` alone ([`Command::read_refusal`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Guard {
+    pub on: u32,
+    pub write: u32,
+    pub value: i64,
+}
+
+impl Command<Cells> for Guard {
+    type Out = ();
+    type Error = Fail;
+
+    fn validate(&self, doc: &Cells) -> Result<(), Fail> {
+        if doc.get(self.on) == 0 {
+            return Err(Fail::Refused);
+        }
+        Ok(())
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, Cells>) -> Result<(), Fail> {
+        tx.read(self.on);
+        tx.write(Change::Set(self.write, Some(self.value)))?;
+        Ok(())
+    }
+
+    fn read_refusal(&self, tx: &mut Txn<'_, Cells>) {
+        tx.read(self.on);
+    }
 }
 
 /// Set cells to values without reading anything.

@@ -20,8 +20,8 @@ use crate::update::{PartUpdate, Parts};
 use crate::SessionError;
 use ooxml_opc::Package;
 use ooxml_store::{
-    AttemptState, Caller, Command, DocModel, Error, HistoryOutcome, InOp, LockTimes, OpTxn, Seq, Snapshot, Store,
-    StoreError, StoreStats, Txn, TxnMark, TxnOwner,
+    AttemptState, Caller, DocModel, Error, HistoryOutcome, InOp, LockTimes, OpTxn, Seq, Snapshot, Store, StoreError,
+    StoreStats, Txn, TxnMark, TxnOwner,
 };
 use ooxml_xml::Tree;
 use std::marker::PhantomData;
@@ -179,14 +179,7 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
         };
         let (version, previous, attempts, batch) = match self.batch_owner() {
             Some(owner) => {
-                let ran = store.in_txn(owner, |tx| {
-                    let point = tx.savepoint();
-                    let done = update.validate(tx.doc()).and_then(|()| update.prepare(tx));
-                    if done.is_err() {
-                        tx.rollback(point);
-                    }
-                    done
-                })?;
+                let ran = store.in_txn(owner, |tx| tx.run_op(update))?;
                 ran.out?;
                 (ran.after, ran.changed.then_some(ran.before), 1, true)
             }
@@ -326,8 +319,9 @@ impl<D: DocModel> From<Error<D>> for Refused<D> {
 }
 
 /// One attempt of a batch in `tx`: its ops in order, each at a savepoint of its own on the
-/// version the ops before it left (a failed op taken back alone, or the attempt refused where
-/// the batch is atomic).
+/// version the ops before it left (a failed op taken back alone, the transaction depending on
+/// what its failure rests on -- [`Txn::take_back`] --, or the attempt refused where the batch
+/// is atomic).
 fn prepare_batch<D: DocModel>(tx: &mut Txn<'static, D>, ops: &dyn BatchOps) -> Result<(), Refused<D>> {
     ops.attempt();
     let attempt = AttemptState::default();
@@ -341,7 +335,7 @@ fn prepare_batch<D: DocModel>(tx: &mut Txn<'static, D>, ops: &dyn BatchOps) -> R
             OpRan::Applied => current = left.unwrap_or(current),
             OpRan::NotRun => {}
             OpRan::Failed if ops.atomic() => return Err(Refused::Op(index)),
-            OpRan::Failed => tx.rollback(point),
+            OpRan::Failed => tx.take_back(point),
         }
     }
     Ok(())
@@ -563,7 +557,7 @@ impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
             let point = tx.savepoint();
             let ran = run(&InOp::new(tx, current, attempt));
             if ran == OpRan::Failed {
-                tx.rollback(point);
+                tx.take_back(point);
             }
             ran
         })?;

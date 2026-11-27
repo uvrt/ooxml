@@ -50,6 +50,11 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Stamped<'_, C>
         }
         Ok(out)
     }
+
+    /// The command's (stamping refuses only a part that is not XML).
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        self.0.read_refusal(tx);
+    }
 }
 
 /// Whether every paragraph and row of every story of `doc` has a valid and unique id.
