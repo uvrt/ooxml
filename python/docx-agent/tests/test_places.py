@@ -52,8 +52,9 @@ def texts(session) -> list[str]:
 
 
 def redo(toolbox, session, error):
-    """Dispatch the call a refusal gives (``details.call``)."""
-    meant = error.details["call"]
+    """Dispatch the call a refusal gives (its ``try_call``: the Rust host's way out, host known
+    differences rule 1)."""
+    meant = error.try_call
     return ok(toolbox.dispatch(session, meant["tool"], meant["arguments"]))
 
 
@@ -112,9 +113,10 @@ def test_a_place_whose_side_is_in_its_name_is_refused_with_the_call_that_works(t
     arguments = {k: v.format(middle=middle) for k, v in arguments.items()}
     result = run(toolbox, session, "word_insert_markdown", doc="d1", markdown="New.", **arguments)
     error = result.error
-    assert error.code == "invalid_arguments" and error.valid_options == ["at"]
+    # (host known differences, rule 1: refused by the tool's own acceptance, Rust's places, in its words)
+    assert error.code == "invalid_arguments" and error.field in arguments
     assert "word_insert_markdown takes at" in error.message
-    assert error.details["call"]["arguments"] == {"doc": "d1", "markdown": "New.", "at": at.format(middle=middle)}
+    assert error.try_call["arguments"] == {"doc": "d1", "markdown": "New.", "at": at.format(middle=middle)}
     assert texts(session) == ["Opening line.", "Middle line.", "Closing line."]
     redo(toolbox, session, error)
     new = texts(session).index("New.")
@@ -179,11 +181,12 @@ def test_insert_text_takes_at_beside_target_and_where(toolbox, made):
 def test_insert_text_before_is_refused_with_the_call_and_the_item(toolbox, made):
     session, (opening, middle, closing) = made
     error = run(toolbox, session, "word_insert_text", doc="d1", before=f"{middle}@0", text="Very ").error
-    assert error.details["call"]["arguments"] == {"doc": "d1", "text": "Very ", "at": f"before:{middle}@0"}
+    assert error.try_call["arguments"] == {"doc": "d1", "text": "Very ", "at": f"before:{middle}@0"}
     redo(toolbox, session, error)
     assert texts(session)[1] == "Very Middle line."
     error = run(toolbox, session, "word_insert_text", doc="d1", items=[{"before": f"{closing}@0", "text": "x"}]).error
-    assert error.field == "items[].before" and error.details["item"] == {"text": "x", "at": f"before:{closing}@0"}
+    # (host known differences, rule 1: the item's place refused in Rust's places' words, the item the way out)
+    assert error.field == "before" and error.try_call["arguments"] == {"text": "x", "at": f"before:{closing}@0"}
 
 
 def test_insert_text_ref_holding_an_address_and_no_place(toolbox, made):
@@ -202,7 +205,7 @@ def test_marks_read_after_as_the_end_and_before_as_the_start(toolbox, made):
     result = ok(run(toolbox, session, "word_notes", doc="d1", action="insert", after=middle, text="A note."))
     assert result.warnings[0] == "after read as at"
     error = run(toolbox, session, "word_controls", doc="d1", action="insert", before=f"{closing}@8:12").error
-    assert error.details["call"]["arguments"]["at"] == f"{closing}@8"
+    assert error.try_call["arguments"]["at"] == f"{closing}@8"
     redo(toolbox, session, error)
     ok(run(toolbox, session, "word_fields", doc="d1", action="insert_date", after=opening))
     body = word_docs.tree(word_docs.saved(session, "d1"))
@@ -262,7 +265,7 @@ def test_a_batch_reads_the_aliases_and_refuses_naming_the_op(toolbox, made):
     ops.append({"tool": "word_insert_markdown", "arguments": {"doc": "d1", "before": closing, "markdown": "Two."}})
     result = run(toolbox, session, "batch", ops=ops, atomic=True)
     assert not result.ok and result.error.field == "ops[2].arguments.before"
-    assert result.error.details["call"]["arguments"]["at"] == f"before:{closing}"
+    assert result.error.try_call["arguments"]["at"] == f"before:{closing}"
     assert texts(session).count("One.") == 1                      # the atomic batch changed nothing
 
 

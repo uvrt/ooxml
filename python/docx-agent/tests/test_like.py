@@ -238,7 +238,7 @@ def test_explicit_settings_in_the_same_call_win(box, made):
 
 def test_already_alike_is_no_change_and_the_sample_among_its_targets_is_left(box, made):
     session, ids = made
-    version = session.entry("d1").version
+    version = session.save("d1").version
     result = run(box, session, "word_format", doc="d1", targets=[f"{ids['point1']}..{ids['point2']}"],
                  like=ids["point1"])
     assert result["ok"], result
@@ -248,7 +248,7 @@ def test_already_alike_is_no_change_and_the_sample_among_its_targets_is_left(box
     again = run(box, session, "word_format", doc="d1", targets=[ids["point2"], ids["example1"]], like=ids["point1"])
     assert again["ok"] and again["changed"] == []
     assert again["warnings"] == [f"every target already looks like {ids['point1']}: nothing changed"]
-    assert session.entry("d1").version == version + 1                        # the no-op made no version
+    assert session.save("d1").version == version + 1                        # the no-op made no version
 
 
 def test_a_heading_sample_makes_a_heading_and_says_the_outline_moved(box, made):

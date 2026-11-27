@@ -147,7 +147,7 @@ def validation(box: Any, session: Any, doc: str) -> dict[str, Any]:
 def saved(session: Any, doc: str) -> bytes:
     """The document's bytes as they are now (the session's save of its version, which changes
     nothing)."""
-    return session.entry(doc).snapshot()
+    return session.save(doc).data
 
 
 def tree(data: bytes, name: str = "word/document.xml") -> Any:

@@ -85,7 +85,7 @@ def _ok(toolbox, session, tool: str, **arguments):
 def _fits(toolbox, session, doc: str) -> bool:
     """No table of the document reaches past its grid: no grid problem in its validation."""
     problems = _ok(toolbox, session, "check", doc=doc, include=["validate"]).data["validate"]["problems"]
-    return not any(problem.startswith("[grid-") for problem in problems)
+    return not any(problem["code"].startswith("grid-") for problem in problems)
 
 
 def _reviewed(toolbox, session, doc: str, how: str) -> str:
@@ -111,7 +111,7 @@ def test_check_names_the_table_and_row_off_the_grid_and_render_draws_it(toolbox)
     entry = result.data["layout"]["table_grid_mismatch"]
     assert entry == [{"table": table, "grid": 3, "rows": [{"row": 1, "reaches": 5}], "drawn": "widened",
                       "pages": [1]}]
-    assert any("grid-row-mismatch" in problem for problem in result.data["validate"]["problems"])
+    assert any(problem["code"] == "grid-row-mismatch" for problem in result.data["validate"]["problems"])
     assert any("table-grid-mismatch" in w for w in result.data["reflow"]["layout_warnings"])
     rendered = toolbox.dispatch(session, "render", {"doc": "d1", "pages": [1]})
     assert rendered.ok, rendered.to_json()

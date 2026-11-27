@@ -169,3 +169,34 @@ fn a_dataset_made_stale_between_two_attempts_is_said_stale_by_the_one_that_publi
         .collect();
     assert_eq!(said.len(), 1, "{stale}");
 }
+
+#[test]
+fn an_application_tool_in_a_batch_or_read_batch_is_refused_with_the_way_out_call_it_alone() {
+    let settings = ooxml_host::HostSettings {
+        own_tools: vec!["ds_put".into()],
+        ..ooxml_host::HostSettings::default()
+    };
+    let s = crate::toy::session_with(settings);
+    let op = json!({"tool": "ds_put", "arguments": {"id": "x"}});
+    let ops = json!([op, {"tool": "toy_set", "arguments": {"doc": "d1", "target": "a", "text": "one"}}]);
+    let partial = call(&s, "batch", json!({"ops": ops}));
+    assert_eq!(partial["ok"], true, "{partial}");
+    assert_eq!(partial["data"]["failed"], json!([0]), "the other op runs");
+    let refused = &partial["data"]["ops"][0]["error"];
+    assert_eq!(
+        refused["message"],
+        "ds_put is the application's own tool, which cannot run inside a batch: call it alone"
+    );
+    assert_eq!(refused["field"], "tool");
+    let reads = call(&s, "read_batch", json!({"ops": [op]}));
+    let refused = &reads["data"]["ops"][0]["error"];
+    assert_eq!(
+        refused["message"], "ds_put is the application's own tool, which cannot run inside a read_batch: call it alone",
+        "{reads}"
+    );
+    let other = call(&s, "batch", json!({"ops": [{"tool": "no_such", "arguments": {}}]}));
+    assert_ne!(
+        other["error"]["message"], refused["message"],
+        "another unknown tool: as before"
+    );
+}

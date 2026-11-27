@@ -159,7 +159,7 @@ def written(box: Any, data: bytes, tool: str, arguments: dict[str, Any]) -> byte
     result = box.dispatch(session, tool, {"doc": "d1", **arguments})
     if not result.ok:
         return None
-    return session.entry("d1").snapshot()
+    return session.save("d1").data
 
 
 @pytest.mark.parametrize("fixture", FIXTURES)

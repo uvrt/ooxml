@@ -80,8 +80,10 @@ def test_check_lists_the_problems_the_save_refuses_whatever_it_was_asked(box, as
     refused = _save(box, session)
     assert refused.error.code == "refused"
     fact = checked.data["validation"]
-    assert sorted(fact["new"]) == NEW and fact["baseline"] == 0
-    assert fact["new"] == refused.error.valid_options      # the same words, the same order
+    # (each problem as {code, part, element, message, severity}: user decision 2026-11-25)
+    words = [problem["message"] for problem in fact["new"]]
+    assert sorted(words) == NEW and fact["baseline"] == 0
+    assert words == refused.error.valid_options      # the same words, the same order
     assert "saving would refuse 3 new validation problem(s)" in checked.summary
 
 

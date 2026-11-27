@@ -106,12 +106,12 @@ def test_exact_wins_over_loose(toolbox):
 
 def test_a_key_matching_two_is_refused_before_any_change(toolbox):
     session, table = _table(toolbox, rows(["K7-1", "K7.01", "K9-9"]), {"next": rows(["k7_1", "K9-9", "K10"])})
-    version = session.entry("d1").version
+    version = session.save("d1").version
     result = _sync(toolbox, session, table, **{"from": "d:next", "loose": "table"})
     assert not result.ok and result.error.code == "ambiguous" and result.error.field == "loose", result.to_json()
     assert "'K7-1', 'K7.01' (table) / 'k7_1' (source)" in result.error.message
     assert "match" in result.error.message and result.error.valid_options == ["match"]
-    assert session.entry("d1").version == version
+    assert session.save("d1").version == version
     # the source's side too
     session, table = _table(toolbox, rows(["K7-1", "K9-9"]), {"next": rows(["K7.1", "k7_01", "K9-9"])})
     result = _sync(toolbox, session, table, **{"from": "d:next", "loose": "data"})

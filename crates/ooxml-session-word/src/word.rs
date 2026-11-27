@@ -67,6 +67,9 @@ pub struct WordFormat {
     /// [`ooxml_tools_word::minimum_of`]. `check` reports the text drawn below it where the
     /// call gives no `min_size` of its own; `None`: no minimum.
     pub min_text_size: Option<Minimum>,
+    /// The text calls write is written as given, none of the spacing its language wants
+    /// (docx-agent's `docx_format(typography=False)`); `false`: spaced by its language.
+    pub as_given: bool,
 }
 
 impl Format for WordFormat {
@@ -274,6 +277,8 @@ pub struct Word {
     pub(crate) default_pages: Option<crate::SessionPages>,
     /// The application's minimum text size for its checks ([`WordFormat::min_text_size`]).
     pub(crate) min_text_size: Option<Minimum>,
+    /// Its calls write text as given ([`WordFormat::as_given`]).
+    pub(crate) as_given: bool,
 }
 
 impl Word {
@@ -403,6 +408,7 @@ impl Word {
             versions: Arc::new(Versions::new()),
             default_pages: format.pages.clone(),
             min_text_size: format.min_text_size.clone(),
+            as_given: format.as_given,
         })
     }
 
@@ -526,7 +532,7 @@ impl FormatDoc for Word {
             cancel: run.cancel,
             date: run.date.to_owned(),
             setup: ooxml_word_edit::Setup {
-                as_given: host.as_given,
+                as_given: host.as_given || self.as_given,
             },
             locale: run.locale,
             made: &made,

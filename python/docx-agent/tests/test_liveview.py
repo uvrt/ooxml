@@ -128,7 +128,7 @@ def test_the_first_view_lists_every_page_with_its_blocks(opened):
     assert all(p.blocks for p in shown.pages)
     assert any(b.startswith("t:") for p in shown.pages for b in p.blocks), "the tables too"
     assert all(p.width > 500 and p.height > 700 for p in shown.pages)
-    assert shown.version == session.entry(d1).version
+    assert shown.version == session.save(d1).version
     again = view(session, d1, since=shown.token)
     assert again.token == shown.token and again.changed == [] and not again.stale
 

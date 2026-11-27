@@ -506,43 +506,13 @@ fn locale_of(value: &Value) -> Option<ooxml_numfmt::Locale> {
 }
 
 /// The host's settings of a recorded `limits` (ooxml-edit's `Limits`, the fields that differ
-/// from its defaults); a batch's own limits are lane D2's.
+/// from its defaults): a field the host does not read waits.
 fn limits(settings: &mut HostSettings, value: &Value) -> Result<(), Waits> {
     let given = value.as_object().ok_or(Waits::Settings)?;
-    let count = |v: &Value| v.as_u64().and_then(|n| usize::try_from(n).ok());
-    for (key, v) in given {
-        match key.as_str() {
-            "max_result_chars" => settings.limits.result_chars = count(v).ok_or(Waits::Settings)?,
-            "max_list_items" => settings.limits.list_items = count(v).ok_or(Waits::Settings)?,
-            "max_images_per_call" => settings.limits.images_per_call = count(v).ok_or(Waits::Settings)?,
-            "max_read_batch_chars" => settings.read_batch_chars = count(v).ok_or(Waits::Settings)?,
-            "image_budget" => {
-                settings.image_budget = if v.is_null() {
-                    None
-                } else {
-                    Some(count(v).ok_or(Waits::Settings)?)
-                }
-            }
-            "image_budget_per_round" => {
-                settings.image_budget_per_round = if v.is_null() {
-                    None
-                } else {
-                    Some(count(v).ok_or(Waits::Settings)?)
-                };
-            }
-            "layout_timeout" => {
-                let seconds = v.as_f64().filter(|s| *s >= 0.0).ok_or(Waits::Settings)?;
-                settings.layout_timeout = Some(Duration::from_secs_f64(seconds));
-            }
-            "max_batch_ops" => settings.max_batch_ops = count(v).ok_or(Waits::Settings)?,
-            "batch_timeout" => {
-                let seconds = v.as_f64().filter(|s| *s >= 0.0).ok_or(Waits::Settings)?;
-                settings.batch_timeout = Duration::from_secs_f64(seconds);
-            }
-            _ => return Err(Waits::Settings),
-        }
+    match settings.take_limits(given) {
+        Ok(left) if left.is_empty() => Ok(()),
+        _ => Err(Waits::Settings),
     }
-    Ok(())
 }
 
 struct Fixed(i64);
@@ -734,7 +704,7 @@ impl Replayer {
                 // (block_edits: when the Python host drafts an edit beside another; the Rust
                 // host's store runs every edit side by side)
                 "clock" | "font_dirs" | "block_edits" => {}
-                "roles" => settings.roles = roles_of(value).ok_or(Waits::Settings)?,
+                "roles" => settings.take_roles(value).map_err(|_| Waits::Settings)?,
                 "locale" => locale = Some(locale_of(value).ok_or(Waits::Settings)?),
                 "limits" => limits(&mut settings, value)?,
                 // docx_format(min_text_size=...): Word's format's setting
@@ -757,6 +727,7 @@ impl Replayer {
         let format = WordFormat {
             pages: Some(pages),
             min_text_size,
+            ..WordFormat::default()
         };
         let mut all: Vec<Arc<dyn ooxml_session::Format>> = vec![Arc::new(format)];
         all.extend(formats);

@@ -31,6 +31,7 @@ mod pipeline;
 mod read_batch;
 mod records;
 mod session;
+mod settings;
 mod tools;
 mod values;
 mod wrap;
@@ -42,6 +43,7 @@ pub use own::{Batch, CloseDocument, NewDocument, NewKind, NotYet, OpenDocument, 
 pub use pipeline::{caller_key, NotRun};
 pub use records::{digest, shape, CallRecord, RetryKeys};
 pub use session::{CallAs, Host, HostSession, HostSettings, Stores};
+pub use settings::LIMIT_FIELDS;
 pub use tools::HostTools;
 pub use values::{might_name_one_value, names_one_value};
 pub use wrap::validation_fact;

@@ -424,7 +424,12 @@ fn a_check_of_the_document_alone_is_the_sessions() {
     put(&s, &d, &twice, &CallContext::default());
     let validate = &call(&s, "check", asked, &CallContext::default())["data"]["validate"];
     assert_eq!(validate["new"].as_array().unwrap().len(), 1);
-    assert!(validate["new"][0].as_str().unwrap().starts_with("[paraid-repeated]"));
+    // (each problem in the one problems shape: user decision 2026-11-25)
+    assert_eq!(validate["new"][0]["code"], "paraid-repeated");
+    assert!(validate["new"][0]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("[paraid-repeated]"));
     assert_eq!(validate["problems"], validate["new"]);
     // what needs the layout's facts is the host's where it hands no layout; a reflow too
     for asked in [

@@ -1,7 +1,7 @@
 //! The session API of the Python module `ooxml_core` (docs/architecture/README.md,
 //! sections 3 and 9; layer 6).
 //!
-//! Owns: the PyO3 handles -- [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
+//! Owns: the PyO3 handles -- [`PyHost`] and [`PyHostSession`] (`ooxml_core.Host`, `ooxml_core.HostSession`: the Rust host, `host`), [`PySession`] (`ooxml_core.Session`), [`PyCancelToken`]
 //! (`ooxml_core.CancelToken`), [`PyLimits`] (`ooxml_core.Limits`) and [`PyCallContext`] (`ooxml_core.CallContext`), [`PyCallOptions`] (`ooxml_core.CallOptions`, what one call runs with) [`PyCallDocuments`] (`ooxml_core.CallDocuments`, the open documents it names), [`PyCallLayout`] (`ooxml_core.CallLayout`, the layout it reads) and [`PyCallWriting`] (`ooxml_core.CallWriting`, how it writes) -- and `ooxml_core.tool_specs(kind)` (`tools`);
 //! a saved file's MS-FSSHTTPD chunks and their delta (`chunks`: `chunk_file`, `FileChunks`, `FileChunk`,
 //! `ChunkDelta`); the Word layout's handles (`layout`: `WordFonts`, `WordPages`, `LaidPages`, lane L4); the live view's
@@ -28,6 +28,7 @@ mod context;
 mod drawn;
 mod fonts;
 mod group;
+mod host;
 mod layout;
 mod layout_rows;
 mod locale;
@@ -47,6 +48,7 @@ use pyo3::prelude::*;
 pub use budget::{PyBudgetAccount, PyMemoryBudget};
 pub use context::{PyCallContext, PyCancelToken, PyLimits};
 pub use fonts::PyWordFonts;
+pub use host::{PyHost, PyHostSession};
 pub use layout::{PyLaidPages, PyWordPages};
 pub use options::{PyCallDocuments, PyCallLayout, PyCallOptions, PyCallWriting};
 pub use pages::PyPageSetup;
@@ -66,6 +68,9 @@ pub use version::PyVersion;
 /// Python's, adding a name.
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySession>()?;
+    m.add_class::<PyHost>()?;
+    m.add_class::<PyHostSession>()?;
+    m.add("OpenRefused", m.py().get_type::<host::OpenRefused>())?;
     m.add_class::<PyCancelToken>()?;
     m.add_class::<PyLimits>()?;
     m.add_class::<PyCallContext>()?;

@@ -225,7 +225,7 @@ class Reader:
         session = self._open(data)
         if has_markup(data):
             self._call(session, "word_changes", action=action, all=True)
-        return session.entry("d1").snapshot()
+        return session.save("d1").data
 
     def markdown(self, data: bytes) -> str:
         """The final view's Markdown, every story, block ids left out: a re-save's ids are

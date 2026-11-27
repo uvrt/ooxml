@@ -14,6 +14,10 @@ from docx_agent.rust import reads  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 import word_docs  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 #: A page of three items: the listings page.
 LIMITS = Limits(max_list_items=3)
 

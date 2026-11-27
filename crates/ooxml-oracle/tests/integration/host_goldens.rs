@@ -21,8 +21,6 @@ struct Counts {
     known: u64,
     different: u64,
     waiting: BTreeMap<String, u64>,
-    /// check calls whose data carries `validate`: equal now, structured at E1.
-    at_e1: u64,
 }
 
 /// One stream's cases replayed: its counts and its differences.
@@ -32,9 +30,6 @@ fn replay_stream(replayer: &Replayer, name: &str, path: &Path, every: usize) -> 
     for (case, events) in Replayer::cases(path).unwrap().into_iter().step_by(every) {
         for (event, outcome) in replayer.replay(name, &events) {
             let call = matches!(event["event"].as_str(), Some("call" | "calls" | "change"));
-            if call && event["tool"] == "check" && event["result"]["data"].get("validate").is_some() {
-                counts.at_e1 += 1;
-            }
             match outcome {
                 Outcome::Equal if call => counts.equal += 1,
                 Outcome::Known(_) if call => counts.known += 1,
@@ -100,18 +95,17 @@ fn every_call_the_rust_host_serves_answers_as_recorded() {
         totals.equal += counts.equal;
         totals.known += counts.known;
         totals.different += counts.different;
-        totals.at_e1 += counts.at_e1;
         for (key, n) in &counts.waiting {
             *totals.waiting.entry(key.clone()).or_default() += n;
         }
         report.insert(
             name,
             json!({"equal": counts.equal, "known": counts.known, "different": counts.different,
-                   "switches_at_e1": counts.at_e1, "waiting": counts.waiting}),
+                   "waiting": counts.waiting}),
         );
     }
     let summary = json!({"equal": totals.equal, "known": totals.known, "different": totals.different,
-                         "switches_at_e1": totals.at_e1, "waiting": totals.waiting});
+                         "waiting": totals.waiting});
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("host-replay.json");
     let written = json!({"summary": summary, "streams": report, "differences": differences});
     std::fs::write(&out, serde_json::to_string_pretty(&written).unwrap()).unwrap();
@@ -120,13 +114,12 @@ fn every_call_the_rust_host_serves_answers_as_recorded() {
     assert_eq!(totals.different, 0, "calls that differ from the recording: {shown:#?}");
 }
 
-/// E1's hook (main, 2026-11-25): `check`'s `data.validate` still says each problem as today's
-/// text, in the Rust host as in the Python one; it takes the one problems shape (user decision
-/// 2026-11-25, structured problems) when E1 moves docx onto the host -- one switch, one release
-/// note. E1 changes this test to expect `{code, part, element, message, severity}` objects and
-/// adds the decision's known difference for `result.data.validate`.
+/// The switch (Phase 3 E1a; user decision 2026-11-25, structured problems): `check`'s
+/// `data.validate`, recorded as today's text, is answered by the Rust host as
+/// `{code, part, element, message, severity}` objects -- each such call a known difference of
+/// the decision's (its release-notes line), never an unlisted one.
 #[test]
-fn checks_data_validate_switches_to_the_one_problems_shape_at_e1() {
+fn checks_data_validate_says_each_problem_in_the_one_shape() {
     let replayer = Replayer::new(root()).unwrap();
     let (_, path) = replayer
         .streams()
@@ -139,11 +132,15 @@ fn checks_data_validate_switches_to_the_one_problems_shape_at_e1() {
             let Some(validate) = event["result"]["data"].get("validate") else {
                 continue;
             };
-            assert!(!matches!(outcome, Outcome::Different(..)), "{event}");
-            for problem in validate["new"].as_array().into_iter().flatten() {
-                assert!(problem.is_string(), "today's text until E1: {problem}");
-                seen += 1;
+            if validate["new"].as_array().is_none_or(Vec::is_empty) {
+                continue;
             }
+            assert!(validate["new"][0].is_string(), "recorded as today's text: {event}");
+            assert!(
+                matches!(outcome, Outcome::Known(_)),
+                "the decision's known difference: {event}"
+            );
+            seen += 1;
         }
     }
     assert!(seen > 0, "a check whose validate found new problems replayed");

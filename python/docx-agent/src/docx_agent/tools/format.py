@@ -16,6 +16,7 @@ from ..rust import hooks
 from ..rust.edits import serve_owned
 from ..rust.owner import OWNER, TemplateOpened, session_validation
 from ._base import checks, problem_key
+from .hosting import HOSTING
 from .table_data import own_source, source_hint
 
 KIND = "docx"
@@ -169,4 +170,4 @@ FORMAT = DocumentFormat(
     strict_first=STRICT_FIRST, source_hint=source_hint, own_source=own_source, read_provenance=hooks.provenance,
     own_facts=dict(OWN_REFUSED), tool_hints=TOOL_HINTS, touched=touched, number_texts=number_texts,
     scale_values=scale_values, state=hooks.id_state, open_with_state=_opened_by_the_session, owner=OWNER,
-    serve=serve_owned, withdrawn=dict(WITHDRAWN))
+    serve=serve_owned, withdrawn=dict(WITHDRAWN), host=HOSTING)

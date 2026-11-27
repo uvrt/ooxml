@@ -72,6 +72,10 @@ pub enum OpenRefused {
     /// Bytes no format opens: none takes them, or the one that does cannot read them.
     #[error("{0}")]
     Unreadable(String),
+    /// The state given beside the bytes refused: a format that keeps none, or a state that
+    /// is not these bytes' (the format's words say what to pass instead).
+    #[error("{0}")]
+    State(String),
 }
 
 /// An open document's bytes and the state to open them again with, of one version.
@@ -112,12 +116,12 @@ impl HostSession {
             .session
             .open_as(bytes, kind, name, given.as_ref(), state)
             .map_err(|error| match error {
-                SessionError::StateRefused { reason: None, .. } => OpenRefused::Argument(format!(
+                SessionError::StateRefused { reason: None, .. } => OpenRefused::State(format!(
                     "{name} is a {} document, and that format keeps no state beside its bytes: open it without \
                      state",
                     kind.as_str()
                 )),
-                SessionError::StateRefused { reason: Some(why), .. } => OpenRefused::Argument(why),
+                SessionError::StateRefused { reason: Some(why), .. } => OpenRefused::State(why),
                 SessionError::IdTaken(id) => self.taken(&id),
                 other => OpenRefused::Unreadable(other.to_string()),
             })?;
@@ -179,7 +183,7 @@ impl HostSession {
         redo: bool,
         caller: Option<&Map<String, Value>>,
     ) -> Result<usize, SessionError> {
-        let context: CallContext = self.context(caller.filter(|c| !c.is_empty()));
+        let context: CallContext = self.context(caller.filter(|c| !c.is_empty()), None);
         let done = if redo {
             self.session.redo(doc, steps, &context)?
         } else {

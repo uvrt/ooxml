@@ -22,6 +22,10 @@ from ooxml_edit.tools import StateRefused, Toolbox  # noqa: E402
 import word_docs  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 TEMPLATE = FIXTURE_DIR / "generated" / "templates" / "brand.dotx"
 
 

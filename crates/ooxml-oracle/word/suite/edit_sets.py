@@ -247,7 +247,7 @@ def run(box: Any, case: Case) -> bytes:
             arguments = _resolve(arguments, ids)
         arguments.setdefault("doc", "d1")
         _call(box, session, call["tool"], arguments, may_refuse=spec.get("may_refuse", False))
-    return session.entry("d1").snapshot()
+    return session.save("d1").data
 
 
 def _call(box: Any, session: Any, tool: str, arguments: dict, *, may_refuse: bool = False) -> Any:

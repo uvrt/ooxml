@@ -70,7 +70,7 @@ class Opened:
         return result
 
     def data(self) -> bytes:
-        return self.session.entry(self.doc).snapshot()
+        return self.session.save(self.doc).data
 
 
 # -- small readers ---------------------------------------------------------------------------

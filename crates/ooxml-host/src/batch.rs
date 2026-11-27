@@ -125,6 +125,8 @@ struct Run<'h> {
     /// The values the application handed the call (written by reference; the rows of
     /// sources it resolved), for every op.
     values: ooxml_tools::written::CallValues,
+    /// The moment the application dates the ops' writes by; `None`: the session's clock.
+    date: Option<String>,
 }
 
 impl HostSession {
@@ -177,7 +179,6 @@ impl HostSession {
             }
         }
         batched.sort_by_key(|doc| DocId::parse(doc));
-        let clock = &self.session.context().clock;
         let run = Run {
             host: self,
             planned: &planned,
@@ -185,11 +186,12 @@ impl HostSession {
             atomic,
             caller,
             owner: caller.map(|c| Arc::from(caller_key(c).as_str())),
-            started: clock.monotonic(),
+            started: self.session.context().clock.monotonic(),
             timeout: settings.batch_timeout,
             attempt: Mutex::new(Attempt::default()),
             batched: batched.clone(),
             values: going.values.clone(),
+            date: going.date.clone(),
         };
         // what the formats hold for the whole run (design §4: Word's tracking mode), in
         // document order, let go once the batch's effects are kept
@@ -214,7 +216,7 @@ impl HostSession {
             going.lock.waited += at.lock.waited;
         }
         let result = self.published(&run, &mut attempt, &published, (&named, holds), notes);
-        self.at_primary(result, primary.as_deref())
+        self.at_published(result, primary.as_deref(), &published)
     }
 
     /// What a published batch answers: its effects kept, its checks and what it touched, the
@@ -227,7 +229,7 @@ impl HostSession {
         (named, holds): (&[String], Vec<BatchHold<'_>>),
         notes: Vec<String>,
     ) -> ToolResult<Value> {
-        let context = self.context(run.caller);
+        let context = self.context(run.caller, run.date.as_deref());
         let kept = self.keep_published(run, attempt, published, &context);
         // its effects kept (a tracking mode it set among them): what it held is let go
         drop(holds);
@@ -274,6 +276,25 @@ impl HostSession {
     }
 
     /// `result` naming the batch's first document at its head, where it names one.
+    /// `result` at the version the batch published on its first document `primary` -- never
+    /// the head by the time it answers: a writer beside it may have committed since -- else as
+    /// [`HostSession::at_primary`] gives it.
+    fn at_published(
+        &self,
+        result: ToolResult<Value>,
+        primary: Option<&str>,
+        published: &BTreeMap<String, Published>,
+    ) -> ToolResult<Value> {
+        match primary.and_then(|doc| published.get(doc)) {
+            Some(at) => ToolResult {
+                doc: primary.map(str::to_owned),
+                version: Some(at.version.number()),
+                ..result
+            },
+            None => self.at_primary(result, primary),
+        }
+    }
+
     fn at_primary(&self, mut result: ToolResult<Value>, primary: Option<&str>) -> ToolResult<Value> {
         result.doc = primary.map(str::to_owned);
         result.version = primary
@@ -306,7 +327,12 @@ impl HostSession {
             docs: Vec::new(),
         };
         let Some(entry) = catalogue.get(&tool) else {
-            planned.refused = Some(catalogue.no_tool(&given, roles, true, BATCH, &retry));
+            planned.refused = Some(
+                self.host
+                    .settings
+                    .own_tool_refused(&given, BATCH, &retry)
+                    .unwrap_or_else(|| catalogue.no_tool(&given, roles, true, BATCH, &retry)),
+            );
             return planned;
         };
         // (the documents it names, read from its arguments as given: a refused op's too)
@@ -369,7 +395,7 @@ impl HostSession {
             .session
             .format_doc(&id)
             .map_err(|e| Stop::Store(e.to_tool_error()))?;
-        let caller = self.context(run.caller).caller;
+        let caller = self.context(run.caller, None).caller;
         match format.stored().run_batch(&caller, run) {
             Ok(committed) => {
                 let mut published = BTreeMap::new();
@@ -433,7 +459,7 @@ impl HostSession {
                 return Err(Stop::Refused(index));
             }
         }
-        let caller = self.context(run.caller).caller;
+        let caller = self.context(run.caller, None).caller;
         let mut published = BTreeMap::new();
         for (doc, format, before, _) in std::mem::take(&mut held.open) {
             let made = format
@@ -622,6 +648,7 @@ impl HostSession {
                 fill: Vec::new(),
             };
             let mut going = Going::new(&planned.tool, Value::Object(planned.arguments.clone()));
+            going.date.clone_from(&run.date);
             let result = self.run_format(entry, planned.arguments.clone(), run.caller, &mut going, &retry);
             attempt.warnings.extend(
                 going
@@ -864,7 +891,7 @@ impl Run<'_> {
                 error: refused.error,
                 own: false,
             })?;
-        let mut context = host.context(self.caller);
+        let mut context = host.context(self.caller, self.date.as_deref());
         context.values = valued.values;
         context.values.merge(self.values.clone());
         let txn = txn.filter(|_| self.batched.iter().any(|d| d == doc));

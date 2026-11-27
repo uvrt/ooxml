@@ -129,13 +129,20 @@ def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, di
     if not callable(getattr(where, "entry", None)) or len(args) != rest + 1:
         raise TypeError(f"{name} takes (session, doc{tail}): a document's live view is its session's -- "
                         f"open it in one (doc = session.open(data, name)) and call {name}(session, doc{tail})")
+    limits = getattr(where, "limits", None)
+    context = context_of(None, limits, getattr(limits, "layout_timeout", None))
+    host = getattr(where, "rust", None)     # a session on the Rust host (Phase 3 E1)
+    if host is not None:
+        pages = host.pages(args[0]) if where.kind_of(args[0]) == "docx" else None
+        if pages is None:
+            raise TypeError(f"{args[0]} is not a Word document the session's Rust core holds; {name} draws "
+                            "the pages of one")
+        return host, args[0], {"layout": ooxml_core.CallLayout(pages), "context": context}, tuple(args[1:])
     entry = where.entry(args[0])            # not_found names the open documents
     owned = entry if isinstance(getattr(entry, "handle", None), Mirror) else None
     if owned is None:
         raise TypeError(f"{args[0]} is not a Word document the session's Rust core holds; {name} draws "
                         "the pages of one")
-    limits = getattr(where, "limits", None)
-    context = context_of(None, limits, getattr(limits, "layout_timeout", None))
     call = {"layout": ooxml_core.CallLayout(_engine(owned)), "context": context}
     return owned.handle.session, owned.handle.doc, call, tuple(args[1:])
 

@@ -69,4 +69,5 @@ markers = [
   "slow: an exhaustive sweep, run with --run-slow (ROADMAP.md, \"Testing strategy\")",
   "provider: calls a model provider's API online; skipped without its API key",
   "any_faces: holds without Office's faces, so tests/conftest.py does not skip it where one is absent",
+  "python_host: a test of the Python host's own mirror of a Word document, its toolboxes on the Python host until Phase 3 E2 deletes both (tests/conftest.py)",
 ]

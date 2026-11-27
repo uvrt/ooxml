@@ -23,6 +23,12 @@ import pytest
 from ooxml_edit.tools import Toolbox
 
 from docx_agent.rust.reads import BATCH_CHECK
+
+#: What a check between the changes of a batch on one document says on the Rust host (user decision
+#: 2026-11-25, optimistic batches; host known differences): the batch holds nothing, and runs again
+#: where it conflicts.
+OPTIMISTIC_CHECK = ("check laid the document out between the batch's changes, and lays it out again each time the "
+                    "batch runs again. Put check after the batch's last change (or call it alone)")
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from word_docs import blank, blocks, call, paragraphs, saved
 
@@ -137,7 +143,7 @@ def test_a_check_after_an_undo_reads_the_undone_document():
         edited = call(box, session, "check", doc=doc, include=INCLUDE)
         assert edited.version == inserted.version
         call(box, session, "undo", doc=doc)
-        now = session.entry(doc).version
+        now = session.save(doc).version
         assert now < edited.version
         after = call(box, session, "check", doc=doc, include=INCLUDE)
         assert after.version == now, (after.version, now)
@@ -155,7 +161,7 @@ def test_a_check_reads_its_version_as_committed_last_with_its_tracking():
         doc = session.open(figures(), "report.docx")
         first = call(box, session, "check", doc=doc)
         call(box, session, "word_set_tracking", doc=doc, on=True, author="A. Writer")
-        assert session.entry(doc).version == first.version
+        assert session.save(doc).version == first.version
         result = call(box, session, "check", doc=doc)
         assert result.version == first.version
         assert not [w for w in result.warnings if "newer than at the call" in w]
@@ -174,7 +180,7 @@ def test_a_check_after_the_batch_s_last_change_lays_out_unlocked():
             {"tool": "check", "arguments": {"doc": doc, "include": ["reflow"]}}])
     check = result.data["ops"][1]
     assert check["tool"] == "check" and check["data"]["reflow"]["pages"] >= 4
-    assert not any(BATCH_CHECK in w for w in result.warnings)
+    assert not any(BATCH_CHECK in w or OPTIMISTIC_CHECK in w for w in result.warnings)
 
 
 def test_a_check_between_a_batch_s_changes_holds_the_document_and_says_so():
@@ -186,7 +192,7 @@ def test_a_check_between_a_batch_s_changes_holds_the_document_and_says_so():
             {"tool": "word_set_text", "arguments": {"doc": doc, "target": targets[0], "text": "One."}},
             {"tool": "check", "arguments": {"doc": doc, "include": ["reflow"]}},
             {"tool": "word_set_text", "arguments": {"doc": doc, "target": targets[1], "text": "Two."}}])
-    assert f"ops[1]: {BATCH_CHECK}" in result.warnings
+    assert f"ops[1]: {OPTIMISTIC_CHECK}" in result.warnings
 
 
 @pytest.mark.parametrize("atomic", [False, True])
@@ -195,7 +201,7 @@ def test_a_check_after_an_atomic_or_partial_batch_answers_of_its_version(atomic)
         session = box.session()
         doc = session.open(report(), "report.docx")
         target = long_paragraphs(session, doc)[0]
-        before = session.entry(doc).version
+        before = session.save(doc).version
         result = call(box, session, "batch", atomic=atomic, ops=[
             {"tool": "word_set_text", "arguments": {"doc": doc, "target": target, "text": "Short."}},
             {"tool": "check", "arguments": {"doc": doc, "include": ["reflow", "fields"]}}])
@@ -241,7 +247,7 @@ def test_concurrent_field_updates_and_edits_stay_consistent():
         session = box.session()
         doc = session.open(report(), "report.docx")
         body = long_paragraphs(session, doc)
-        before = session.entry(doc).version
+        before = session.save(doc).version
         results: list = []
         lock = threading.Lock()
 
@@ -261,7 +267,7 @@ def test_concurrent_field_updates_and_edits_stay_consistent():
             thread.join(120)
         assert len(results) == 6 and all(r.ok for r in results), [r.to_json() for r in results if not r.ok]
         changed = sum(1 for r in results if r.tool == "word_set_text" or r.data["changed_results"])
-        version = session.entry(doc).version
+        version = session.save(doc).version
         assert before + changed - 3 <= version <= before + 6
         call(box, session, "word_fields", doc=doc, action="update")
         assert _fields(box, session, doc) == _updated_alone(saved(session, doc))[1]

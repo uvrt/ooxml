@@ -101,6 +101,13 @@ def _addressed(where: Any, args: Sequence[str], count: int, name: str) -> tuple[
     from .format import KIND                  # format imports this module
 
     doc, *values = args
+    host = getattr(where, "rust", None)       # a session on the Rust host (Phase 3 E1)
+    if host is not None:
+        kind = where.kind_of(doc)             # not_found names the open documents
+        if kind != KIND:
+            raise ToolError("invalid_arguments", f"{doc} is a {kind} document; {name} reads a Word "
+                            "document's blocks", field="doc")
+        return host.version(doc), [where.resolve_ref(doc, value) for value in values]
     entry = where.entry(doc)                  # not_found names the open documents
     if entry.kind != KIND:
         raise ToolError("invalid_arguments", f"{doc} is a {entry.kind} document; {name} reads a Word "
