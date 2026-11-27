@@ -258,6 +258,7 @@ impl DocModel for WordDoc {
         self.spaced = 0;
         self.as_given = false;
         self.begun = Some(self.package.clone());
+        self.stamped = Arc::default();
     }
 
     fn set_up(&mut self, setup: &Setup) {

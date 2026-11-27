@@ -68,6 +68,8 @@ fn every_block_stamped(doc: &WordDoc) -> bool {
 /// # Errors
 /// When a part is not XML.
 pub(crate) fn stamp_document(sink: &mut EditSink<'_, '_>, docx: &Docx) -> Result<Renames> {
+    // where the document is stamped, for the blocks found after it (WordDoc::id_written)
+    sink.doc().note_stamped();
     let mut renames = Renames::new();
     for story in &docx.parts {
         let made = stamp_part(sink, story)?;

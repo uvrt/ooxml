@@ -289,7 +289,9 @@ pub fn touched_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> Re
         let listed: std::collections::HashSet<&str> = delta.changed_parts().into_iter().collect();
         let (old, new) = (before.package(), after.package());
         for part in new.unwritten() {
-            let back = old.part(&part).is_some_and(|a| new.part(&part).is_some_and(|b| !a.saved().same(b.saved())));
+            let back = old
+                .part(&part)
+                .is_some_and(|a| new.part(&part).is_some_and(|b| !a.saved().same(b.saved())));
             if back && !listed.contains(part.as_str()) {
                 out.push(Touched {
                     part: part.into(),

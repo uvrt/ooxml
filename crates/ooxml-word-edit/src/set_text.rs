@@ -203,6 +203,8 @@ pub(crate) fn write_text_as(
             created: Vec::new(),
         });
     }
+    // judged where the paragraph was found: before this edit stamps the document
+    let found_written = sink.doc().id_written(&found.part, &found.path);
     let renamed = if stamping {
         stamp_document(sink, &docx)?
     } else {
@@ -222,7 +224,7 @@ pub(crate) fn write_text_as(
     let wrote = sink.set_paragraph_text(&mut work, text)?;
     // a paragraph stamped before gets a new text id, drawn where the change is applied; an
     // id given at open and not written counts as fresh (WordDoc::id_written)
-    let written = found.state == IdState::Ok && sink.doc().id_written(&found.part, &found.path, !stamping);
+    let written = found.state == IdState::Ok && found_written;
     let mut draws = Vec::new();
     if written {
         let prefix = w14_prefix(tree.root(), &found.path);
