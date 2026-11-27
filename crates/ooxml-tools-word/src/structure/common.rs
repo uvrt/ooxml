@@ -49,7 +49,7 @@ impl From<ooxml_word_edit::LinkEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: out.removed,
-            renamed: Vec::new(),
+            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
             warnings: out.warnings,
         }
     }

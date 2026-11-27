@@ -205,7 +205,7 @@ fn blocks(
             id: d.id,
             created: Vec::new(),
             removed: d.removed,
-            renamed: Vec::new(),
+            renamed: ooxml_word_model::ids::renames_text(&d.renamed),
             warnings: d.warnings,
         })
         .collect();

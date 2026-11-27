@@ -860,3 +860,13 @@ stream = "docx/tests/test_saved_zip_layout"
 tool = "save_document"
 fields = ["outputs[0].validate.baseline"]
 cause = "Lane ph3-st1 (stamp-on-open ST1): a repeated or out-of-range paraId the bytes hold is repaired when the document is opened (written with the first edit), so it is no problem the document opened with"
+
+# stamp-on-open-2026-11-26 (lane ph3-st2, decision 4): a name by place held from before stamp on open is refused with
+# guidance where the recorded reply read it.
+[[difference]]
+decision = "stamp-on-open-2026-11-26"
+stream = "docx/tests/test_addresses"
+case = "test_addresses::test_word_read_takes_a_cell_a_row_and_open_spans#1"
+tool = "word_read"
+fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.field", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
+cause = "Lane ph3-st2 (stamp-on-open ST2, decision 4): a row by its place (`t:<id>/r1`) is refused (invalid_arguments) with the durable forms and the way on (read the ids first, word_inspect or word_read); the row has its `tr:` id from the first read"
