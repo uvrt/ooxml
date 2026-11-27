@@ -55,7 +55,7 @@ fn labels_stretch_over_an_edit_of_their_own_text() {
 fn a_text_entry_is_read_and_written_back() {
     let text = r#"{"v":1,"paragraph":"Got 12","facts":[{"text":"12","p":0,"at":4}]}"#;
     let entry = TextEntry::read(text).expect("a text record");
-    assert_eq!(super::dumps(&entry.record()), text);
+    assert_eq!(ooxml_provenance::dumps(&entry.record()), text);
     assert!(TextEntry::read(r#"{"v":0,"paragraph":"x","facts":[]}"#).is_none());
     assert!(TextEntry::read(r#"{"v":1,"paragraph":"x","facts":[],"labels":3}"#).is_none());
 }

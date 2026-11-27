@@ -13,12 +13,10 @@
 //! tool reports about a record.
 
 pub mod facts;
-mod json;
 pub mod keep;
 mod read;
 mod text;
 
-pub use json::dumps;
 pub use read::{provenance, Provenance};
 pub use text::{text_records, ByParagraph, TextRecords};
 
@@ -27,6 +25,7 @@ use crate::docx::drawings::graphics;
 use crate::docx::Docx;
 use crate::ids::{valid_long_hex, Entry};
 use ooxml_opc::OpcError;
+use ooxml_provenance::record;
 use ooxml_xml::{Element, Node};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -116,17 +115,6 @@ pub fn entry_text(entry: &Element) -> String {
         }
     }
     out
-}
-
-/// The record a text holds (`ooxml_edit.provenance.loads`): a JSON object with a whole
-/// number `v` of at least 1; `None` for anything else.
-#[must_use]
-pub fn record(text: &str) -> Option<Map<String, Value>> {
-    let Ok(Value::Object(found)) = serde_json::from_str::<Value>(text) else {
-        return None;
-    };
-    found.get("v").and_then(Value::as_u64).filter(|v| *v >= 1)?;
-    Some(found)
 }
 
 /// A text entry's record: the paragraph's text when it was kept, its facts and labels.

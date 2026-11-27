@@ -36,8 +36,9 @@ use crate::sink::EditSink;
 use crate::{EditError, Result};
 use item::{Draft, Fate};
 use ooxml_store::{Command, Txn};
+use ooxml_provenance::dumps;
 use ooxml_word_model::docx::provenance::{
-    self as records, dumps, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry,
+    self as records, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry,
 };
 use ooxml_word_model::docx::text::{paragraph_text, View};
 use ooxml_word_model::docx::Docx;

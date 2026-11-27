@@ -37,7 +37,7 @@ pub enum Stop {
 }
 
 /// What `which` names among `names` ([`resolve`]), as a position or why not.
-pub fn position(
+pub(crate) fn position(
     names: &[String],
     which: Option<&String>,
     said: (&str, &str, &str),

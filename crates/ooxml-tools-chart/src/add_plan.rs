@@ -4,17 +4,17 @@
 //! bubble's x values, at most `MAX_ADD_VALUES` values, the legend's position, the look's
 //! colours and text style keys; then the chart itself (`chart_data`, `check_options`) and
 //! its size. And what it is made of: the new chart ([`NewChart`]), the workbook behind it
-//! as `ooxml_tools_chart`'s workbook reader lays it out ([`workbook`]), the scale, gridlines and look applied
+//! as `workbook` lays it out ([`workbook`]), the scale, gridlines and look applied
 //! after it in the same step ([`Finish`]).
 //!
 //! Must not: change the document, or plan what depends on the chart made (the scale's
-//! axis, the text's look): `chart_add` does, on the new chart.
+//! axis, the text's look): `add` does, on the new chart.
 
 use ooxml_chart::edit::create::{Labels, Legend, NewChart, NewKind, NewSeries, WORD_LOOK};
 use ooxml_chart::edit::{Colour, DataError};
 use ooxml_sheets::{column_letters, NewBook, NewCell, NewValue};
 use ooxml_tools::{ArgEnum, Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_tools_chart::{
+use crate::{
     ChartAxis, ChartPosition, ChartType, EditChart, Gridlines, ScaleArg, SeriesType, StyleArg, TextPart,
 };
 
@@ -346,7 +346,7 @@ fn look(args: &EditChart, kind: ChartType) -> Result<Vec<Look>, DataError> {
     Ok(out)
 }
 
-/// The workbook behind `chart`, as `ooxml_tools_chart`'s workbook reader lays it out: `Sheet1` with the
+/// The workbook behind `chart`, as `workbook` lays it out: `Sheet1` with the
 /// categories in column A from row 2, each series' name in row 1 and its values below (a
 /// bubble chart's sizes in the next column, headed "Size"), the number format on the value
 /// cells.

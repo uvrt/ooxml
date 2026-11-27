@@ -1,25 +1,25 @@
 //! Owns: `edit_chart`'s data actions (docx-agent's `_edit_chart` through ooxml-edit's
 //! `apply_data_action`): `set_values`, `set_value`, `rename_series` and `rename_category`
 //! (points changed in place), `add_category`, `remove_category`, `add_series` and
-//! `remove_series` (the data's shape: `ooxml_tools_chart::block` keeps the workbook's lines in step),
+//! `remove_series` (the data's shape: `block` keeps the workbook's lines in step),
 //! `set_title` and `set_axis_title`, `set_legend`, `show_data_labels`, `hide_data_labels`
 //! and `set_gap_width` -- the chart part's caches changed (`ooxml_chart::edit`) and the
 //! embedded workbook kept in step (`_Editor`, with `ooxml-sheets`' writer), or, where it
 //! cannot be, the chart changed in its cache only and the result warned
 //! (`ChartDataWarning`, in ooxml-edit's words); the chart's record of where its values
-//! came from kept true (`chart_record`).
+//! came from kept true (`record`).
 //!
-//! Must not: resolve a series or category by name (the handler does, `ooxml_tools_chart::names`), or
-//! write but through the host's writer (`ooxml_tools_chart::GraphicWriter`).
+//! Must not: resolve a series or category by name (the handler does, `names`), or
+//! write but through the host's writer ([`crate::GraphicWriter`]).
 
-use super::chart_record::kept;
+use crate::record::kept;
 use ooxml_chart::data::Point;
 use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
 use ooxml_chart::edit::{GraphicEdit, GraphicError, GraphicParts, PartWrite};
 use ooxml_opc::Package;
-use ooxml_tools_chart::block::{all_sources, Block};
-use ooxml_tools_chart::keeper::{not_supported, refused, Keeper};
-use ooxml_tools_chart::Warnings;
+use crate::block::{all_sources, Block};
+use crate::keeper::{not_supported, refused, Keeper};
+use crate::Warnings;
 use std::sync::Arc;
 
 /// The application whose Edit Data a warning names (`edit/charts.py`'s `APPLICATION`).
@@ -27,57 +27,105 @@ const APPLICATION: &str = "Word";
 
 /// A data action, its series and category resolved to positions.
 #[derive(Debug, Clone)]
-pub(crate) enum DataAction {
+pub enum DataAction {
     /// Every value of a series (`None` a blank).
-    SetValues { series: usize, values: Vec<Option<f64>> },
+    SetValues {
+        /// The series' position.
+        series: usize,
+        /// Its values.
+        values: Vec<Option<f64>>,
+    },
     /// One value.
-    SetValue { series: usize, category: usize, value: f64 },
+    SetValue {
+        /// The series' position.
+        series: usize,
+        /// The category's position.
+        category: usize,
+        /// The value.
+        value: f64,
+    },
     /// A series' name.
-    RenameSeries { series: usize, text: String },
+    RenameSeries {
+        /// The series' position.
+        series: usize,
+        /// Its new name.
+        text: String,
+    },
     /// A category's label in every series.
-    RenameCategory { category: usize, text: String },
+    RenameCategory {
+        /// The category's position.
+        category: usize,
+        /// Its new label.
+        text: String,
+    },
     /// A category added last, with a value per series (`None`: blanks).
     AddCategory {
+        /// Its label.
         text: String,
+        /// Its values.
         values: Option<Vec<Option<f64>>>,
     },
     /// A category taken out.
-    RemoveCategory { category: usize },
+    RemoveCategory {
+        /// The category's position.
+        category: usize,
+    },
     /// A series added last (`None`: blank values).
     AddSeries {
+        /// Its name.
         text: String,
+        /// Its values.
         values: Option<Vec<Option<f64>>>,
     },
     /// A series taken out.
-    RemoveSeries { series: usize },
+    RemoveSeries {
+        /// The series' position.
+        series: usize,
+    },
     /// The legend shown at a position (`r`, `l`, `t`, `b`) or, with `None`, hidden.
-    SetLegend { position: Option<&'static str> },
+    SetLegend {
+        /// The position.
+        position: Option<&'static str>,
+    },
     /// Value labels shown or hidden on one series or all.
     DataLabels {
+        /// Shown (else hidden).
         show: bool,
+        /// The series' position (`None`: all).
         series: Option<usize>,
+        /// The labels' number format.
         number_format: Option<String>,
         /// The labels' size (Word's look) and the document's language.
         size: Option<u32>,
+        /// The language of new label text.
         lang: String,
     },
     /// The bar plots' gap width.
-    GapWidth { percent: i64 },
+    GapWidth {
+        /// The gap, a whole % of a bar's width.
+        percent: i64,
+    },
     /// The chart's title (`axis` none) or an axis' (`category`, `value`) given text or, with
     /// `None`, taken away; new title text at the application's sizes in `lang`.
     Title {
+        /// The axis (`None`: the chart's title).
         axis: Option<&'static str>,
+        /// The text (`None`: taken away).
         text: Option<String>,
+        /// The sizes of a chart's title and an axis' (hundredths of a point).
         sizes: (u32, u32),
+        /// The language of new title text.
         lang: String,
     },
 }
 
 /// A data action on the chart `address` (the target, as ooxml-edit's messages name it).
 #[derive(Debug, Clone)]
-pub(crate) struct ChartDataEdit {
-    pub(crate) address: String,
-    pub(crate) action: DataAction,
+pub struct ChartDataEdit {
+    /// The chart's address.
+    pub address: String,
+    /// The action.
+    pub action: DataAction,
 }
 
 impl GraphicEdit for ChartDataEdit {
@@ -387,7 +435,7 @@ impl Edit<'_> {
         let sources = all_sources(&self.chart)?;
         let block = Block::find(address, &sources, &mut self.keeper, count)?;
         self.chart
-            .append_series(Some(text), &values, part, &ooxml_word_model::ids::sha256)
+            .append_series(Some(text), &values, part, &ooxml_base::sha256::sha256)
             .map_err(data_refusal)?;
         self.changed = true;
         match block {
