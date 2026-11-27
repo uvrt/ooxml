@@ -53,8 +53,13 @@ const POOL: &[&str] = &[
 fn paragraph(rng: &mut Rng) -> Node {
     let mut children = Vec::new();
     if rng.below(5) == 0 {
-        // a text box: its fallback's paragraphs are not blocks
-        let choice = el(MC, "mc", "Choice", Vec::new(), vec![Node::Element(inner_p(rng))]);
+        // a text box: its fallback's paragraphs are not blocks (its choice is one the
+        // readers understand: it requires WordprocessingML, which its paragraph is in)
+        let requires = vec![Attribute {
+            name: Arc::new(QName::new(None, "Requires", None)),
+            value: Arc::from("w"),
+        }];
+        let choice = el(MC, "mc", "Choice", requires, vec![Node::Element(inner_p(rng))]);
         let fallback = el(MC, "mc", "Fallback", Vec::new(), vec![Node::Element(inner_p(rng))]);
         children.push(Node::Element(el(
             MC,
@@ -138,7 +143,7 @@ struct Named {
 fn walk(e: &Element, path: &mut Vec<u32>, tables: &mut Vec<Vec<u32>>, out: &mut Vec<FoundB>) {
     for (k, node) in e.children().iter().enumerate() {
         let Node::Element(c) = node else { continue };
-        if c.name().is(Some(MC), "Fallback") {
+        if ooxml_word_model::mc::unchosen(e, c) {
             continue;
         }
         path.push(k as u32);
