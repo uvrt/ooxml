@@ -85,10 +85,13 @@ def held_values(toolbox: "Toolbox", session: "HostedSession", name: Any, argumen
     if not session._held or not isinstance(name, str):
         return None
     parsed = _parsed(arguments)
+    calls = _calls(toolbox, name, parsed) if parsed is not None else []
+    if not any(tool.sources or tool.facts or tool.datasets or tool.value_reads is not None for tool, _ in calls):
+        return HeldValues(toolbox, session, {}, set(), False)       # (it reads none of them)
     wanted: dict[str, list[str]] = {doc: [] for doc in session._held}
     every: set[str] = set()
     listing = False
-    for tool, given in _calls(toolbox, name, parsed) if parsed is not None else ():
+    for tool, given in calls:
         listing = listing or bool(tool.sources or tool.facts or tool.datasets)
         if tool.value_reads is not None and tool.value_reads(given):
             every.update(session._held)
@@ -103,6 +106,8 @@ def held_values(toolbox: "Toolbox", session: "HostedSession", name: Any, argumen
 
 
 def _parsed(arguments: Any) -> Mapping[str, Any] | None:
+    if type(arguments) is dict:
+        return arguments
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
@@ -111,7 +116,7 @@ def _parsed(arguments: Any) -> Mapping[str, Any] | None:
     return arguments if isinstance(arguments, Mapping) else None
 
 
-def _calls(toolbox: "Toolbox", name: str, arguments: Mapping[str, Any]) -> Iterable[tuple[Any, Mapping[str, Any]]]:
+def _calls(toolbox: "Toolbox", name: str, arguments: Mapping[str, Any]) -> list[tuple[Any, Mapping[str, Any]]]:
     """The tool of the call and its arguments; a batch's: each op's."""
     tool = _tool(toolbox, name)
     if tool is None:

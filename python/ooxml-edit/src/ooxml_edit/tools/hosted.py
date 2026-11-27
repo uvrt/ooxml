@@ -187,6 +187,8 @@ class Hosting:
         host holds (or a tool of its formats'), else ``"rust"``; the host reads every other name,
         an unknown one too, with its hints.  A ``read_batch`` of both runs in Python, each op of
         the Rust host's documents a Rust call; a ``batch`` of both is refused (decision D2)."""
+        if not self.own and not self.kinds:
+            return "rust"                       # (every tool the host's: an unknown one too)
         tool = self._tool(name)
         if tool is None:
             return "rust"
@@ -211,6 +213,9 @@ class Hosting:
     def _tool(self, name: Any) -> Any:
         if not isinstance(name, str):
             return None
+        found = self.toolbox.tools.get(name)
+        if found is not None:
+            return found                        # (the common call: a tool's own name)
         try:
             return self.toolbox.tools[self.toolbox.tool_named(name)]
         except (ToolError, KeyError):
@@ -225,7 +230,7 @@ class Hosting:
         other ops (inside a Rust batch an application's own tool is refused: D1)."""
         if tool is None:
             return None
-        given = arguments if isinstance(arguments, Mapping) else {}
+        given = _parsed(arguments) or {}
         try:
             docs = [doc for doc in tool.doc_ids(given) if isinstance(doc, str)]
         except Exception:  # noqa: BLE001 -- arguments a dispatcher refuses in its words
@@ -369,6 +374,8 @@ def _arguments_text(arguments: Any, comments: list[dict[str, Any]]) -> str:
 
 def _parsed(arguments: Any) -> Mapping[str, Any] | None:
     """A call's arguments as a mapping; ``None`` for text that is no JSON object."""
+    if type(arguments) is dict:             # (the common call)
+        return arguments
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
