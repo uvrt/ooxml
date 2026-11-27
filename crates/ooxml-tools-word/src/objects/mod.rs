@@ -11,10 +11,6 @@
 
 mod cell_fills;
 mod cell_values;
-mod chart_add;
-mod chart_add_plan;
-mod chart_data;
-mod chart_record;
 mod controls;
 mod drawings;
 mod drawings_args;

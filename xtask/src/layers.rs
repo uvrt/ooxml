@@ -45,6 +45,8 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-colour", Place::Layer(1, 0)),
     ("ooxml-numfmt", Place::Layer(1, 0)),
     ("ooxml-style-names", Place::Layer(1, 0)),
+    // Records of where placed values came from, every format's (lane ph3-chart B2)
+    ("ooxml-provenance", Place::Layer(1, 0)),
     ("ooxml-markdown", Place::Layer(1, 0)),
     ("ooxml-drawingml", Place::Layer(2, 0)),
     // Charts and metafiles lower to a scene (design section 8): the scene under them; charts

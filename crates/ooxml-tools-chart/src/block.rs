@@ -26,7 +26,7 @@ pub(crate) struct Src {
 
 /// A series' sources, by kind.
 #[derive(Debug, Clone, Default)]
-pub struct SerSources {
+pub(crate) struct SerSources {
     pub(crate) sources: Vec<(Which, Src)>,
 }
 
@@ -77,17 +77,17 @@ impl SerSources {
 }
 
 /// Every series' sources.
-pub fn all_sources(chart: &ChartTree) -> Result<Vec<SerSources>, GraphicError> {
+pub(crate) fn all_sources(chart: &ChartTree) -> Result<Vec<SerSources>, GraphicError> {
     (0..chart.series_count()).map(|s| SerSources::of(chart, s)).collect()
 }
 
 /// The chart's data as lines of cells (`_Block`): `down` where points run down a column.
 #[derive(Debug, Clone)]
-pub struct Block {
+pub(crate) struct Block {
     pub(crate) sheet: String,
     pub(crate) down: bool,
     /// Where the points start along each line.
-    pub start: u32,
+    pub(crate) start: u32,
     pub(crate) count: u32,
 }
 
@@ -104,7 +104,7 @@ fn line_of(range: &SheetRange, down: bool) -> (u32, u32, u32) {
 impl Block {
     /// `Chart._block`: `None` where there is no workbook to keep in step (the edit is then
     /// cache only, its reason noted).
-    pub fn find(
+    pub(crate) fn find(
         address: &str,
         series: &[SerSources],
         keeper: &mut Keeper<'_>,
@@ -235,7 +235,7 @@ impl Block {
     }
 
     /// `_check_free`: every cell at `positions` of the lines `across` empty.
-    pub fn check_free(
+    pub(crate) fn check_free(
         &self,
         address: &str,
         keeper: &mut Keeper<'_>,
@@ -277,7 +277,7 @@ impl Block {
 
     /// `_insert_line_cells`: a category's cells put in at `position` in every line, the
     /// later cells moved along, the new ones written (styled as their neighbour).
-    pub fn insert_line(
+    pub(crate) fn insert_line(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,
@@ -322,7 +322,7 @@ impl Block {
 
     /// `_delete_line_cells`: a category's cells taken out of every line, the later cells
     /// moved back.
-    pub fn delete_line(
+    pub(crate) fn delete_line(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,
@@ -375,7 +375,7 @@ impl Block {
     /// `_append_series_cells`: the new series (at `new`) given the next free line, its name in
     /// the header cell where the names live in the sheet.
     #[allow(clippy::too_many_arguments)]
-    pub fn append_series(
+    pub(crate) fn append_series(
         &self,
         address: &str,
         chart: &mut ChartTree,
@@ -486,7 +486,7 @@ impl Block {
 
     /// `_delete_series_cells`: the doomed series' cells cleared and, where the series sit
     /// side by side, the later series' lines moved back one.
-    pub fn delete_series(
+    pub(crate) fn delete_series(
         &self,
         chart: &mut ChartTree,
         keeper: &mut Keeper<'_>,

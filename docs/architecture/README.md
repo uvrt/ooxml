@@ -173,7 +173,7 @@ L4  ooxml-tools (contract: specs, strict-schema derive, validation, results, ref
 L3  ooxml-word  ooxml-word-layout   ooxml-slides  ooxml-slides-layout   ooxml-sheets
 L2  ooxml-drawingml  ooxml-chart  ooxml-metafile  ooxml-scene  ooxml-render (SVG writer)  ooxml-raster (PNG via resvg)
 L1  ooxml-opc  ooxml-schema (generated shared views: rels, mc, a:, c:)  ooxml-text  ooxml-fonts
-    ooxml-colour (theme, transforms)  ooxml-numfmt (formats, dates, locales)  ooxml-markdown
+    ooxml-colour (theme, transforms)  ooxml-numfmt (formats, dates, locales)  ooxml-markdown  ooxml-provenance (records' text)
 L0  ooxml-base (units, exact arithmetic, ids, digests, errors, Context ports)  ooxml-xml (lossless tree)
     ooxml-zip  ooxml-store (versions, transactions, MVCC, history; format-neutral)
     ooxml-derive (incremental: content memo, monoid trees, invalidation)

@@ -1,0 +1,15 @@
+[package]
+name = "ooxml-provenance"
+version = "0.1.0"
+description = "Records of where placed values came from: their text written and read as docx-agent writes and reads it"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ooxml-base.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

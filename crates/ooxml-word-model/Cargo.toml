@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 ooxml-base.workspace = true
+ooxml-provenance.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 ooxml-derive.workspace = true

@@ -20,7 +20,7 @@ const DOCUMENT: &str = "document";
 
 /// The embedded workbook kept in step with the cache: opened when first written, or the
 /// reason the edit changed the cache only.
-pub struct Keeper<'p> {
+pub(crate) struct Keeper<'p> {
     package: &'p Package,
     chart_part: &'p str,
     opened: bool,
@@ -30,7 +30,7 @@ pub struct Keeper<'p> {
 
 impl<'p> Keeper<'p> {
     /// The workbook of the chart `chart_part` in `package`, not opened yet.
-    pub fn new(package: &'p Package, chart_part: &'p str) -> Keeper<'p> {
+    pub(crate) fn new(package: &'p Package, chart_part: &'p str) -> Keeper<'p> {
         Keeper {
             package,
             chart_part,
@@ -136,7 +136,12 @@ impl<'p> Keeper<'p> {
     }
 
     /// Write point `index` of `source` into its cell (`_Editor.write`).
-    pub fn write(&mut self, source: Option<&SourceRef>, index: usize, value: &PointValue) -> Result<(), GraphicError> {
+    pub(crate) fn write(
+        &mut self,
+        source: Option<&SourceRef>,
+        index: usize,
+        value: &PointValue,
+    ) -> Result<(), GraphicError> {
         let Some(formula) = source.and_then(|s| s.formula.as_deref()) else {
             return Ok(()); // a literal: nothing in the workbook to keep in step
         };
@@ -174,7 +179,11 @@ impl<'p> Keeper<'p> {
 
     /// The workbook's bytes among `writes` where it changed (its part among `read` where it
     /// was opened); the reason the edit changed the cache only, if it did.
-    pub fn finish(self, writes: &mut Vec<PartWrite>, read: &mut Vec<String>) -> Result<Option<String>, GraphicError> {
+    pub(crate) fn finish(
+        self,
+        writes: &mut Vec<PartWrite>,
+        read: &mut Vec<String>,
+    ) -> Result<Option<String>, GraphicError> {
         if let Some((part, writer)) = self.workbook {
             read.push(part.clone());
             if let Some(bytes) = writer.finish().map_err(sheets_error)? {
@@ -187,7 +196,7 @@ impl<'p> Keeper<'p> {
 
 /// A chart edit ooxml-edit refuses (`ChartDataError`, `IndexError`), as docx-agent words it:
 /// `invalid_arguments` with the message stripped of quotes at its ends.
-pub fn refused(message: &str) -> GraphicError {
+pub(crate) fn refused(message: &str) -> GraphicError {
     GraphicError::Argument(unquoted(message).to_owned())
 }
 
@@ -203,12 +212,12 @@ fn unquoted(message: &str) -> &str {
 }
 
 /// `what` refused as not supported yet, as `edit_chart` names it.
-pub fn not_supported(what: &str) -> GraphicError {
+pub(crate) fn not_supported(what: &str) -> GraphicError {
     GraphicError::Unsupported(format!("edit_chart: {what}"))
 }
 
 /// A workbook `ooxml-sheets` refused, as not supported yet.
-pub fn sheets_error(error: SheetsError) -> GraphicError {
+pub(crate) fn sheets_error(error: SheetsError) -> GraphicError {
     match error {
         SheetsError::Unsupported(what) => not_supported(&what),
         // ooxml-edit words a workbook it cannot write with its exceptions' texts

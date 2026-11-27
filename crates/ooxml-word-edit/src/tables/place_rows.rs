@@ -16,9 +16,10 @@ use crate::policy::RevisionPolicy;
 use crate::set_cells::{CellWrite, CellsSet, SetCells};
 use crate::sink::EditSink;
 use crate::{EditError, Result, WordDoc};
+use ooxml_provenance::dumps;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::Address;
-use ooxml_word_model::docx::provenance::{dumps, kind_of, Kind};
+use ooxml_word_model::docx::provenance::{kind_of, Kind};
 use serde_json::{Map, Value};
 use std::time::Instant;
 
