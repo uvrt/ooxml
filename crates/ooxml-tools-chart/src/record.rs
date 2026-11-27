@@ -8,17 +8,17 @@
 //! when neither series nor categories are left. A changed record is written into the chart
 //! part and into the document's records (in the edit's step); an unchanged one is left.
 //!
-//! The changed series is the one the call resolved (`ooxml_tools_chart::names`: by name, loosely, or by
+//! The changed series is the one the call resolved (`names`: by name, loosely, or by
 //! position), where ooxml-edit compares the `series` given with the names as they stand.
 //!
 //! Must not: change the chart's data, or keep a record where the chart part has none.
 
-use super::chart_data::DataAction;
+use crate::data::DataAction;
 use ooxml_base::pyfmt::repr_float;
 use ooxml_chart::data::{chart_data, Point};
 use ooxml_chart::edit::RecordChange;
 use ooxml_chart::edit::{record_text, with_record};
-use ooxml_word_model::docx::provenance::{dumps, record};
+use ooxml_provenance::{dumps, record};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
 
@@ -126,5 +126,5 @@ fn entry_name(entry: &Map<String, Value>) -> String {
 }
 
 #[cfg(test)]
-#[path = "chart_record_tests.rs"]
+#[path = "record_tests.rs"]
 mod tests;

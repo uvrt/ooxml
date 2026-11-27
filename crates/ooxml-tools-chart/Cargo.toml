@@ -11,6 +11,7 @@ publish.workspace = true
 ooxml-base.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
+ooxml-provenance.workspace = true
 ooxml-tools.workspace = true
 ooxml-chart.workspace = true
 ooxml-sheets.workspace = true

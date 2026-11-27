@@ -4,12 +4,13 @@
 //!
 //! Must not: read a paragraph's text facts (their entries are skipped, not counted).
 
-use super::{entries, entry_text, item, kind_of, record, Kind};
+use super::{entries, entry_text, item, kind_of, Kind};
 use crate::address::resolve::direct;
 use crate::docx::drawings::graphics;
 use crate::docx::{at_path, Docx};
 use crate::ids::{Entry, W};
 use ooxml_opc::OpcError;
+use ooxml_provenance::{dumps, record};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
 
@@ -34,7 +35,7 @@ impl Provenance {
     /// The record kept for `key`, written as docx-agent writes a record.
     #[must_use]
     pub fn text(&self, key: &str) -> Option<String> {
-        self.get(key).map(|r| super::dumps(&Value::Object(r.clone())))
+        self.get(key).map(|r| dumps(&Value::Object(r.clone())))
     }
 }
 

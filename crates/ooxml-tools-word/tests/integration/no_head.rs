@@ -20,8 +20,9 @@ const KNOWN: [(&str, usize); 21] = [
     ("objects/controls.rs", 1),
     ("objects/drawings.rs", 1),
     ("objects/drawings_picture.rs", 9),
-    ("objects/edit_chart.rs", 1),
     ("objects/edit_table.rs", 3),
+    // edit_chart's add: the language new chart text is written in (Word's GraphicWriter)
+    ("objects/graphics.rs", 1),
     ("objects/planned_tests.rs", 22),
     ("planned.rs", 10),
     ("review/call_editor.rs", 3),

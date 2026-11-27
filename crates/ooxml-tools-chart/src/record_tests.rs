@@ -1,7 +1,7 @@
 //! The record kept true per action (ooxml-edit's `_updated`).
 
 use super::{kept, updated};
-use crate::objects::chart_data::DataAction;
+use crate::data::DataAction;
 use ooxml_chart::edit::RecordChange;
 use ooxml_chart::edit::{record_text, with_record};
 use ooxml_xml::{Element, Limits};
@@ -113,7 +113,7 @@ fn chart(record: Option<&str>) -> Element {
 
 #[test]
 fn the_chart_part_and_the_documents_entry_change_together() {
-    let text = super::dumps(&Value::Object(record()));
+    let text = ooxml_provenance::dumps(&Value::Object(record()));
     let root = chart(Some(&text));
     let value = DataAction::SetValue {
         series: 1,
