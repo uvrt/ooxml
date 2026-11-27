@@ -243,8 +243,9 @@ def test_read_pages_with_a_cursor_and_reads_a_range(box, session):
     assert first.next_cursor and first.total > len(first.data)
     second = ok(box, session, "word_read", doc=d, cursor=first.next_cursor)
     assert second.data and second.data != first.data
-    one = ok(box, session, "word_read", doc=d, range="p@body/3")
-    assert one.data.startswith("<!-- p@body/3") and one.next_cursor is None
+    fourth = word_docs.blocks(box, session, d)[3][0]
+    one = ok(box, session, "word_read", doc=d, range=fourth)
+    assert one.data.startswith(f"<!-- {fourth}") and one.next_cursor is None
     fails(box, session, "word_read", "invalid_arguments", doc=d, cursor="nope")
 
 
@@ -1185,7 +1186,8 @@ def test_a_long_document_reports_stale_reflow_beyond_twenty_pages(box, session):
     long = word_docs.in_face((FIXTURES / "samplelib" / "sample-long.docx").read_bytes())
     d = session.open(long, "long.docx")
     ok(box, session, "describe", doc=d)
-    edited = ok(box, session, "word_insert_text", doc=d, target="p@body/3", text=" More.")
+    fourth = word_docs.blocks(box, session, d)[3][0]
+    edited = ok(box, session, "word_insert_text", doc=d, target=fourth, text=" More.")
     assert edited.checks["reflow"] == "stale: call check"
 
 

@@ -132,7 +132,7 @@ CASES = {
     "word_edit_table *": [
         (None, "word_edit_table", {"table": "{t}", "action": "sync", "from": "d:scores/Alpha/rating",
                                    "key": "check"}),
-        (CELL_ENDS, "word_edit_table", {"table": "t@body/0", "action": "insert_row", "index": 1}),
+        (CELL_ENDS, "word_edit_table", {"table": "{t}", "action": "insert_row", "index": 1}),
     ],
     "check: *": [(_note_shape, "check", {"include": ["layout"]})],
     "* the layout cannot lay out": [
@@ -145,7 +145,7 @@ CASES = {
         (_header_frame, "check", {"include": ["numbers"], "pages": [1]}),
     ],
     "word_read final view of Accept All's cell ends": [(CELL_ENDS, "word_read", {"view": "final"})],
-    "word_inspect of Accept All's cell ends": [(CELL_ENDS, "word_inspect", {"target": "p@body/1"})],
+    "word_inspect of Accept All's cell ends": [(CELL_ENDS, "word_inspect", {"target": "{p}"})],
     "replace_text *": [
         (None, "replace_text", {"find": "", "replace": "x"}),
         (None, "replace_text", {"find": "one", "replace": "**x**"}),

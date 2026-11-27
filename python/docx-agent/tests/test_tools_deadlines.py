@@ -28,7 +28,8 @@ def test_a_reflow_check_on_a_36_page_document_stays_within_its_deadline():
         d = session.open(LONG.read_bytes(), LONG.name)
         first = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
         assert first.ok and first.data["reflow"]["pages"] == 36, first.data
-        edit = box.dispatch(session, "word_insert_text", {"doc": d, "target": "p@body/3",
+        fourth = word_docs.blocks(box, session, d)[3][0]
+        edit = box.dispatch(session, "word_insert_text", {"doc": d, "target": fourth,
                                                           "text": " A sentence that reflows the first page."})
         assert edit.ok and edit.checks["reflow"] == "stale: call check"   # 36 pages: over the 20 for every edit
         again = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
@@ -43,7 +44,8 @@ def test_a_layout_past_its_deadline_is_a_timeout_and_changes_nothing():
         session = box.session(clock=CLOCK)
         d = session.open(LONG.read_bytes(), LONG.name)
         before = word_docs.saved(session, d)
-        toc = box.dispatch(session, "word_fields", {"doc": d, "action": "insert_toc", "before": "p@body/0"})
+        first = word_docs.blocks(box, session, d)[0][0]
+        toc = box.dispatch(session, "word_fields", {"doc": d, "action": "insert_toc", "before": first})
         assert not toc.ok and toc.error.code == "timeout"
         assert word_docs.saved(session, d) == before                   # rolled back whole
         facts = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})

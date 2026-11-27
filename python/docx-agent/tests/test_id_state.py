@@ -177,22 +177,6 @@ def test_a_deleted_drawing_number_is_not_given_again_after_the_reopen(box):
     assert not refused.ok and f"{first} was deleted" in refused.error.message, refused.to_json()
 
 
-def test_a_positional_id_held_from_before_the_first_edit_still_resolves(box):
-    # A file whose paragraphs have no paraId: the first edit stamps them, keeping aliases.
-    data = word_docs.with_body(word_docs.paragraph("One.") + word_docs.paragraph("Two.")
-                               + word_docs.paragraph("Three."))
-    session, doc = _opened(box, data)
-    listed = [block for block, _ in word_docs.blocks(box, session, doc)]
-    held = listed[2]
-    assert held.startswith("p@")
-    ok(box, session, "word_set_text", doc=doc, target=listed[0], text="First.")
-    first = [block for block, _ in word_docs.blocks(box, session, doc)][0]
-    ok(box, session, "word_delete", doc=doc, target=first)
-    saved = session.save(doc)
-    later, again = _opened(box, saved.data, state=saved.state)
-    assert "Three." in ok(box, later, "word_read", doc=again, range=held).data
-
-
 # -- refusals ------------------------------------------------------------------------------------
 
 

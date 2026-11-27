@@ -28,7 +28,7 @@ def _with_header(box):
     made = word_docs.call(box, session, "word_headers_footers", doc=doc, action="set", section="s:1",
                           which="header", text="Draft header")
     header = next(c for c in made.to_json()["created"] if "/p:" in c)
-    body = made.to_json()["renamed"]["p@body/0"]
+    body = word_docs.paragraph_ids(box, session, doc)[0]   # its durable id from the first read
     return session, doc, header, body
 
 
