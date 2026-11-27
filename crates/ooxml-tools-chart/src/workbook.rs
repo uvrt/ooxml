@@ -24,7 +24,7 @@ const MOST_CELLS: u64 = ooxml_chart::model::MAX_CACHE_POINTS as u64;
 
 /// A workbook (or a range of it) this port does not read as ooxml-edit words it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Unreadable(pub(crate) &'static str);
+pub(crate) struct Unreadable(pub &'static str);
 
 /// The workbook part behind the chart part `chart_part` (whose tree is `root`) -- `Ok` --
 /// or why there is none, in ooxml-edit's words (`document`: what the package is called).

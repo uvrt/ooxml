@@ -66,8 +66,11 @@ pub const MAP: &[(&str, Place)] = &[
     ("ooxml-sheets", Place::Layer(3, 0)),
     ("ooxml-tools-derive", Place::Layer(4, 0)),
     ("ooxml-tools", Place::Layer(4, 1)),
-    // Each format's tools above the tools the formats share (design phase 3, section 3:
-    // chart and SmartArt tools at 4.2, lane ph3-chart).
+    // The chart tools over a format's graphics (GraphicHost, GraphicWriter), no format's
+    // model (design phase 3, section 3, lane ph3-chart).
+    ("ooxml-tools-chart", Place::Layer(4, 2)),
+    // Each format's tools above the tools the formats share; each implements the chart
+    // tools' hosts.
     ("ooxml-tools-word", Place::Layer(4, 3)),
     ("ooxml-session", Place::Layer(5, 0)),
     // Over the format-generic session, side by side: each format's session part and the

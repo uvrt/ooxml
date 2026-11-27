@@ -27,12 +27,14 @@
 //! Must not: lay anything out, resolve styling, or know which document format holds the
 //! chart.
 
+mod json;
 mod labels;
 mod look;
 mod references;
 mod serial;
 mod source;
 
+pub use json::{point_json, points_json};
 pub use labels::point_labels;
 pub(crate) use look::axis_named;
 pub use look::{
