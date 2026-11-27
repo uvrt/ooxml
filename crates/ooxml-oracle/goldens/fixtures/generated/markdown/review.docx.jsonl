@@ -1186,8 +1186,6 @@
 {"digest":"sha256:6ef8f31e045a1112865a23f21be0317d","id":"structure:49d63f7f74fe5157","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1ae1cd204e95c09c0ce0685a09e156af","id":"structure:18cc5fb7cff6f794","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1795ce286a7020859257e171e2e75382","id":"structure:832a1d3f75400be2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:03030a0d60cf58975997ec934007997b","id":"structure:332597c41e6ebdca","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d743bdab49b68c73e9b721f9ac9c8206","id":"structure:2d344ac0c56ecd73","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:458a779e69be36ec6d67e24e6e4c2561","id":"structure:9f75048680a67cd7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:935d7a7f143e915450834b1b6a60b477","id":"structure:7af7d32fde6abf6f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:47369a3476fea98e3d8785959c0082f0","id":"structure:97ce0b1a9a67aca0","source":"frozen Python a512c901, unmeasured"}
@@ -1218,8 +1216,6 @@
 {"digest":"sha256:bdec446407053015d07f4023ce036636","id":"structure:0856e6a6f189b4fa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1ae1cd204e95c09c0ce0685a09e156af","id":"structure:e48678edf5e2635b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c218f78665b3ed07f5497d7a4f5ea89a","id":"structure:bc6cea7043d7a667","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:00dd5d2b0107017ab8eff18fa5e12749","id":"structure:b428181de1fa1435","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:38f242e530294be94c0384b79ef0aba2","id":"structure:601c1e6767092aa9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a3945a23a4576c7be086116e1ba68e3d","id":"structure:f166d331942e54ce","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ccf92f27b9b2566d5207b54fb5f46ae3","id":"structure:a58c1b00d2b4493b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:eac5008120fb259a0d068e5c81e3a1f2","id":"structure:56986e571b9dd9e4","source":"frozen Python a512c901, unmeasured"}
@@ -2214,7 +2210,6 @@
 {"digest":"sha256:0e6e24487c5a47df8cb8ef1dd7b47cf8","id":"inspect:0b9ce154569beb86","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:8b6298b769f8b261dd661964c60862fe","id":"inspect:476291b158464718","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:45b8b9d3ce17e2929d7f711808861ed0","id":"inspect:c76a15dfdb2447b4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5de50ff27849adfe105dcd38843d4c28","id":"inspect:64398d37c853c2f9","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:de32cde3aaa0b17bf7c45e85ed0a9a85","id":"inspect:f27494aad9cda6af","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d3260c20f33a9a9318493dcee4f43801","id":"inspect:a2d70b7b77eaf21c","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
 {"digest":"sha256:2f11d8132877462e56b82b3b0744385c","id":"inspect:682a66c585c51d4d","source":"Word 16.106: Accept All removes a paragraph deleted with its mark before a table or a content control, the block keeping its text; word_inspect lists it as joins on that block (fix-r146 measure, #398)"}
@@ -2227,7 +2222,6 @@
 {"digest":"sha256:dad3d49a57f4177ef9ab9044dfe5edaf","id":"ranges:51c5ea167b7baba9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:81e9b6c03800930151c47d3d97e2ca16","id":"ranges:c442fb0a22de8077","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bc41ea1284f129be494f911390647b65","id":"ranges:5c68f9a1dd9f4664","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:217b5d5cffe2f518bcdac8268075a92c","id":"ranges:1a229422fea4738f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e61f02a92d27af5181ad6ac0a9128237","id":"ranges:29353d71da51bbae","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bab43b0091905e9aa8635522f18dd38a","id":"ranges:7a75f4c220798050","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9e26c7cb2de8aece77c474ccd2c470f0","id":"ranges:836223382f3ca698","source":"frozen Python a512c901, unmeasured"}

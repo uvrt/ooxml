@@ -132,7 +132,9 @@ def targets(path) -> list[str]:
     tables = document.tables()
     if tables:
         # (and a cell below the table's last row: refused with what the table has)
-        out += [tables[0].id, f"{tables[0].id}/c0,0", f"{tables[0].id}/r0", f"{tables[0].id}/c{len(tables[0].rows)},0"]
+        # a row by its tr: id (a row by its place is refused since stamp on open)
+        rows = [row for _, row in document._resolve(tables[0].id)[1].rows if row.startswith("tr:")]
+        out += [tables[0].id, f"{tables[0].id}/c0,0", *rows[:1], f"{tables[0].id}/c{len(tables[0].rows)},0"]
     found = headings(document)
     if found:
         out.append(f"h:{found[0].id}")
