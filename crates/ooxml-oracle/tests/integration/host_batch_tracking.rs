@@ -118,9 +118,14 @@ fn an_atomic_batch_that_fails_leaves_the_text_the_tracking_mode_and_undo_as_they
     let s = opened();
     let targets = paragraphs(&s, 2);
     let how = CallAs::default();
-    let set = |id: &str, text: &str| json!({"tool": "word_set_text", "arguments": {"doc": "d1", "target": id, "text": text}});
+    let set =
+        |id: &str, text: &str| json!({"tool": "word_set_text", "arguments": {"doc": "d1", "target": id, "text": text}});
     let first = s
-        .call("word_set_text", json!({"doc": "d1", "target": targets[0], "text": "kept"}), &how)
+        .call(
+            "word_set_text",
+            json!({"doc": "d1", "target": targets[0], "text": "kept"}),
+            &how,
+        )
         .unwrap();
     assert!(!first.is_error(), "{:?}", first.to_json());
     let before = body(&s);
@@ -138,14 +143,22 @@ fn an_atomic_batch_that_fails_leaves_the_text_the_tracking_mode_and_undo_as_they
     assert!(refused.is_error(), "{:?}", refused.to_json());
     assert_eq!(body(&s), before, "nothing of the batch is published");
     let described = Value::Object(s.call("describe", json!({"doc": "d1"}), &how).unwrap().to_json());
-    assert_eq!(described["data"]["tracking"], Value::Null, "the tracking mode as it was");
+    assert_eq!(
+        described["data"]["tracking"],
+        Value::Null,
+        "the tracking mode as it was"
+    );
     // undo takes back the edit before the batch: the batch made no step
     let undone = s.call("undo", json!({"doc": "d1"}), &how).unwrap();
     assert!(!undone.is_error(), "{:?}", undone.to_json());
     assert!(!body(&s).contains(">kept<"));
     // a batch that applies is one step, which one undo takes back
     let applied = s
-        .call("batch", json!({"atomic": true, "ops": [set(&targets[0], "one"), set(&targets[1], "two")]}), &how)
+        .call(
+            "batch",
+            json!({"atomic": true, "ops": [set(&targets[0], "one"), set(&targets[1], "two")]}),
+            &how,
+        )
         .unwrap();
     assert!(!applied.is_error(), "{:?}", applied.to_json());
     assert!(body(&s).contains(">one<") && body(&s).contains(">two<"));

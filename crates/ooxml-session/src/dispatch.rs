@@ -56,12 +56,7 @@ impl<'p> CallState<'p> {
     /// A call's state as it starts: the versions its batch reads (`pinned`), its writes'
     /// `date`, whether its arguments were taken as meant already, and the batch's transaction
     /// its edits run in.
-    fn new(
-        pinned: Option<&'p mut Pinned>,
-        date: String,
-        accepted: bool,
-        txn: Option<&'p dyn OpTxn>,
-    ) -> Self {
+    fn new(pinned: Option<&'p mut Pinned>, date: String, accepted: bool, txn: Option<&'p dyn OpTxn>) -> Self {
         CallState {
             opened: None,
             warnings: Vec::new(),

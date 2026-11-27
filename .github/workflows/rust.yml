@@ -221,11 +221,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # ooxml-edit is the reference (tools/rust_oracles.py's docstring).
+      # ooxml-edit is the reference (tools/rust_oracles.py's docstring): its XML and package
+      # code only, so without its Rust-core dependency (the Rust host, which these oracles do
+      # not reach), which would be built here otherwise.
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ./python/ooxml-common ./python/ooxml-edit
+          python -m pip install ./python/ooxml-common "lxml>=4.9"
+          python -m pip install --no-deps ./python/ooxml-edit
           cargo build --locked --release -p ooxml-xml -p ooxml-opc --example xml_contract --example save_contract
       # Every distinct XML part of the repository's documents: the Rust writer's bytes are
       # ooxml-edit's, and it refuses what lxml refuses.

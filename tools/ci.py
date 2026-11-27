@@ -738,7 +738,9 @@ def build_check(name: str) -> None:
     if spec["mypy"]:
         siblings = spec.get("mypy_siblings", [])
         if siblings:
-            _pip(*[_req(s) for s in siblings])
+            # Their sources for the type check only: never their dependencies (ooxml-edit's
+            # ooxml-core would be built here).
+            _pip("--no-deps", *[_req(s) for s in siblings])
         subprocess.run(["mypy"], cwd=cwd, check=True)
 
 

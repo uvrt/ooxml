@@ -62,7 +62,8 @@ fn engine(session: &HostSession, doc: &str) -> PyResult<(DocId, std::sync::Arc<o
     };
     let id = DocId::parse(doc).ok_or_else(|| to_py(&not_open()))?;
     let pages = session.session().pages(&id).map_err(|e| to_py(&e))?;
-    let pages = pages.ok_or_else(|| PyValueError::new_err(format!("{doc} is not a Word document the host lays out")))?;
+    let pages =
+        pages.ok_or_else(|| PyValueError::new_err(format!("{doc} is not a Word document the host lays out")))?;
     Ok((id, pages))
 }
 

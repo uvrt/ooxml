@@ -9,10 +9,10 @@
 //! values all come in as values), hold a Python object, or do a host's work itself.
 
 use crate::adapters::{context, SessionStop};
+use crate::errors::to_py;
 use crate::layout::PyWordPages;
 use crate::locale::locale_of;
 use crate::pages::PyPageSetup;
-use crate::errors::to_py;
 use crate::version::PyVersion;
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools, Opening};
 use ooxml_session::elsewhere::ElsewhereFormat;
