@@ -317,9 +317,10 @@ fn body_ids<'a>(pages: &'a VersionPages, aliases: &'a HashMap<String, String>) -
         .collect()
 }
 
-/// Whether page `page` is the same page in both versions: the same laid page drawing the
-/// same flow items, in the same model context, page context and stories' epoch, its body
-/// lines named alike -- what paints alike, digested or not.
+/// Whether page `page` is the same page in both versions: drawn as the same laid page (the
+/// very one, or one an insert or delete before it only moved in the flow, drawing the flow
+/// items it drew, moved with it), in the same model context, page context and stories'
+/// epoch, its body lines named alike -- what paints alike, digested or not.
 fn same_page(
     (before, was): (&LaidVersion, &VersionPages),
     (now, is): (&LaidVersion, &VersionPages),
@@ -331,6 +332,6 @@ fn same_page(
         && was.ids.get(page) == is.ids.get(page)
         && matches!(
             (was.pages.get(page), is.pages.get(page)),
-            (Some(Some(a)), Some(Some(b))) if a.same(b)
+            (Some(Some(a)), Some(Some(b))) if a.drawn_alike(b)
         )
 }

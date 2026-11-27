@@ -131,6 +131,11 @@ fn moved(page: &LaidPage, by: Shift) -> LaidPage {
         numbers,
     } = by;
     let mut out = page.clone();
+    if pages != 0 || numbers != 0 {
+        // On another page or under another number: drawn otherwise (its fields, its
+        // stories), so a page of its own.
+        out.drawn_as = Arc::default();
+    }
     for band in &mut out.bands {
         band.key.block = band.key.block.saturating_add_signed(blocks);
     }
