@@ -84,9 +84,7 @@ impl GraphicEdit for ChartDataEdit {
     type Out = Warnings;
 
     fn edit(&self, package: &Package, part: &str) -> Result<GraphicParts<Warnings>, GraphicError> {
-        let tree = package
-            .tree(part)?
-            .ok_or_else(|| GraphicError::NoPart(part.to_owned()))?;
+        let tree = package.tree(part)?.ok_or_else(|| GraphicError::no_part(part))?;
         let mut edit = Edit {
             chart: ChartTree::new(Arc::clone(tree.root())),
             keeper: Keeper::new(package, part),
