@@ -242,33 +242,28 @@ pub fn touched(before: &WordDoc, after: &WordDoc) -> Result<Vec<Touched>> {
     touched_of(before, after, &after.delta_from(before))
 }
 
-/// [`touched`], from `delta`, what `after` changed against `before`. Where `before` holds
-/// parts read with ids given at open, what changed is read against its bytes as saved: the
-/// change writes those ids, and its bytes are what `touched` names.
+/// [`touched`], from `delta`, what `after` changed against `before`. A change that writes
+/// parts read with ids given at open (the first write) touches each of them too: its
+/// bytes change, as the ids are written.
 ///
 /// # Errors
 /// When `before` or `after` cannot be read as a Word document.
 pub fn touched_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> Result<Vec<Touched>> {
     let docx = after.docx()?;
-    // a first write: read against the bytes as saved (the old side's names never reach the
-    // entries: a section is named by the new side's blocks)
-    let first_write = before.package().has_unwritten() && !after.package().has_unwritten();
-    let old_docx = if first_write {
-        Arc::new(Docx::open(&before.package().as_saved())?)
-    } else {
-        before.docx()?
-    };
-    let saved_delta;
-    let delta = if first_write {
-        let mut stories = ooxml_word_model::ids::StoryTable::new();
-        saved_delta = VersionDelta::between(&old_docx, &docx, &mut stories);
-        &saved_delta
-    } else {
-        delta
-    };
+    let old_docx = before.docx()?;
     let old_docx = &old_docx;
+    let mut parts: Vec<&str> = delta.changed_parts();
+    let written: Vec<String> = before
+        .package()
+        .unwritten()
+        .into_iter()
+        .filter(|part| !after.package().unwritten().contains(part))
+        .collect();
+    parts.extend(written.iter().map(String::as_str));
+    parts.sort_unstable();
+    parts.dedup();
     let mut out = Vec::new();
-    for part in delta.changed_parts() {
+    for part in parts {
         if part == docx.main {
             if let Some(sections) = body_sections(old_docx, &docx, delta)? {
                 out.extend(sections.into_iter().map(|section| Touched {

@@ -55,3 +55,11 @@ the document.
 The cases were made by the case makers in `crates/ooxml-oracle/python` against the frozen
 reference (docx-agent at the commit `../reference.toml` names). A new case is written here as
 data, and blessed (`python tools/gates.py bless`) with the source of its answer.
+
+## The stamp-on-open re-target
+
+`stamp-on-open-renamed.jsonl` maps each case id the stamp-on-open change retired (decision
+2026-11-26) to the case that replaced it: `{"document", "new", "old", "tree"}`. Lane ph3-st1
+made it with `python/stamp_on_open.py` from each document's ids before and after the stamp
+at open. That tool, and the oracle's `word-ids --renamed` it read, were removed in ST2, when
+names by place stopped being given at all. The map is kept as data.

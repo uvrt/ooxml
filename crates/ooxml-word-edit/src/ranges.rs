@@ -304,10 +304,7 @@ fn order_plans(plans: &mut [Plan], tracked: bool) -> Result<()> {
 /// part, the text ids, the namespaces they need.
 fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep) -> Result<RangesEdited> {
     if plans.is_empty() {
-        return Ok(RangesEdited {
-            id: None,
-            count: 0,
-        });
+        return Ok(RangesEdited { id: None, count: 0 });
     }
     order_plans(&mut plans, matches!(sink.policy(), RevisionPolicy::Tracked(_)))?;
     let count = plans.len();
@@ -366,10 +363,7 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     sink.space_written()?;
     crate::textbox::sync(sink)?;
     crate::revision_ids::make_unique(sink)?;
-    Ok(RangesEdited {
-        id: first,
-        count,
-    })
+    Ok(RangesEdited { id: first, count })
 }
 
 /// What writing one paragraph's ranges did.
@@ -382,11 +376,7 @@ pub(crate) struct Written {
 
 /// One paragraph's ranges (`group`, last first) replaced in one copy of it, its revision
 /// ids and new text ids drawn where the change is applied.
-fn write_paragraph(
-    sink: &mut EditSink<'_, '_>,
-    group: &[&Plan],
-    keep: Keep,
-) -> Result<Option<Written>> {
+fn write_paragraph(sink: &mut EditSink<'_, '_>, group: &[&Plan], keep: Keep) -> Result<Option<Written>> {
     let Some(head) = group.first() else { return Ok(None) };
     let (part, path) = (head.found.part.clone(), head.found.path.clone());
     let tree = sink

@@ -20,7 +20,7 @@
 # "limits-in-details-2026-11-25" (round 60, R142: a limit refusal says its limit and what the
 # call gave in details) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
 # from the first read: the streams' ids by place are re-targeted by
-# crates/ooxml-oracle/python/stamp_on_open.py, and what the map cannot say -- the renames stamping
+# the re-target tool (lane ph3-st1, removed in ST2), and what the map cannot say -- the renames stamping
 # made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry
 # without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
 # release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
@@ -196,7 +196,7 @@ tool = "word_insert_markdown"
 fields = ["result.error", "result.doc", "result.version"]
 cause = "Phase 3 D3b (ooxml-host, until R138): a from naming rows is checked and read as a declared source before word_insert_markdown refuses it as not supported yet; today's adapter never resolved it"
 
-# stamp-on-open-2026-11-26 (lane ph3-st1): what the streams' re-target through the id map (python/stamp_on_open.py) cannot
+# stamp-on-open-2026-11-26 (lane ph3-st1): what the streams' re-target through the id map (the re-target tool, removed in ST2) cannot
 # say -- one entry per stream, tool and kind, its fields the paths the replay found.
 [[difference]]
 decision = "stamp-on-open-2026-11-26"

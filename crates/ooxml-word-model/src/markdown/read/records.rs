@@ -50,8 +50,6 @@ pub struct ParagraphRecord {
     pub story: String,
     /// The paragraphs joined into it, in order.
     pub elements: Vec<Placed>,
-    /// Whether its id is volatile.
-    pub volatile: bool,
     /// Its paragraph style's id.
     pub style_id: Option<String>,
     /// Its style's name.
@@ -169,7 +167,6 @@ impl ParagraphRecord {
             part: part.to_owned(),
             story: String::new(),
             elements: Vec::new(),
-            volatile: false,
             style_id: None,
             style_name: None,
             kind: Kind::Paragraph,
@@ -225,8 +222,6 @@ pub struct TableRecord {
     pub rows: Vec<Vec<CellRecord>>,
     /// Header rows.
     pub header_rows: usize,
-    /// Whether its id is volatile.
-    pub volatile: bool,
     /// Its innermost table style (`""`: none named), for its paragraphs' formatting.
     pub table_style: String,
     /// Its part.

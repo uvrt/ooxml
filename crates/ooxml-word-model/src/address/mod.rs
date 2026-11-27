@@ -1,11 +1,13 @@
 //! Word's one address resolver (docs/architecture/README.md, section 4 "Ids": one address
 //! resolver per format): every form docx-agent's reading tools take -- a story, a block
-//! (`p:`, `t:`, `p@body/7`, `header1/p:...`), a span (`p:A..t:B`, either end open), a
-//! heading's range (`h:p:A`), a row (`tr:`, `t:X/r1`), a cell (`t:X/c1,1`), a section
+//! (`p:`, `t:`, `header1/p:...`), a span (`p:A..t:B`, either end open), a heading's range
+//! (`h:p:A`), a row (`tr:`), a cell (`t:X/c1,1`), a section
 //! (`s:2`, `s:<paraId>`, `s:body`), a bookmark (`bm:Name` or the plain name), a content
 //! control (`cc:`, `cc@`) and a text range (`p:A@4:11`, `p:A@5`, `p:A@3..p:B@8`) -- each a
 //! pure function of a version to what it names, or to a refusal carrying the ids that
-//! would do.
+//! would do. Names by place this library gave before every block had an id of its own
+//! (`p@body/7`, `t:X/r1`, `p:A#1`, `s@body/3`) are refused with guidance
+//! ([`resolve::positional`]).
 //!
 //! Owns: the syntax ([`syntax`]), an address read once at a tool's edge ([`Address`],
 //! [`Place`]), the resolution ([`mod@resolve`]) and [`AddressError`], the
@@ -21,8 +23,8 @@ pub mod syntax;
 
 pub use parsed::{Address, Form, Place, PlaceKind, Shape};
 pub use resolve::{
-    bookmark, bookmark_range, direct, expand_heading, heading, in_table, paragraph, resolve, scope_paragraphs, section,
-    text_range, unknown,
+    bookmark, bookmark_range, direct, expand_heading, heading, in_table, paragraph, positional, resolve,
+    scope_paragraphs, section, text_range, unknown,
 };
 pub use syntax::{inside_table, is_text_range, parse_range, span_ends, RangeText, SPAN_SYNTAX};
 

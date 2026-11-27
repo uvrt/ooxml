@@ -72,7 +72,7 @@ fn stamp_written(sink: &mut EditSink<'_, '_>) -> Result<()> {
         let part = story.part.as_str();
         // drawings are looked for only in a part whose memoised facts say it has one to stamp
         let drawings = crate::validate::unstamped_drawings(sink.doc(), part)?;
-        let Some(found) = unstamped(&story.story, part, story.root(), &story.ids, drawings) else {
+        let Some(found) = unstamped(part, story.root(), &story.ids, drawings) else {
             continue;
         };
         sink.read(Key::part(part));

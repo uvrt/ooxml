@@ -18,9 +18,7 @@ pub use blocks::{prefix_at, unstamped, with_attribute, Stamp, Unstamped};
 pub use declared::ensured_head;
 
 use crate::docx::at_path;
-use crate::ids::{
-    hex_value, story_name, used_long_hex, valid_long_hex, BlockKind, IdPool, PartIds, StoryDelta, StoryTable, W14,
-};
+use crate::ids::{hex_value, story_name, used_long_hex, valid_long_hex, IdPool, PartIds, W14};
 use crate::parts::{main_part, story_parts};
 use ooxml_opc::{Package, PartVersion};
 use ooxml_xml::Element;
@@ -81,7 +79,7 @@ impl WordPackage {
         let mut pool = IdPool::of(used_long_hex(&roots));
         for (story, part, tree) in &trees {
             let ids = PartIds::new(story, tree.root());
-            let Some(found) = blocks::unstamped(story, part, tree.root(), &ids, true) else {
+            let Some(found) = blocks::unstamped(part, tree.root(), &ids, true) else {
                 continue;
             };
             let mut draw = |seed: &str, count: usize| Ok::<_, Infallible>(pool.generate(seed, count));
@@ -151,8 +149,8 @@ impl WordPackage {
 
 /// A story part another writer put in place (a host's commit of parts, co-authoring's
 /// refresh) whose blocks lack ids, stamped in memory: each paragraph or row the part's
-/// version before held the same but for stamps (paired as a version's change set pairs
-/// them, [`PartIds::delta`]) keeps that block's paraId and textId where no other block
+/// version before held the same but for stamps (aligned as a version's change set pairs a
+/// renamed block, [`PartIds::aligned`]) keeps that block's paraId and textId where no other block
 /// holds them (`held`: whether a value is held elsewhere in the package); the rest drawn by
 /// `draw`, as at open. `None` when every block of it has its id: the part is used as it is.
 ///
@@ -166,44 +164,30 @@ pub fn received<E>(
     draw: &mut blocks::Draw<'_, E>,
 ) -> Result<Option<Stamp>, E> {
     let ids = PartIds::new(story, root);
-    let Some(found) = blocks::unstamped(story, part, root, &ids, true) else {
+    let Some(found) = blocks::unstamped(part, root, &ids, true) else {
         return Ok(None);
     };
     let inherited = match before {
-        Some(old_root) => inherited(story, old_root, &ids, root, &found, held),
+        Some(old_root) => inherited(story, old_root, &ids, &found, held),
         None => HashMap::new(),
     };
     found.stamp_inheriting(&inherited, draw).map(Some)
 }
 
-/// Each block of `found` (in the part `new`, rooted at `root`) the version before
+/// Each block of `found` (in the part `new`) the version before
 /// (`old_root`) held the same but for stamps: its place, and that block's paraId and textId.
 fn inherited(
     story: &str,
     old_root: &Arc<Element>,
     new: &PartIds,
-    root: &Arc<Element>,
     found: &Unstamped<'_>,
     held: &dyn Fn(u32) -> bool,
 ) -> HashMap<Box<[u32]>, [String; 2]> {
     let old = PartIds::new(story, old_root);
-    let mut stories = StoryTable::new();
-    let Some(ix) = stories.intern(story) else {
-        return HashMap::new();
-    };
-    let StoryDelta::Blocks(delta) = old.delta(old_root, new, root, ix) else {
-        return HashMap::new();
-    };
     let wanted: HashSet<&[u32]> = found.blocks().collect();
     let mut taken: HashSet<u32> = HashSet::new();
     let mut out = HashMap::new();
-    for (was, now) in &delta.renamed {
-        if !matches!(was.kind(), BlockKind::Paragraph | BlockKind::Row) || was.kind() != now.kind() {
-            continue;
-        }
-        let (Some(from), Some(to)) = (old.place_of(*was), new.place_of(*now)) else {
-            continue;
-        };
+    for (from, to) in old.aligned(new) {
         if !wanted.contains(&*to) {
             continue;
         }

@@ -1,8 +1,10 @@
 //! Owns: what every paragraph, table and row of one story part is called -- docx-agent's
 //! `PartIndex` (`docx_agent/edit/ids.py`): `p:<paraId>` (prefixed with the story outside
-//! the body), `p@<story>/<n>` for a paragraph without a paraId, `p:<paraId>#<k>` for the
-//! k-th repeat of one, `t:<first row's paraId>` or `t@<story>/<n>` for a table, `tr:` or
-//! `<table>/r<k>` for a row.
+//! the body), `t:<first row's paraId>` for a table (`t@<story>/<n>` for one without rows),
+//! `tr:<paraId>` for a row: each by its paraId as written. Every block has a valid and
+//! unique paraId from the document's open (stamp on open); the index also reads a part
+//! not yet stamped (the open's stamper does), whose blocks' states ([`IdState`]) say which
+//! need one, and names them by what they hold as written.
 //!
 //! The index is persistent (design section 7): one segment per child of the part's block
 //! container (the body, or a story's root), held in a [`MonoidTree`] that counts their
@@ -42,20 +44,12 @@ const LABEL_AFTER: u64 = u64::MAX;
 pub enum IdState {
     /// A valid paraId, the first of its value.
     Ok,
-    /// No paraId: a positional id, volatile.
+    /// No paraId.
     Missing,
-    /// A repeat of an earlier paraId (`#k`), volatile.
+    /// A repeat of an earlier paraId's value.
     Repeat,
-    /// A paraId out of range (not `0 < id < 0x80000000`).
+    /// A paraId out of range (not `0 < id < 0x80000000`) or not hex.
     Invalid,
-}
-
-impl IdState {
-    /// Whether the id can change without the paragraph being edited.
-    #[must_use]
-    pub fn volatile(self) -> bool {
-        matches!(self, IdState::Missing | IdState::Repeat)
-    }
 }
 
 /// A paragraph's id.
@@ -135,8 +129,6 @@ struct Count {
     paragraphs: usize,
     tables: usize,
     unstamped: usize,
-    /// Paragraphs and rows whose valid paraId is written with fewer than eight digits.
-    short: usize,
     /// The container children by local name (whatever their namespace), for the names
     /// [`TOP_NAMES`] lists: what a container child's path step counts it among.
     names: [u32; TOP_NAMES.len()],
@@ -158,7 +150,6 @@ impl Monoid for Count {
             paragraphs: self.paragraphs + other.paragraphs,
             tables: self.tables + other.tables,
             unstamped: self.unstamped + other.unstamped,
-            short: self.short + other.short,
             names: std::array::from_fn(|k| {
                 self.names.get(k).copied().unwrap_or(0) + other.names.get(k).copied().unwrap_or(0)
             }),
@@ -186,7 +177,8 @@ pub struct PartIds {
     after: Arc<Body>,
     /// One segment per container child.
     segments: MonoidTree<Seg>,
-    /// Each upper-cased paraId's occurrences, by label, in document order.
+    /// Each paraId's occurrences by value ([`segment::compared`]), by label, in document
+    /// order.
     occurrences: PersistentMap<Arc<str>, Arc<[u64]>>,
     /// How many paraIds occur more than once.
     repeated: usize,
@@ -365,13 +357,14 @@ impl PartIds {
         let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::P)?;
         let index = at.paragraphs + block.ordinal as usize;
         let repeat = self.repeat_of(at, k, block);
-        let prefix = self.prefix();
-        let (id, state) = match block.raw.as_deref() {
-            None => (format!("p@{}/{index}", self.story), IdState::Missing),
-            Some(raw) if repeat > 0 => (format!("{prefix}p:{raw}#{repeat}"), IdState::Repeat),
-            Some(raw) if valid_long_hex(raw) => (format!("{prefix}p:{raw}"), IdState::Ok),
-            Some(raw) => (format!("{prefix}p:{raw}"), IdState::Invalid),
+        let raw = block.raw.as_deref();
+        let state = match raw {
+            None => IdState::Missing,
+            Some(_) if repeat > 0 => IdState::Repeat,
+            Some(raw) if valid_long_hex(raw) => IdState::Ok,
+            Some(_) => IdState::Invalid,
         };
+        let id = format!("{}p:{}", self.prefix(), raw.unwrap_or_default());
         Some(ParagraphId {
             element: Arc::clone(&block.element),
             path: Self::path_of(at, block),
@@ -383,13 +376,12 @@ impl PartIds {
     }
 
     /// The table at place `k` of `at`'s blocks, named, without its rows: its id is its
-    /// first own row's (where that is valid and not repeated).
+    /// first own row's paraId as written, its ordinal's where it has no rows.
     fn table_head_in(&self, at: &Located<'_>, k: usize) -> Option<TableHead> {
         let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tbl)?;
         let number = at.tables + block.ordinal as usize;
-        let first = Self::own_rows(at, k).into_iter().next();
-        let id = match first.and_then(|row| self.row_raw(at, row)) {
-            Some(raw) => format!("{}t:{raw}", self.prefix()),
+        let id = match Self::own_rows(at, k).first() {
+            Some((_, row)) => format!("{}t:{}", self.prefix(), row.raw.as_deref().unwrap_or_default()),
             None => format!("t@{}/{number}", self.story),
         };
         Some(TableHead {
@@ -399,13 +391,27 @@ impl PartIds {
         })
     }
 
-    /// A row's own `w14:paraId`, where it is valid and its first occurrence: what names it
-    /// (and its table, for a first row).
-    fn row_raw(&self, at: &Located<'_>, (r, row): (usize, &Block)) -> Option<String> {
-        row.raw
-            .as_deref()
-            .filter(|raw| valid_long_hex(raw) && self.repeat_of(at, r, row) == 0)
-            .map(str::to_owned)
+    /// Whether the row at place `r` of `at`'s blocks has a paraId of its own: valid and the
+    /// first of its value.
+    fn row_stamped(&self, at: &Located<'_>, (r, row): (usize, &Block)) -> bool {
+        row.raw.as_deref().is_some_and(valid_long_hex) && self.repeat_of(at, r, row) == 0
+    }
+
+    /// The places of the rows without a paraId of their own, table by table in document
+    /// order (each table's own rows in order): what stamping gives one.
+    #[must_use]
+    pub fn unstamped_rows(&self) -> Vec<Path> {
+        let mut out = Vec::new();
+        for at in self.located() {
+            for table in at.body.tables.iter() {
+                for found in Self::own_rows(&at, *table as usize) {
+                    if !self.row_stamped(&at, found) {
+                        out.push(Self::path_of(&at, found.1));
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The table at place `k` of `at`'s blocks.
@@ -414,13 +420,9 @@ impl PartIds {
         let prefix = self.prefix();
         let rows = Self::own_rows(at, k)
             .into_iter()
-            .enumerate()
-            .map(|(n, found)| {
-                let row = match self.row_raw(at, found) {
-                    Some(raw) => format!("{prefix}tr:{raw}"),
-                    None => format!("{id}/r{n}"),
-                };
-                (Self::path_of(at, found.1), row)
+            .map(|(_, row)| {
+                let named = format!("{prefix}tr:{}", row.raw.as_deref().unwrap_or_default());
+                (Self::path_of(at, row), named)
             })
             .collect();
         Some(TableId {
@@ -505,55 +507,42 @@ impl PartIds {
     /// The entry an id names, as written (no alias followed).
     #[must_use]
     pub fn get(&self, id: &str) -> Option<Entry> {
-        let positional = |kind: &str| -> Option<usize> {
-            id.strip_prefix(kind)?
-                .strip_prefix(&*self.story)?
+        // a table without rows, by its ordinal
+        let rowless = id.strip_prefix("t@").and_then(|rest| {
+            rest.strip_prefix(&*self.story)?
                 .strip_prefix('/')?
-                .parse()
+                .parse::<usize>()
                 .ok()
-        };
-        if let Some(n) = positional("p@") {
-            let p = self.paragraphs().get(n)?;
-            return (p.id == id).then_some(Entry::Paragraph(n));
-        }
-        if let Some(n) = positional("t@") {
-            let t = self.tables().get(n)?;
+        });
+        if let Some(n) = rowless {
+            let t = self.tables().head(n)?;
             return (t.id == id).then_some(Entry::Table(n));
         }
         let rest = id.strip_prefix(&self.prefix())?;
         if let Some(raw) = rest.strip_prefix("p:") {
-            let whole = self.by_raw(raw, 0, Kind::P);
-            let repeat = raw
-                .rsplit_once('#')
-                .and_then(|(raw, k)| Some((raw, k.parse::<usize>().ok().filter(|k| *k > 0)?)));
-            let found = whole.or_else(|| repeat.and_then(|(raw, k)| self.by_raw(raw, k, Kind::P)))?;
-            let p = self.paragraph_in(&found.0, found.1)?;
+            let (at, k) = self.by_raw(raw, Kind::P)?;
+            let p = self.paragraph_in(&at, k)?;
             return (p.id == id).then_some(Entry::Paragraph(p.index));
         }
         let raw = rest.strip_prefix("t:")?;
-        let (at, k) = self.by_raw(raw, 0, Kind::Tr)?;
+        let (at, k) = self.by_raw(raw, Kind::Tr)?;
         let owner = at.body.blocks.get(k)?.owner? as usize;
-        let table = self.table_in(&at, owner)?;
+        let table = self.table_head_in(&at, owner)?;
         let number = at.tables + at.body.blocks.get(owner)?.ordinal as usize;
         (table.id == id).then_some(Entry::Table(number))
     }
 
-    /// The `repeat`-th occurrence of the paraId `raw` (in any case), when it is a block of
-    /// `kind` written `raw`.
-    fn by_raw(&self, raw: &str, repeat: usize, kind: Kind) -> Option<(Located<'_>, usize)> {
-        let upper = raw.to_uppercase();
-        let list = self.occurrences.get(upper.as_str())?;
-        let label = *list.get(repeat)?;
-        let earlier = list.partition_point(|l| *l < label);
+    /// The first occurrence of the paraId `raw`'s value, when it is a block of `kind`
+    /// written `raw`.
+    fn by_raw(&self, raw: &str, kind: Kind) -> Option<(Located<'_>, usize)> {
+        let upper = segment::compared(raw);
+        let label = *self.occurrences.get(upper.as_str())?.first()?;
         let at = self.labelled(label)?;
         let k = at
             .body
             .blocks
             .iter()
-            .enumerate()
-            .filter(|(_, b)| b.upper.as_deref() == Some(upper.as_str()))
-            .nth(repeat - earlier)
-            .map(|(k, _)| k)?;
+            .position(|b| b.upper.as_deref() == Some(upper.as_str()))?;
         let block = at.body.blocks.get(k)?;
         (block.kind == kind && block.raw.as_deref() == Some(raw)).then_some((at, k))
     }

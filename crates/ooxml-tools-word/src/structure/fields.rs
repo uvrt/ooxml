@@ -376,11 +376,10 @@ fn mark_place(side: &str, anchor: &str) -> Option<String> {
     {
         return Some(anchor.to_owned());
     }
-    let Some((head, span)) = anchor.split_once('@') else {
-        return (anchor.starts_with("p:") && !anchor.contains("..")).then(|| format!("{anchor}@0"));
-    };
-    let start = span.split(':').next().unwrap_or("").split("..").next().unwrap_or("");
-    Some(format!("{head}@{start}"))
+    match ooxml_word_model::address::parse_range(anchor) {
+        Some(range) => Some(format!("{}@{}", range.start_id, range.start)),
+        None => (anchor.starts_with("p:") && !anchor.contains("..")).then(|| format!("{anchor}@0")),
+    }
 }
 
 /// Registers `word_fields` (the crate's [`crate::register`]).

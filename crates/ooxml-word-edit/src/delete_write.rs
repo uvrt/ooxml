@@ -8,7 +8,7 @@
 //! Must not: write but through the sink, or touch children outside the stretch.
 
 use crate::delete::{
-    declare, draws_of, editable, join_path, forget_removed, own_insertion, plan, stretch_keys, stretch_paths,
+    declare, draws_of, editable, forget_removed, join_path, own_insertion, plan, stretch_keys, stretch_paths,
     BlockDeleted, Planned,
 };
 use crate::doc::Key;

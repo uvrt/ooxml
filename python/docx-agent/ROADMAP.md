@@ -426,19 +426,26 @@ elsewhere, where the story is the part's stem (`header2/p:1A2B3C4D`, `footnotes/
 `comments/p:...`). The paraId is used verbatim, so the id an agent sees is the same one
 docx2svg puts in `data-docx-id`.
 
-**Missing.** A paragraph without a paraId has a *positional* id, `p@<story>/<n>` — honest
-about being volatile — until it is first edited. Then it is **stamped**: given a paraId and a
-textId, deterministically generated (a counter-seeded sequence, checked for uniqueness in
-the part and below `0x80000000`), with `w14` declared on the part's root and listed in
-`mc:Ignorable` if it is not already. Reading never stamps, or the byte-identity guarantee
-would fail. This is pptx-agent's lazy stamping, with the stamp in Word's own attribute
-rather than an `extLst` (a `w:p` has none).
+**Stamped at open** (stamp on open, user decision 2026-11-26). Every paragraph and table
+row, in every story, without a valid and unique paraId is given one (and a textId) in memory
+when the document is opened, and so is every drawing without `wp14:anchorId`/`wp14:editId`:
+the same deterministic draw the first edit made before (a counter-seeded sequence per part,
+skipping every value the file holds, below `0x80000000`), so the ids are a function of the
+bytes and opening a file twice gives the same ones. A repeated paraId -- compared by value,
+whatever its case or spelling (`1A` and `0000001A` are one) -- keeps it on its first
+occurrence and the later ones get fresh ids, as Word does; an out-of-range one is replaced.
+Every reader sees durable ids from the first call. The bytes are untouched until the first
+edit, which writes every story part still holding ids given at open (Word drops every
+paraId of a document with one block lacking it); a save with no edit gives the bytes back.
+A table without rows (Word drops one on save) is named by its place, `t@<story>/<n>`.
 
-**Duplicated.** The first occurrence in document order keeps `p:<paraId>`; later ones are
-`p:<paraId>#<n>` (occurrence index, volatile). The first edit of a duplicate gives it a
-fresh paraId — a duplicate is invalid by the specification — and the session keeps an
-alias from the old id, so a reference the agent holds still resolves; every edit result
-reports renames.
+**Names by place are refused.** The positional and occurrence names docx-agent gave a
+document without ids before (`p@<story>/<n>`, `t@<story>/<n>` for a table with rows, a row's
+`t:<id>/r<n>`, a repeat's `p:<paraId>#<n>`, a section's `s@<story>/<n>`) are no longer
+handed out, and naming one is refused (`invalid_arguments`) with the way on: every block
+has a durable id (`p:`, `t:`, `tr:`); read the ids first (`word_inspect` or `word_read`) and
+pass one of those. A reply's `renamed` lists only a command's own renames (a table renamed
+after its new first row, a bookmark renamed, a block moved under tracking).
 
 **Durable across a Word save — measured** (E0, Word 16.106 for Mac, 2026-10-03;
 `tools/paraid_probe.py`, observations in `tests/observations/paraid-durability.json`).
@@ -464,17 +471,15 @@ typing elsewhere and saving twice change nothing else. Modes 15, 14 and none (12
 alike. Note, comment, revision and bookmark ids Word **renumbers** on every save (footnote
 5 → 1, comment 7 → 0, insertion 42 → 0, bookmark 9 → 0).
 
-**The way on, chosen on that evidence:** the first edit stamps the **whole document**
-(`Document(stamping="document")`, the default): every paragraph and table row, in every
-story, without a valid and unique paraId gets one (and a textId), out-of-range values and
-repeats are re-issued, and every drawing without `wp14:anchorId`/`wp14:editId` gets them,
-`w14`/`wp14` declared and ignorable, each rename kept as an alias. Measured the same way,
+**The way on, chosen on that evidence:** the **whole document** is stamped (at open since
+stamp on open; by the first edit before): every paragraph and table row, in every story,
+without a valid and unique paraId gets one (and a textId), out-of-range values and repeats
+are re-issued, and every drawing without `wp14:anchorId`/`wp14:editId` gets them,
+`w14`/`wp14` declared and ignorable. Measured the same way,
 those ids then survive every scenario -- save, save again, typing elsewhere, typing into a
 stamped paragraph, a comment -- in modes 15, 14 and none, in a generated document, one with
-a picture and one Word made. Stamping is still lazy (reading never stamps) and
-deterministic; its cost is that the first edit rewrites every story part that lacked ids.
-`stamping="paragraph"` stamps only what an edit touches, for callers who prefer fewer
-changed bytes to ids that outlive a Word save. Two residues, both Word's own: the
+a picture and one Word made. Stamping is deterministic, and its bytes are written by the
+first edit, which rewrites every story part that lacked ids. Two residues, both Word's own: the
 paragraphs of footnote and endnote *separators* get new paraIds on every save (Word writes
 those notes itself), and a document another tool later breaks (a paragraph added without a
 paraId) loses its paraIds on Word's next save -- re-anchoring by `textId` and text, kept as
@@ -516,8 +521,7 @@ ids; docx-agent keeps them deterministic and skips every id the document has had
   "before the document was saved and opened again" (`DeletedId.earlier`), and versions go on:
   the document opens at the version it was saved at and the next change gets one more than
   the highest the earlier session gave (`History.continue_from`), so "version N" names one
-  state across every reopen. Renames kept as aliases come back too (an id held from before
-  the first edit stamped the document still resolves). The tool layer: `Session.save(doc)`
+  state across every reopen. Renames kept as aliases come back too. The tool layer: `Session.save(doc)`
   gives the bytes and the state at one version under the document's lock, a
   `save_document` output carries its own (`Output.state`, never shown to the model), and
   `Session.open(data, name, doc_id=..., state=...)` takes it back.
@@ -557,7 +561,7 @@ ids; docx-agent keeps them deterministic and skips every id the document has had
 | Run | `p:<id>/r<n>` | positional | re-resolved per call, as in pptx-agent: runs have no identity in OOXML. Counts runs inside `w:hyperlink`, `w:ins`, inline `w:sdt` in document order; `w:del` runs count only in the `original` and `markup` views |
 | Text range | `p:<id>@<start>:<end>` | relative to a durable paragraph | see below |
 | Table | `t:<paraId of its first row>` | as rows | `w:tbl` has no id; `w:tr` carries `w14:paraId` |
-| Row | `tr:<paraId>` | as paragraphs | positional fallback `t:<id>/r<n>` |
+| Row | `tr:<paraId>` | as paragraphs | every row has one from the open; `t:<id>/r<n>` (by place) is refused with guidance |
 | Cell | `t:<id>/c<row>,<col>` | positional in the *grid* | a merged cell answers to its origin |
 | Section | `s:<paraId>` of the paragraph that ends it, `s:body` for the last | as paragraphs | a section break *is* that paragraph's `w:sectPr` |
 | Header/footer story | `header2`, `footer1` (part stem); also `s:<id>/header/first|default|even` | part names are stable unless parts are renamed | the second form says which section uses it, resolving inheritance |

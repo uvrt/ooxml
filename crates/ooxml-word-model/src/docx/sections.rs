@@ -379,10 +379,7 @@ fn first_index(element: &Element, local: &str) -> Option<usize> {
 /// A section's id from the id of the paragraph ending it.
 #[must_use]
 pub fn section_id(paragraph_id: &str) -> String {
-    match paragraph_id.strip_prefix("p@") {
-        Some(rest) => format!("s@{rest}"),
-        None => format!("s:{}", paragraph_id.rsplit("p:").next().unwrap_or(paragraph_id)),
-    }
+    format!("s:{}", paragraph_id.rsplit("p:").next().unwrap_or(paragraph_id))
 }
 
 /// The story section `index` of `sections` shows for `which` (`header`, `footer`) and

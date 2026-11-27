@@ -96,7 +96,7 @@ pub(super) fn anchor(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Anchor> 
 /// A row past the table's last: not found, as docx-agent's lookup of it fails (its text
 /// range is no more found than the row).
 fn block(doc: &WordDoc, docx: &Docx, place: &str) -> Result<Option<Anchor>> {
-    if place.contains('@') || place.contains("..") {
+    if ooxml_word_model::address::is_text_range(place) || place.contains("..") {
         return Ok(None);
     }
     let followed = doc.ids().follow(place);

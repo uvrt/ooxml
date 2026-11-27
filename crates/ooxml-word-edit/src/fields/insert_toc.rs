@@ -93,11 +93,7 @@ impl InsertToc<'_> {
 
     /// The paragraph that holds the field: a new empty one (its properties gone), or the
     /// paragraph it goes before.
-    fn holder(
-        &self,
-        sink: &mut EditSink<'_, '_>,
-        anchor: &crate::paragraphs::Anchor,
-    ) -> Result<Holder> {
+    fn holder(&self, sink: &mut EditSink<'_, '_>, anchor: &crate::paragraphs::Anchor) -> Result<Holder> {
         let own = !(self.before.is_some() && anchor.paragraph);
         if !own {
             return Ok(Holder {

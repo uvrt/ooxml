@@ -559,7 +559,10 @@ impl MoveBlocks {
             });
         };
         let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
-        let warnings: Vec<String> = warnings.into_iter().map(|(k, said)| format!("{} {said}", ids.get(k).cloned().unwrap_or_default())).collect();
+        let warnings: Vec<String> = warnings
+            .into_iter()
+            .map(|(k, said)| format!("{} {said}", ids.get(k).cloned().unwrap_or_default()))
+            .collect();
         if let (RevisionPolicy::Tracked(tracking), true) = (&self.policy, tracked.contains(&true)) {
             let story = docx.part(&part).map_or_else(|| "body".to_owned(), |s| s.story.clone());
             let plan = crate::moving_tracked::Planned {
@@ -603,4 +606,3 @@ impl MoveBlocks {
         })
     }
 }
-

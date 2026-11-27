@@ -83,11 +83,7 @@ pub(crate) fn precheck(docx: &Docx, place: &Place, action: &ListAction) -> Resul
 ///
 /// # Errors
 /// docx-agent's refusals; when a part is not XML.
-pub(crate) fn step(
-    sink: &mut EditSink<'_, '_>,
-    place: &Place,
-    action: &ListAction,
-) -> Result<Stepped> {
+pub(crate) fn step(sink: &mut EditSink<'_, '_>, place: &Place, action: &ListAction) -> Result<Stepped> {
     let docx = sink.docx()?;
     let read::At { id, element, .. } =
         read::at(&docx, place).ok_or_else(|| EditError::no_element(place.part.clone()))?;
@@ -96,9 +92,7 @@ pub(crate) fn step(
     let step = match action {
         ListAction::Add { kind, level } => {
             level_range(*level)?;
-            list_edit(sink, place, found.as_ref(), |sink| {
-                add(sink, place, kind, *level)
-            })?
+            list_edit(sink, place, found.as_ref(), |sink| add(sink, place, kind, *level))?
         }
         ListAction::Remove => {
             if found.is_none() {

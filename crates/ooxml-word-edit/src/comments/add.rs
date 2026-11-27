@@ -188,10 +188,7 @@ impl AddComments {
         } else {
             None
         };
-        Ok(CommentMade {
-            id: made,
-            resolved,
-        })
+        Ok(CommentMade { id: made, resolved })
     }
 
     /// The comment written into the comment parts, its author listed, every comment given

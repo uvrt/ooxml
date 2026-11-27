@@ -34,12 +34,7 @@ fn content_index(work: &Work, root: Id, child: Id) -> Option<u32> {
 /// The keys the stretch at `paths` of `root` is written under, made
 /// `nodes`: its paragraphs' blocks, and the annotation ids in use when it held revision
 /// records or does now (the ids a tracked edit numbers from, as `set_text` declares them).
-fn stretch_keys(
-    docx: &Docx,
-    part: &str,
-    (paths, root): (&[Box<[u32]>], &Arc<Element>),
-    nodes: &[Node],
-) -> Vec<Key> {
+fn stretch_keys(docx: &Docx, part: &str, (paths, root): (&[Box<[u32]>], &Arc<Element>), nodes: &[Node]) -> Vec<Key> {
     let mut keys: Vec<Key> = paths
         .iter()
         .filter_map(|p| docx.part(part).and_then(|s| s.ids.paragraph_at(p)))
@@ -61,11 +56,7 @@ fn stretch_keys(
 ///
 /// # Errors
 /// When the stretch is not where the plan found it, or the range cannot be replaced.
-pub(crate) fn write_across(
-    sink: &mut EditSink<'_, '_>,
-    plan: &Plan,
-    keep: Keep,
-) -> Result<Option<Written>> {
+pub(crate) fn write_across(sink: &mut EditSink<'_, '_>, plan: &Plan, keep: Keep) -> Result<Option<Written>> {
     let Some(across) = plan.across.as_ref() else {
         return Ok(None);
     };

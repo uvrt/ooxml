@@ -4,10 +4,9 @@
 //! path step (its local name and its count among its namesakes, from the segment tree's
 //! prefix counts), each in O(log n) plus the segment it lands in.
 //!
-//! A paraId names a block durably where the block is its first occurrence (in any case) and
-//! the value is written one way only in the part: a value written with fewer than eight
-//! digits and also with more (`1A`, `0000001A`) is two ids of one value, and its blocks are
-//! keyed by ordinal.
+//! A paraId names a block durably where the block is the first occurrence of its value
+//! (whatever its case or spelling). A block without one (a part not yet stamped) has no key;
+//! a table without rows is keyed by its ordinal.
 //!
 //! Must not: name a block any other way than the index does, or key a block by its
 //! element's address (equal subtrees are shared).
@@ -16,72 +15,25 @@ use super::segment::{Block, Kind};
 use super::{Entry, Located, PartIds, Path};
 use crate::ids::block_id::{BlockId, BlockKind, ParaId};
 use crate::ids::key::{BlockKey, KeyName, StoryIx};
-use crate::ids::valid_long_hex;
 use std::sync::Arc;
 
 impl PartIds {
-    /// How many paragraphs and rows have a valid paraId written with fewer than eight digits.
-    fn short_total(&self) -> usize {
-        self.before.short as usize + self.total().short + self.after.short as usize
+    /// `block`'s paraId where it is valid and the first of its value.
+    fn unique_id(&self, at: &Located<'_>, k: usize, block: &Block) -> Option<ParaId> {
+        let id = ParaId::parse(block.raw.as_deref()?)?;
+        (self.repeat_of(at, k, block) == 0).then_some(id)
     }
 
-    /// The one spelling (upper-cased) the value `id` is written in the part, `None` where it
-    /// is written in none or in more than one.
-    fn spelling(&self, id: ParaId) -> Option<String> {
-        let value = id.get();
-        if self.short_total() == 0 {
-            let spelled = format!("{value:08X}");
-            return self.occurrences.get(spelled.as_str()).map(|_| spelled);
-        }
-        let minimal = format!("{value:X}").len();
-        let mut found = None;
-        for width in minimal..=8 {
-            let spelled = format!("{value:0width$X}");
-            if self.occurrences.get(spelled.as_str()).is_some() {
-                if found.is_some() {
-                    return None;
-                }
-                found = Some(spelled);
-            }
-        }
-        found
-    }
-
-    /// Whether every key the index makes follows from its block's content: every paragraph
-    /// and row has a valid paraId of its own, each written with eight digits (so one
-    /// spelling per value). A durable key read from such a part is its block's whatever its
-    /// place, in every version whose part is such too.
-    #[must_use]
-    pub fn keys_by_content(&self) -> bool {
-        self.fully_stamped() && self.short_total() == 0
-    }
-
-    /// `block`'s paraId where it is valid and written one way only in the part.
-    fn unique_id(&self, block: &Block) -> Option<ParaId> {
-        let raw = block.raw.as_deref()?;
-        let id = ParaId::parse(raw)?;
-        if self.short_total() == 0 {
-            // every valid paraId has eight digits: one spelling per value
-            return Some(id);
-        }
-        (self.spelling(id).as_deref() == block.upper.as_deref()).then_some(id)
-    }
-
-    /// The `nth` occurrence (from 0, in any case) of the paraId `id`, written one way only.
-    fn occurrence(&self, id: ParaId, nth: usize) -> Option<(Located<'_>, usize)> {
-        let upper = self.spelling(id)?;
-        let list = self.occurrences.get(upper.as_str())?;
-        let label = *list.get(nth)?;
-        let earlier = list.partition_point(|l| *l < label);
+    /// The first occurrence of the paraId `id`'s value.
+    fn occurrence(&self, id: ParaId) -> Option<(Located<'_>, usize)> {
+        let upper = format!("{:08X}", id.get());
+        let label = *self.occurrences.get(upper.as_str())?.first()?;
         let at = self.labelled(label)?;
         let k = at
             .body
             .blocks
             .iter()
-            .enumerate()
-            .filter(|(_, b)| b.upper.as_deref() == Some(upper.as_str()))
-            .nth(nth - earlier)
-            .map(|(k, _)| k)?;
+            .position(|b| b.upper.as_deref() == Some(upper.as_str()))?;
         Some((at, k))
     }
 
@@ -99,12 +51,6 @@ impl PartIds {
         Some((at, k))
     }
 
-    /// Whether the row at place `r` of `at`'s blocks is named by its own paraId (`tr:`):
-    /// valid and its first occurrence.
-    fn row_named(&self, at: &Located<'_>, r: usize, row: &Block) -> bool {
-        row.raw.as_deref().is_some_and(valid_long_hex) && self.repeat_of(at, r, row) == 0
-    }
-
     /// The key of the paragraph or table `entry`, in the story `story` (this part's).
     #[must_use]
     pub fn key_of(&self, story: StoryIx, entry: Entry) -> Option<BlockKey> {
@@ -120,50 +66,21 @@ impl PartIds {
         (kind == wanted).then(|| self.key_in(story, &at, k)).flatten()
     }
 
-    /// The key of the block (paragraph, table or row) at place `k` of `at`'s blocks.
+    /// The key of the block (paragraph, table or row) at place `k` of `at`'s blocks; `None`
+    /// for a paragraph or row without a paraId of its own, or a table whose first row has
+    /// none.
     pub(super) fn key_in(&self, story: StoryIx, at: &Located<'_>, k: usize) -> Option<BlockKey> {
         let block = at.body.blocks.get(k)?;
         let (kind, name) = match block.kind {
-            Kind::P => {
-                let n = at.paragraphs + block.ordinal as usize;
-                let name = match self.unique_id(block) {
-                    Some(id) => match self.repeat_of(at, k, block) {
-                        0 => KeyName::Durable(id),
-                        repeat => {
-                            u32::try_from(repeat).map_or(KeyName::Ordinal(ordinal(n)?), |r| KeyName::Repeat(id, r))
-                        }
-                    },
-                    None => KeyName::Ordinal(ordinal(n)?),
-                };
-                (BlockKind::Paragraph, name)
-            }
+            Kind::P => (BlockKind::Paragraph, KeyName::Durable(self.unique_id(at, k, block)?)),
             Kind::Tbl => {
-                let n = at.tables + block.ordinal as usize;
-                let first = Self::own_rows(at, k).into_iter().next();
-                let id = first
-                    .filter(|(r, row)| self.row_named(at, *r, row))
-                    .and_then(|(_, row)| self.unique_id(row));
-                (
-                    BlockKind::Table,
-                    id.map_or(KeyName::Ordinal(ordinal(n)?), KeyName::Durable),
-                )
-            }
-            Kind::Tr => {
-                let id = self.row_named(at, k, block).then(|| self.unique_id(block)).flatten();
-                let name = match id {
-                    Some(id) => KeyName::Durable(id),
-                    None => {
-                        let owner = block.owner? as usize;
-                        let table = at.tables + at.body.blocks.get(owner)?.ordinal as usize;
-                        let row = Self::own_rows(at, owner).iter().position(|(r, _)| *r == k)?;
-                        KeyName::RowAt {
-                            table: ordinal(table)?,
-                            row: ordinal(row)?,
-                        }
-                    }
+                let name = match Self::own_rows(at, k).first() {
+                    Some((r, row)) => KeyName::Durable(self.unique_id(at, *r, row)?),
+                    None => KeyName::Rowless(u32::try_from(at.tables + block.ordinal as usize).ok()?),
                 };
-                (BlockKind::Row, name)
+                (BlockKind::Table, name)
             }
+            Kind::Tr => (BlockKind::Row, KeyName::Durable(self.unique_id(at, k, block)?)),
         };
         Some(BlockKey::new(story, kind, name))
     }
@@ -173,12 +90,14 @@ impl PartIds {
     #[must_use]
     pub fn entry_of(&self, key: BlockKey) -> Option<Entry> {
         let found = match (key.kind(), key.name()) {
-            (BlockKind::Paragraph, KeyName::Ordinal(n)) => Entry::Paragraph(n as usize),
-            (BlockKind::Paragraph, KeyName::Durable(id)) => self.paragraph_entry(id, 0)?,
-            (BlockKind::Paragraph, KeyName::Repeat(id, r)) => self.paragraph_entry(id, r as usize)?,
-            (BlockKind::Table, KeyName::Ordinal(n)) => Entry::Table(n as usize),
+            (BlockKind::Paragraph, KeyName::Durable(id)) => {
+                let (at, k) = self.occurrence(id)?;
+                let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::P)?;
+                Entry::Paragraph(at.paragraphs + block.ordinal as usize)
+            }
+            (BlockKind::Table, KeyName::Rowless(n)) => Entry::Table(n as usize),
             (BlockKind::Table, KeyName::Durable(id)) => {
-                let (at, k) = self.occurrence(id, 0)?;
+                let (at, k) = self.occurrence(id)?;
                 let row = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tr)?;
                 let table = at.body.blocks.get(row.owner? as usize)?;
                 Entry::Table(at.tables + table.ordinal as usize)
@@ -186,12 +105,6 @@ impl PartIds {
             _ => return None,
         };
         (self.key_of(key.story(), found) == Some(key)).then_some(found)
-    }
-
-    fn paragraph_entry(&self, id: ParaId, nth: usize) -> Option<Entry> {
-        let (at, k) = self.occurrence(id, nth)?;
-        let block = at.body.blocks.get(k).filter(|b| b.kind == Kind::P)?;
-        Some(Entry::Paragraph(at.paragraphs + block.ordinal as usize))
     }
 
     /// The key of the `row`-th own row (from 0) of the table with ordinal `table`, in the
@@ -207,18 +120,15 @@ impl PartIds {
     /// for another key, or one this version's index does not make.
     #[must_use]
     pub fn row_of(&self, key: BlockKey) -> Option<(usize, usize)> {
-        let found = match (key.kind(), key.name()) {
-            (BlockKind::Row, KeyName::RowAt { table, row }) => (table as usize, row as usize),
-            (BlockKind::Row, KeyName::Durable(id)) => {
-                let (at, k) = self.occurrence(id, 0)?;
-                let row = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tr)?;
-                let owner = row.owner? as usize;
-                let table = at.body.blocks.get(owner)?;
-                let place = Self::own_rows(&at, owner).iter().position(|(r, _)| *r == k)?;
-                (at.tables + table.ordinal as usize, place)
-            }
-            _ => return None,
+        let (BlockKind::Row, KeyName::Durable(id)) = (key.kind(), key.name()) else {
+            return None;
         };
+        let (at, k) = self.occurrence(id)?;
+        let row = at.body.blocks.get(k).filter(|b| b.kind == Kind::Tr)?;
+        let owner = row.owner? as usize;
+        let table = at.body.blocks.get(owner)?;
+        let place = Self::own_rows(&at, owner).iter().position(|(r, _)| *r == k)?;
+        let found = (at.tables + table.ordinal as usize, place);
         (self.row_key_of(key.story(), found.0, found.1) == Some(key)).then_some(found)
     }
 
@@ -261,12 +171,8 @@ impl PartIds {
             BlockKind::Row => {
                 let (table, row) = self.row_of(key)?;
                 let (at, k) = self.table_place(table)?;
-                let (r, block) = *Self::own_rows(&at, k).get(row)?;
-                let id = match self.row_raw(&at, (r, block)) {
-                    Some(raw) => format!("{}tr:{raw}", self.prefix()),
-                    None => format!("{}/r{row}", self.table_head_in(&at, k)?.id),
-                };
-                Some(BlockId::from(id))
+                let (_, block) = *Self::own_rows(&at, k).get(row)?;
+                Some(BlockId::from(format!("{}tr:{}", self.prefix(), block.raw.as_deref()?)))
             }
         }
     }
@@ -320,9 +226,4 @@ impl PartIds {
         };
         Some((local, before + 1))
     }
-}
-
-/// `n` as a key's ordinal.
-fn ordinal(n: usize) -> Option<u32> {
-    u32::try_from(n).ok()
 }

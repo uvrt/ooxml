@@ -216,14 +216,7 @@ impl SetCells {
                     TableGrid::new(story, &now).no_cell(&now.id, row, column),
                 ));
             };
-            write_cell(
-                &mut sink,
-                &found,
-                &places,
-                (row, column),
-                &write.text,
-                &mut out.edits,
-            )?;
+            write_cell(&mut sink, &found, &places, (row, column), &write.text, &mut out.edits)?;
             out.ids.push(format!("{}/c{r},{c}", found.id));
             out.at.push((row, column));
         }

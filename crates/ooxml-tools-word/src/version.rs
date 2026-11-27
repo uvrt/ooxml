@@ -130,7 +130,7 @@ impl<'a> Version<'a> {
 
 impl Version<'_> {
     /// `address` as it names a block now: through the renames the session's edits made
-    /// (`p@body/1` once stamped `p:X`; a row's or cell's table), as docx-agent's view reads
+    /// (a table renamed after its new first row; a row's or cell's table), as docx-agent's view reads
     /// an address; as given on a version the session only reads.
     #[must_use]
     pub fn follow(&self, address: &str) -> String {
