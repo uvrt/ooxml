@@ -392,6 +392,9 @@ class HostedSession(Session):
         """Refuse a call the Python dispatcher runs -- an application's own tool (decision
         D1) -- that names a document the Rust host holds: there is no Python document of it
         to hold."""
+        doc_ids = list(doc_ids)
+        if not doc_ids:
+            return
         open_now = set(self.rust.documents())
         held = [doc for doc in doc_ids if doc in open_now]
         if held:
