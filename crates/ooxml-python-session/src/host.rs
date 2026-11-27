@@ -171,10 +171,38 @@ impl PyHost {
 }
 
 /// What `HostSession.call` answers: the reply's JSON text, its files `(name, format, bytes)`
-/// (a `render`'s PNG pages among them), and what only the application reads (JSON text:
-/// `touched`, `touched_by_op`, `changed_parts`, `timing`, `memory`, `budget`, `unchanged`,
-/// `panic`, and the call's `record`).
-type Reply = (String, Vec<(String, String, Py<PyBytes>)>, String);
+/// (a `render`'s PNG pages among them), and what only the application reads ([`AppPart`]).
+type Reply = (String, Vec<(String, String, Py<PyBytes>)>, AppPart);
+
+/// What only the application reads of a call, as plain values: `(touched, touched_by_op,
+/// changed_parts, timing, memory, budget, record)` -- the lists as JSON text, `None` where
+/// empty; `timing` `(total, lock_wait, work, held, cpu)` in seconds; the record ([`RecordRow`]).
+type AppPart = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<(f64, f64, f64, f64, Option<f64>)>,
+    Option<String>,
+    Option<usize>,
+    RecordRow,
+);
+
+/// A call's record: `(tool, docs, digest, shape, ok, code, summary, duration, version,
+/// arguments, roles, context)` -- `shape`, `arguments` and `context` as JSON text.
+type RecordRow = (
+    String,
+    Vec<String>,
+    String,
+    String,
+    bool,
+    Option<String>,
+    String,
+    f64,
+    Option<u64>,
+    Option<String>,
+    Option<Vec<String>>,
+    Option<String>,
+);
 
 /// One saved document: `(doc, name, kind, version, bytes, state)`.
 type SavedRow = (String, String, &'static str, u64, Py<PyBytes>, Option<String>);
@@ -487,12 +515,8 @@ impl PyHostSession {
                 let given = serde_json::from_str(&arguments).unwrap_or(Value::String(arguments));
                 let (mut result, record) = session.call_recorded(name, given, &how)?;
                 let files = std::mem::take(&mut result.app.files);
-                let app = app_json(&result, &record);
-                Ok((
-                    compact(&Value::Object(result.to_json())),
-                    files,
-                    compact(&Value::Object(app)),
-                ))
+                let app = app_part(&result, record);
+                Ok((compact(&Value::Object(result.to_json())), files, app))
             })
             .map_err(|ooxml_host::NotRun::Roles(why)| PyValueError::new_err(why))?;
         let files = files
@@ -558,35 +582,43 @@ impl PyHostSession {
 }
 
 /// What only the application reads of `result`, with its `record`.
-fn app_json(result: &ooxml_tools::ToolResult<Value>, record: &ooxml_host::CallRecord) -> Map<String, Value> {
+fn app_part(result: &ooxml_tools::ToolResult<Value>, record: ooxml_host::CallRecord) -> AppPart {
     let app = &result.app;
-    let mut out = Map::new();
-    out.insert("touched".into(), Value::from(app.touched.clone()));
-    let by: Map<String, Value> = app
-        .touched_by_op
-        .iter()
-        .map(|(op, t)| (op.to_string(), Value::from(t.clone())))
-        .collect();
-    out.insert("touched_by_op".into(), Value::Object(by));
-    out.insert("changed_parts".into(), Value::from(app.changed_parts.clone()));
-    let timing = app.timing.as_ref().map(|t| {
-        let mut map = Map::new();
-        for (key, value) in [
-            ("total", Some(t.total)),
-            ("lock_wait", Some(t.lock_wait)),
-            ("work", Some(t.work)),
-            ("held", Some(t.held)),
-            ("cpu", t.cpu),
-        ] {
-            map.insert(key.into(), value.map_or(Value::Null, Value::from));
-        }
-        Value::Object(map)
+    let listed = |items: &[Value]| (!items.is_empty()).then(|| compact(&Value::from(items.to_vec())));
+    let by_op = (!app.touched_by_op.is_empty()).then(|| {
+        let by: Map<String, Value> = app
+            .touched_by_op
+            .iter()
+            .map(|(op, t)| (op.to_string(), Value::from(t.clone())))
+            .collect();
+        compact(&Value::Object(by))
     });
-    out.insert("timing".into(), timing.unwrap_or(Value::Null));
-    out.insert("memory".into(), app.memory.clone().map_or(Value::Null, Value::Object));
-    out.insert("budget".into(), Value::from(app.budget));
-    out.insert("unchanged".into(), Value::from(app.unchanged));
-    out.insert("panic".into(), Value::from(app.panic.clone()));
-    out.insert("record".into(), Value::Object(record.to_json()));
-    out
+    let timing = app
+        .timing
+        .as_ref()
+        .map(|t| (t.total, t.lock_wait, t.work, t.held, t.cpu));
+    let memory = app.memory.clone().map(|m| compact(&Value::Object(m)));
+    let row: RecordRow = (
+        record.tool,
+        record.docs,
+        record.digest,
+        compact(&record.shape),
+        record.ok,
+        record.code,
+        record.summary,
+        (record.duration.as_secs_f64() * 10_000.0).round() / 10_000.0,
+        record.version,
+        record.arguments.map(|a| compact(&Value::Object(a))),
+        record.roles,
+        record.context.map(|c| compact(&Value::Object(c))),
+    );
+    (
+        listed(&app.touched),
+        by_op,
+        listed(&app.changed_parts),
+        timing,
+        memory,
+        app.budget,
+        row,
+    )
 }

@@ -1,18 +1,21 @@
 """The Rust host behind the :class:`~.dispatch.Toolbox` (Phase 3, E1): the facade's Rust path.
 
 A format whose documents the Rust host holds says so with :attr:`~.session.DocumentFormat.host`
-(docx-agent's Word format): an object with
+(a format library's): an object with
 
-- ``make(settings, pages) -> ooxml_core.Host``: the host, made with the toolbox's settings
+- ``make(settings, pages) -> Host``: the host (the core's), made with the toolbox's settings
   (JSON text: ``limits`` by :class:`~.limits.Limits`' field names, ``roles``, ``log_arguments``,
   ``allow_new_problems``, ``numbers``, ``own_tools``), laying its documents out with ``pages``;
-- ``pages(font_dirs, locale) -> ooxml_core.PageSetup``: what documents are laid out with for
+- ``pages(font_dirs, locale) -> PageSetup``: what documents are laid out with for
   font folders and a locale (the toolbox's, or a session's own);
 - ``catalogue() -> Sequence[str]``: the names of the host's tools;
 - ``opened(session, doc)``: what the format says of a document the application opened (a
-  warning), given the ``ooxml_core.HostSession`` and its id.
+  warning), given the host's session and its id;
+- ``refused(exc) -> (why, message) | None``: an exception the host's session raised opening a
+  document, read: ``why`` one of ``argument``, ``limit``, ``unreadable``, ``state``; ``None``
+  for any other.
 
-A toolbox that :func:`runs_on_host` makes one :class:`Hosting`: one ``ooxml_core.Host`` per
+A toolbox that :func:`runs_on_host` makes one :class:`Hosting`: one host per
 toolbox (decision D7; one per other set of limits, font folders or locale a session is given),
 and a
 :class:`HostedSession` -- today's :class:`~.session.Session`, its documents, blobs, outputs and
@@ -35,6 +38,7 @@ import dataclasses
 import datetime as _dt
 import json
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
@@ -44,7 +48,7 @@ from .limits import LimitError, Limits
 from .logs import CallRecord, log_call, log_internal, logger
 from .results import Image, Result, ToolError
 from .session import (Blob, Output, SavedDocument, Session, SessionView, StateRefused,
-                      _require_bytes)
+                      _require_bytes, utc_now)
 
 if TYPE_CHECKING:
     from .dispatch import Toolbox
@@ -56,7 +60,7 @@ def runs_on_host(toolbox: "Toolbox", forced: bool | None = None) -> bool:
     The rule until Phase 3 E1b, in one place: every format is one the Rust host holds
     (:attr:`~.session.DocumentFormat.host`), and the toolbox has no tool of the application's
     own -- a session holding a Python-held document, or a tool writing Python datasets, keeps
-    Word on the Python host until the session's stores are shared (E1b drops both clauses,
+    the host's formats on the Python host until the session's stores are shared (E1b drops both clauses,
     and :class:`~.dispatch.Toolbox`'s ``_rust_host`` with them).
 
     ``forced``: the toolbox's ``_rust_host`` (a test's, for a toolbox with tools of its own).
@@ -76,7 +80,7 @@ def own_tools(toolbox: "Toolbox") -> list[str]:
 
 
 def _hosting(toolbox: "Toolbox") -> Any:
-    """The formats' one host maker (Phase 3: Word's alone)."""
+    """The formats' one host maker."""
     makers = {id(fmt.host): fmt.host for fmt in toolbox.formats.values() if fmt.host is not None}
     if len(makers) != 1:
         raise ArgumentError("the formats' documents are held by more than one Rust host; one toolbox "
@@ -99,8 +103,17 @@ def _rules(rules: Any) -> dict[str, Any]:
             "per_text": rules.per_text}
 
 
+def _call_date(clock: Any) -> str:
+    """The moment a call's writes are dated by, read of the session's ``clock``: the system's
+    own clock read straight to the second (the default, :func:`~.session.utc_now`), else the
+    application's clock's moment (:func:`_date`)."""
+    if clock is utc_now:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return _date(clock())
+
+
 def _date(moment: _dt.datetime) -> str:
-    """The moment a call's writes are dated by: UTC, to the second (docx-agent's date)."""
+    """The moment a call's writes are dated by: UTC, to the second."""
     if moment.tzinfo is not None:
         moment = moment.astimezone(_dt.timezone.utc)
     return f"{moment.year:04d}-{moment.month:02d}-{moment.day:02d}T{moment.hour:02d}:{moment.minute:02d}:{moment.second:02d}Z"
@@ -118,7 +131,7 @@ class Hosting:
         self._lock = threading.Lock()
 
     def host(self, limits: Limits, font_dirs: Any, locale: Any) -> Any:
-        """The ``ooxml_core.Host`` of sessions with ``limits``, laying their documents out with
+        """The host of sessions with ``limits``, laying their documents out with
         ``font_dirs`` and ``locale``: the toolbox's one (made on first use), or one for each
         other set a session is given."""
         settings = _settings(self.toolbox, limits, sorted(self.own))
@@ -162,8 +175,8 @@ class Hosting:
         reply, files, app = base.rust.call(
             name if isinstance(name, str) else json.dumps(name), text, roles=narrowed,
             context=json.dumps(dict(caller), default=str) if caller else None,
-            date=_date(base.clock()))
-        result = HostResult.of(reply, files, json.loads(app))
+            date=_call_date(base.clock))
+        result = HostResult.of(reply, files, app)
         if result.ok and result.tool == "describe" and result.doc is not None:
             result.memory = base.memory_now(result.doc)
         base.kept(result, comments)
@@ -204,6 +217,11 @@ def _arguments_text(arguments: Any, comments: list[dict[str, Any]]) -> str:
     the Python host keeps them, :func:`~.dispatch._op_comments`)."""
     from .dispatch import _op_comments
 
+    if type(arguments) is dict and "ops" not in arguments:     # (the common call: no batch)
+        try:
+            return json.dumps(arguments, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return json.dumps(arguments, ensure_ascii=False, default=str)
     if isinstance(arguments, str):
         try:
             parsed = json.loads(arguments)
@@ -211,7 +229,7 @@ def _arguments_text(arguments: Any, comments: list[dict[str, Any]]) -> str:
             return arguments            # (the host refuses it, in its words)
     else:
         parsed = arguments
-    if isinstance(parsed, Mapping) and "ops" in parsed:
+    if isinstance(parsed, dict) and "ops" in parsed:
         parsed = _op_comments(parsed, comments)
     try:
         return json.dumps(parsed, ensure_ascii=False)
@@ -236,55 +254,69 @@ def _documents_named(arguments: Any) -> frozenset[str]:
     return frozenset(found)
 
 
+#: An envelope's fields a :class:`HostResult` reads, as :class:`~.results.Result` names them.
+_ENVELOPE_FIELDS = ("doc", "version", "summary", "changed", "created", "removed", "renamed", "warnings",
+                    "checks", "data", "next_cursor", "refs", "datasets", "total")
+
+
 @dataclasses.dataclass
 class HostResult(Result):
     """A Rust call's reply as a :class:`~.results.Result`: :meth:`to_json` is the envelope
     the host wrote, key for key (``try_call`` included), so :meth:`~.results.Result.to_text`
     and the adapters send exactly it; what only the application reads is the reply's
-    application part, and :attr:`record` the host's record of the call."""
+    application part, and :attr:`record` the host's record of the call (its fields as
+    ``HostSession.call`` gives them)."""
 
     envelope: dict[str, Any] = dataclasses.field(default_factory=dict)
-    record: dict[str, Any] | None = dataclasses.field(default=None, repr=False)
+    record: tuple | None = dataclasses.field(default=None, repr=False)
 
     @classmethod
-    def of(cls, text: str, files: Sequence[tuple[str, str, bytes]], app: Mapping[str, Any]) -> "HostResult":
+    def of(cls, text: str, files: Sequence[tuple[str, str, bytes]], app: tuple) -> "HostResult":
+        touched, by_op, changed_parts, timing, memory, budget, record = app
         envelope = json.loads(text)
-        fields: dict[str, Any] = {key: envelope[key] for key in (
-            "doc", "version", "summary", "changed", "created", "removed", "renamed", "warnings",
-            "checks", "data", "next_cursor", "refs", "datasets", "total") if key in envelope}
+        fields: dict[str, Any] = {key: envelope[key] for key in _ENVELOPE_FIELDS if key in envelope}
         error = envelope.get("error")
         if error is not None:
             fields["error"] = ToolError(error["code"], error["message"], field=error.get("field"),
                                         valid_options=error.get("valid_options"),
                                         details=error.get("details"), try_call=error.get("try_call"))
             fields["summary"] = error["message"]
-        described = {image.get("label"): image for image in envelope.get("images") or ()}
-        images = []
-        for name, format, data in files:
-            image = described.get(name)
-            if format == "png" and image is not None:
-                images.append(Image(bytes(data), image["width"], image["height"], label=name))
-        timing = app.get("timing")
-        return cls(envelope=envelope, record=app.get("record"), ok=bool(envelope["ok"]), images=images, tool=app["record"]["tool"],
-                   touched=list(app.get("touched") or ()),
-                   touched_by_op={int(op): list(t) for op, t in (app.get("touched_by_op") or {}).items()},
-                   changed_parts=list(app.get("changed_parts") or ()),
-                   duration=float(timing["total"]) if timing else 0.0,
-                   timing=dict(timing) if timing else None,
-                   budget=app.get("budget"), memory=app.get("memory"), **fields)
+        if files:
+            described = {image.get("label"): image for image in envelope.get("images") or ()}
+            images = []
+            for name, format, data in files:
+                image = described.get(name)
+                if format == "png" and image is not None:
+                    images.append(Image(bytes(data), image["width"], image["height"], label=name))
+            fields["images"] = images
+        if touched is not None:
+            fields["touched"] = json.loads(touched)
+        if by_op is not None:
+            fields["touched_by_op"] = {int(op): list(t) for op, t in json.loads(by_op).items()}
+        if changed_parts is not None:
+            fields["changed_parts"] = json.loads(changed_parts)
+        if timing is not None:
+            total, lock_wait, work, held, cpu = timing
+            fields["duration"] = total
+            fields["timing"] = {"total": total, "lock_wait": lock_wait, "work": work, "cpu": cpu, "held": held}
+        if memory is not None:
+            fields["memory"] = json.loads(memory)
+        return cls(envelope=envelope, record=record, ok=envelope["ok"] is True, tool=record[0], budget=budget,
+                   **fields)
 
     def to_json(self) -> dict[str, Any]:
         return json.loads(json.dumps(self.envelope))
 
 
-#: How a refused open reads in Python: the host's reason as the Python host's exception.
+#: How a refused open reads in Python: the host's reason (:meth:`maker.refused`) as the Python
+#: host's exception.
 _REFUSALS = {"argument": ArgumentError, "limit": LimitError, "unreadable": ArgumentError,
              "state": StateRefused}
 
 
 class HostedSession(Session):
     """A :class:`~.session.Session` whose documents, blobs, outputs and call log the Rust
-    host's session (:attr:`rust`, an ``ooxml_core.HostSession``) holds: today's signatures,
+    host's session (:attr:`rust`, the core's ``HostSession``) holds: today's signatures,
     its work done in Rust."""
 
     def __init__(self, hosting: Hosting, formats: Iterable[Any], **given: Any) -> None:
@@ -328,18 +360,17 @@ class HostedSession(Session):
     def open(self, data: bytes, name: str, *, kind: str | None = None, source: str = "app",
              doc_id: str | None = None, state: Any = None) -> str:
         """:meth:`Session.open`, the document held by the host."""
-        import ooxml_core  # type: ignore[import-untyped]
-
         data = _require_bytes(data, "open")
         if isinstance(state, (str, bytes, dict, list, tuple)) and not state:
             state = None
         try:
             doc = self.rust.open(data, name=name, kind=kind, source=source, doc_id=doc_id, state=state)
-        except ooxml_core.OpenRefused as refused:
-            message, why = refused.args
+        except Exception as exc:  # noqa: BLE001 -- the host's refusal, read by its maker
+            refused = self.hosting.maker.refused(exc)
+            if refused is None:
+                raise
+            why, message = refused
             raise _REFUSALS.get(why, ArgumentError)(message) from None
-        except ooxml_core.StateRefused as refused:
-            raise StateRefused(str(refused)) from None
         self.hosting.maker.opened(self.rust, doc)
         return doc
 
@@ -356,7 +387,7 @@ class HostedSession(Session):
         return doc_id
 
     def kind_of(self, doc_id: str) -> str:
-        """The kind of the open document ``doc_id`` (``docx``)."""
+        """The kind of the open document ``doc_id``, as its format names it."""
         return self.rust.document(self._named(doc_id))[0]
 
     def entry(self, doc_id: str) -> Any:
@@ -450,9 +481,10 @@ class HostedSession(Session):
     def kept(self, result: Result, comments: Sequence[Mapping[str, Any]]) -> None:
         """What a call answered kept here: the files its tools saved, as outputs; its record,
         in the log (logged as the Python host logs it)."""
-        for name, format, doc, data, validate, state in self.rust.take_outputs():
-            self.add_output(Output(name, format, bytes(data), doc=doc,
-                                   validate=json.loads(validate) if validate else None, state=state))
+        if result.tool == "save_document":     # (the one tool that saves files for the application)
+            for name, format, doc, data, validate, state in self.rust.take_outputs():
+                self.add_output(Output(name, format, bytes(data), doc=doc,
+                                       validate=json.loads(validate) if validate else None, state=state))
         made = _record_of(result, comments)
         if made is None:
             return
@@ -468,11 +500,11 @@ def _record_of(result: Result, comments: Sequence[Mapping[str, Any]]) -> CallRec
     record = getattr(result, "record", None)
     if record is None:
         return None
-    return CallRecord(tool=record["tool"], docs=list(record["docs"]), digest=record["digest"],
-                      shape=record["shape"], ok=record["ok"], code=record["code"], summary=record["summary"],
-                      duration=float(record["duration"]), version=record["version"],
-                      arguments=record.get("arguments"), roles=record.get("roles"),
-                      context=record.get("context"),
+    tool, docs, digest, shape, ok, code, summary, duration, version, arguments, roles, context = record
+    return CallRecord(tool=tool, docs=list(docs), digest=digest, shape=json.loads(shape), ok=ok, code=code,
+                      summary=summary, duration=duration, version=version,
+                      arguments=json.loads(arguments) if arguments is not None else None, roles=roles,
+                      context=json.loads(context) if context is not None else None,
                       comments=[dict(c) for c in comments] or None)
 
 

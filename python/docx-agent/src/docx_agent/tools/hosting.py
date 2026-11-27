@@ -65,6 +65,18 @@ class WordHosting:
                 "from it use new_document with its blob; saving as docx writes a document either way"),
                 stacklevel=4)
 
+    @staticmethod
+    def refused(exc: BaseException) -> "tuple[str, str] | None":
+        """An open the host refused, read: ``(why, message)``; ``None`` for anything else."""
+        import ooxml_core
+
+        if isinstance(exc, ooxml_core.OpenRefused):
+            message, why = exc.args
+            return why, message
+        if isinstance(exc, ooxml_core.StateRefused):
+            return "state", str(exc)
+        return None
+
     def catalogue(self) -> tuple[str, ...]:
         """The names of the host's tools (Word's and the session's own)."""
         with WordHosting._catalogue_lock:

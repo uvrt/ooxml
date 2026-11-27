@@ -90,8 +90,8 @@ def _made() -> dict[str, bytes]:
             if not result.ok:
                 raise RuntimeError(f"{tool}: {result.to_json()}")
     saved = {output.name: output.data for output in session.take_outputs()}
-    return {"template": session.entry("d1").snapshot(), "template.docx": saved["probe.docx"],
-            "template.dotx": saved["probe.dotx"], "document": session.entry("d2").snapshot()}
+    return {"template": session.save("d1").data, "template.docx": saved["probe.docx"],
+            "template.dotx": saved["probe.dotx"], "document": session.save("d2").data}
 
 
 def _docm(data: bytes) -> bytes:
