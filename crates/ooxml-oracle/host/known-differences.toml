@@ -870,3 +870,15 @@ case = "test_addresses::test_word_read_takes_a_cell_a_row_and_open_spans#1"
 tool = "word_read"
 fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.field", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
 cause = "Lane ph3-st2 (stamp-on-open ST2, decision 4): a row by its place (`t:<id>/r1`) is refused (invalid_arguments) with the durable forms and the way on (read the ids first, word_inspect or word_read); the row has its `tr:` id from the first read"
+
+# stamp-on-open-2026-11-26 (lane ph3-st2, main's Q1 ruling): an id given at open and never written stays fresh for the
+# whole transaction that first writes its part. word_edit_table's set_cells with grow placed rows, then wrote each cell
+# as an edit that stamped the document first: after the first cell, the others renewed their textIds. Now every cell's
+# paragraph keeps the textId given at open; only the textIds in document.xml differ.
+[[difference]]
+decision = "stamp-on-open-2026-11-26"
+stream = "frozen/values"
+case = "*test_rows_r58.py::test_rows_grow_and_sync_add_look_like_the_last_row"
+tool = "word_edit_table"
+fields = ["after.word/document.xml"]
+cause = "Lane ph3-st2 (stamp-on-open ST2, Q1): an id never written stays fresh for the whole transaction that first writes its part, so cells written after rows were placed keep the textIds given at open instead of renewing them"
