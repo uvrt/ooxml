@@ -10,8 +10,9 @@ use crate::review::Editing;
 use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, ToolArgs, ToolError, ToolResult, TryCall};
 use ooxml_word_edit::{DeleteNote, EditNote, InsertNote, MoveNote, NoteEdited, WordDoc};
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::ids::W;
+use ooxml_word_model::view::View;
 use serde_json::{json, Value};
 
 /// What `word_notes` does.
@@ -241,7 +242,7 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
                 .ids
                 .paragraphs_within(&path)
                 .iter()
-                .map(|p| paragraph_text(&p.element, View::Current))
+                .map(|p| paragraph_text(&p.element, View::Final))
                 .collect();
             let text = text.join("\n").replacen('\u{fffc}', "", 1);
             let text = text.trim_matches(|c: char| c.is_whitespace());

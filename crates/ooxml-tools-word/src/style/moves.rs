@@ -6,7 +6,8 @@
 
 use ooxml_base::pyfmt::repr_str;
 use ooxml_word_model::docx::outline::Heading;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
+use ooxml_word_model::view::View;
 
 /// The lines, at most `limit` and one saying how many more.
 #[must_use]
@@ -155,7 +156,7 @@ fn label(heading: Option<&Heading>) -> String {
     let Some(heading) = heading else {
         return "no heading (the document's start)".to_owned();
     };
-    let text = paragraph_text(&heading.element, View::Current)
+    let text = paragraph_text(&heading.element, View::Final)
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");

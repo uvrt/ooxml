@@ -12,6 +12,7 @@
 use super::revisions::{records, Record, KINDS};
 use super::{Docx, StoryPart};
 use crate::ids::W;
+use crate::view::Revision;
 use ooxml_xml::{Element, Node};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -175,17 +176,15 @@ impl Union {
     }
 }
 
-/// `ins` or `del` for a revision container (a move's end too), else none.
-fn container(e: &Element) -> Option<&'static str> {
-    match e.name().local() {
-        "ins" | "moveTo" if e.name().namespace() == Some(W) => Some("ins"),
-        "del" | "moveFrom" if e.name().namespace() == Some(W) => Some("del"),
-        _ => None,
-    }
+/// Whether a revision adds what it marks (a move's destination too); none for an element
+/// that is no insertion, deletion or move.
+fn adds(e: &Element) -> Option<bool> {
+    Revision::of(e).map(Revision::adds)
 }
 
-fn is_move(e: &Element) -> bool {
-    e.name().is(Some(W), "moveFrom") || e.name().is(Some(W), "moveTo")
+/// Whether `e` is a move's end.
+fn moves(e: &Element) -> bool {
+    Revision::of(e).is_some_and(Revision::moves)
 }
 
 /// Every part's records grouped into logical changes, in story and document order: the ids
@@ -290,10 +289,10 @@ impl<'r> Grouping<'r> {
         }
         let (ea, eb) = (self.arena.element(a), self.arena.element(b));
         if same_sign {
-            if container(ea) != container(eb) {
+            if adds(ea) != adds(eb) {
                 return;
             }
-        } else if is_move(ea) != is_move(eb) || self.names.get(&a) != self.names.get(&b) {
+        } else if moves(ea) != moves(eb) || self.names.get(&a) != self.names.get(&b) {
             return;
         }
         self.union.union(ka, kb);
@@ -356,7 +355,7 @@ fn revision_kind(arena: &Arena, a: usize) -> String {
     let element = arena.element(a);
     let local = element.name().local();
     let base = KINDS.iter().find(|(l, _)| *l == local).map_or("", |(_, k)| *k);
-    if !["ins", "del", "moveFrom", "moveTo"].contains(&local) {
+    if Revision::of(element).is_none() {
         return base.to_owned();
     }
     match arena.parent(a) {

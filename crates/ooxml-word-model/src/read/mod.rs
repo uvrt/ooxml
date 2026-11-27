@@ -19,7 +19,6 @@ pub mod vml;
 pub use blocks::{body_story, BodyElement};
 pub use fields::Fields;
 pub use sections::{section_props, sections};
-pub(crate) use tables::cell_ends;
 pub use tables::{cell_conditions, leading_header_rows};
 
 use crate::ids::BlockKey;

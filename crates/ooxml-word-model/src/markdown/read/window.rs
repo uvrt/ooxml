@@ -99,7 +99,7 @@ impl Reader<'_> {
     /// footer); `None` for a notes or comments part, read whole. Kept with the version
     /// (the paragraphs joined into tables put back each time).
     pub fn groups_of(&mut self, part: &StoryPart) -> Option<Groups> {
-        let key = (part.part.clone(), self.view_name);
+        let key = (part.part.clone(), self.view);
         if let Some((kept, true)) = self.docx.memo().window(&key) {
             for (table, joined) in &kept.into {
                 self.into.insert((part.part.clone(), table.clone()), joined.clone());
@@ -180,7 +180,7 @@ impl Reader<'_> {
     /// items only and those after not read.
     pub fn read_window(&mut self, groups: Groups, wanted: RangeInclusive<usize>) -> Vec<Record> {
         let (start, end) = (*wanted.start(), *wanted.end());
-        let key = (groups.part.clone(), self.view_name);
+        let key = (groups.part.clone(), self.view);
         let numbered = self.numbers_any(&groups.part, groups.groups.get(start..=end).unwrap_or_default());
         let kept = self.docx.memo().window(&key).filter(|(_, own)| *own).map(|(k, _)| k);
         let mut marks: Vec<Mark> = kept.as_ref().map(|k| k.marks.clone()).unwrap_or_default();

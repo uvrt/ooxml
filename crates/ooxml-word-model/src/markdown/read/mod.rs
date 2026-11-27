@@ -30,13 +30,13 @@ use crate::docx::controls::control_kind;
 use crate::docx::formatting::Cell;
 use crate::docx::numbering::{membership, Membership};
 use crate::docx::sections::section_id;
-use crate::docx::text::{paragraph_text, View};
+use crate::docx::text::paragraph_text;
 use crate::docx::{child_val, find_path, style_name, Docx, StoryPart};
 use crate::ids::W;
 use crate::labels::Counters;
 use crate::markdown::model::Inline;
 use crate::markdown::stylemap::{Construct, StyleMap};
-use crate::markdown::ViewName;
+use crate::view::{join_plan, Joined, Joining, Revision, View};
 use ooxml_xml::{Element, Node};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -55,8 +55,6 @@ pub struct Reader<'a> {
     pub docx: &'a Docx,
     /// The view.
     pub view: View,
-    /// The view's name.
-    pub view_name: ViewName,
     map: StyleMap,
     /// What every reading of this version starts from (read once per version).
     shared: Arc<Shared>,
@@ -75,16 +73,10 @@ pub struct Reader<'a> {
 impl<'a> Reader<'a> {
     /// A reading of `docx` in `view`.
     #[must_use]
-    pub fn new(docx: &'a Docx, view_name: ViewName) -> Reader<'a> {
-        let view = match view_name {
-            ViewName::Final => View::Current,
-            ViewName::Original => View::Original,
-            ViewName::Markup => View::Markup,
-        };
+    pub fn new(docx: &'a Docx, view: View) -> Reader<'a> {
         Reader {
             docx,
             view,
-            view_name,
             map: StyleMap::default(),
             shared: Shared::of(docx),
             counters: HashMap::new(),
@@ -262,19 +254,6 @@ impl<'a> Reader<'a> {
         out
     }
 
-    /// The first child of the mark (`w:pPr/w:rPr`) the view removes, where it removes it.
-    fn mark_removed(&self, paragraph: &Element) -> bool {
-        let gone: &[&str] = match self.view {
-            View::Current => &["del", "moveFrom"],
-            View::Original => &["ins", "moveTo"],
-            View::Markup => &[],
-        };
-        find_path(paragraph, &["pPr", "rPr"]).is_some_and(|mark| {
-            mark.child_elements()
-                .any(|c| gone.iter().any(|g| c.name().is(Some(W), g)))
-        })
-    }
-
     fn shows_text(&self, p: &Placed) -> bool {
         !paragraph_text(&p.element, self.view).is_empty() || find_path(&p.element, &["pPr", "sectPr"]).is_some()
     }
@@ -290,75 +269,67 @@ impl<'a> Reader<'a> {
             .collect()
     }
 
-    /// Paragraphs that are one in the view grouped (docx2svg's join, both ways). The
-    /// paragraphs whose marks the view deletes join the next paragraph, whatever block holds
-    /// it: a table's first cell (the table records them, [`TableRecord::joins`]) or a
-    /// content control's first paragraph (its start records them, [`Marker::joins`]).
+    /// Paragraphs that are one in the view grouped, as the view joins them
+    /// ([`crate::view::join_plan`]): a table records the paragraphs joined into its first
+    /// cell ([`TableRecord::joins`]), a content control's start those joining its first
+    /// paragraph ([`Marker::joins`]).
     fn groups(&mut self, part: &str, items: Vec<Item>) -> Vec<Item2> {
+        let blocks: Vec<Joining> = items
+            .iter()
+            .map(|item| match item {
+                Item::P(p) => Joining::Paragraph {
+                    removed: self.view.removes_mark(&p.element),
+                    section: find_path(&p.element, &["pPr", "sectPr"]).is_some(),
+                    shown: self.view == View::Original && self.shows_text(p),
+                },
+                Item::Tbl(_) => Joining::Table,
+                Item::Begin(_) => Joining::Open,
+                Item::End(_) => Joining::Close,
+            })
+            .collect();
+        let mut items: Vec<Option<Item>> = items.into_iter().map(Some).collect();
+        let paragraphs = |items: &mut Vec<Option<Item>>, ks: &[usize]| -> Vec<Placed> {
+            ks.iter()
+                .filter_map(|k| match items.get_mut(*k).and_then(Option::take) {
+                    Some(Item::P(p)) => Some(p),
+                    _ => None,
+                })
+                .collect()
+        };
         let mut groups = Vec::new();
-        let mut pending: Vec<Placed> = Vec::new();
-        // Paragraph runs ended so far, and for each control open its start's group with the
-        // count when it took the pending paragraphs as joins: a control that ends before any
-        // run ends holds no paragraph of them (they join what comes after it).
-        let mut ended = 0usize;
-        let mut open: Vec<Option<(usize, usize)>> = Vec::new();
-        for item in items {
-            match item {
-                Item::P(p) => {
-                    let removed = self.mark_removed(&p.element);
-                    pending.push(p);
-                    if !removed {
-                        groups.push(Item2::P(std::mem::take(&mut pending)));
-                        ended += 1;
+        for joined in join_plan(self.view, &blocks) {
+            match joined {
+                Joined::Paragraph(ks) => groups.push(Item2::P(paragraphs(&mut items, &ks))),
+                Joined::Table { at, joins } => {
+                    let joins = paragraphs(&mut items, &joins);
+                    if let Some(Some(Item::Tbl(t))) = items.get_mut(at).map(Option::take) {
+                        if !joins.is_empty() {
+                            self.into.insert((part.to_owned(), t.path.clone()), joins);
+                        }
+                        groups.push(Item2::Tbl(t));
                     }
                 }
-                Item::Begin(mut m) => {
-                    let joined = (!pending.is_empty()).then_some((groups.len(), ended));
-                    if joined.is_some() {
-                        m.joins = self.ids_of(part, &pending);
+                Joined::Open { at, joins } => {
+                    // the paragraphs joining it are still to come: their group follows
+                    let pending: Vec<Placed> = joins
+                        .iter()
+                        .filter_map(|k| match items.get(*k) {
+                            Some(Some(Item::P(p))) => Some(p.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    let ids = self.ids_of(part, &pending);
+                    if let Some(Some(Item::Begin(mut m))) = items.get_mut(at).map(Option::take) {
+                        m.joins = ids;
+                        groups.push(Item2::Marker(m));
                     }
-                    open.push(joined);
-                    groups.push(Item2::Marker(m));
                 }
-                Item::End(m) => {
-                    if let Some(Some((k, at))) = open.pop() {
-                        if at == ended {
-                            if let Some(Item2::Marker(begin)) = groups.get_mut(k) {
-                                begin.joins.clear();
-                            }
-                        }
+                Joined::Close(at) => {
+                    if let Some(Some(Item::End(m))) = items.get_mut(at).map(Option::take) {
+                        groups.push(Item2::Marker(m));
                     }
-                    groups.push(Item2::Marker(m));
-                }
-                Item::Tbl(t) => {
-                    ended += usize::from(!pending.is_empty());
-                    if !pending.is_empty() && self.view == View::Current {
-                        let cut = pending
-                            .iter()
-                            .rposition(|p| find_path(&p.element, &["pPr", "sectPr"]).is_some());
-                        let rest = match cut {
-                            Some(cut) => {
-                                let rest = pending.split_off(cut + 1);
-                                groups.push(Item2::P(std::mem::take(&mut pending)));
-                                rest
-                            }
-                            None => std::mem::take(&mut pending),
-                        };
-                        if !rest.is_empty() {
-                            self.into.insert((part.to_owned(), t.path.clone()), rest);
-                        }
-                    } else if !pending.is_empty() {
-                        if pending.iter().any(|p| self.shows_text(p)) {
-                            groups.push(Item2::P(std::mem::take(&mut pending)));
-                        }
-                        pending.clear();
-                    }
-                    groups.push(Item2::Tbl(t));
                 }
             }
-        }
-        if !pending.is_empty() && (self.view != View::Original || pending.iter().any(|p| self.shows_text(p))) {
-            groups.push(Item2::P(pending));
         }
         groups
     }
@@ -474,19 +445,17 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// The paragraph whose properties the view shows: in the original view, one with the
-    /// properties a `w:pPrChange` recorded (its mark and section break kept); otherwise the
-    /// paragraph itself.
+    /// The paragraph whose properties the view shows ([`View::paragraph_properties`]): one
+    /// with the properties a change recorded, its mark and section break kept; otherwise
+    /// the paragraph itself.
     fn as_viewed(&self, paragraph: &Arc<Element>) -> Arc<Element> {
-        if self.view != View::Original {
-            return Arc::clone(paragraph);
-        }
         let Some(current) = paragraph.find(Some(W), "pPr") else {
             return Arc::clone(paragraph);
         };
-        let Some(old) = current.find(Some(W), "pPrChange").and_then(|c| c.find(Some(W), "pPr")) else {
+        let (old, changed) = self.view.paragraph_properties(current);
+        if !changed {
             return Arc::clone(paragraph);
-        };
+        }
         let mut children = old.children().to_vec();
         for keep in ["rPr", "sectPr"] {
             if let Some(node) = current.find(Some(W), keep) {
@@ -528,10 +497,7 @@ impl<'a> Reader<'a> {
         if let Some((j, mark)) = child_at(&ppr, "rPr") {
             for (m, node) in mark.children().iter().enumerate() {
                 let Node::Element(child) = node else { continue };
-                if ["ins", "moveTo", "del", "moveFrom"]
-                    .iter()
-                    .any(|t| child.name().is(Some(W), t))
-                {
+                if Revision::of(child).is_some() {
                     let id = self.revision_id(&record.part, &[&base[..], &[j, index(m)]].concat());
                     record.detail.revisions.push(id);
                 }
@@ -550,11 +516,10 @@ impl<'a> Reader<'a> {
             if child.name().is(Some(W), "rPr") && self.view == View::Markup {
                 for (m, mark) in child.children().iter().enumerate() {
                     let Node::Element(mark) = mark else { continue };
-                    let inserted = mark.name().is(Some(W), "ins") || mark.name().is(Some(W), "moveTo");
-                    let deleted = mark.name().is(Some(W), "del") || mark.name().is(Some(W), "moveFrom");
-                    if !(inserted || deleted) {
+                    let Some(revision) = Revision::of(mark) else {
                         continue;
-                    }
+                    };
+                    let inserted = revision.adds();
                     let id = self
                         .revision_id(&record.part, &[&path[..], &[index(m)]].concat())
                         .unwrap_or_default();

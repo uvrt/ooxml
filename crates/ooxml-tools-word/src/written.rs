@@ -21,9 +21,10 @@ use ooxml_tools::{Done, Outcome, ToolResult};
 use ooxml_word_edit::{EditError, KeepText, TextKeep, WordDoc};
 use ooxml_word_model::address::resolve::{direct, in_table, scope_paragraphs};
 use ooxml_word_model::address::Address;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::Entry;
+use ooxml_word_model::view::View;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -406,7 +407,7 @@ fn text_of(after: &After, id: &str) -> Option<String> {
         return None;
     };
     let paragraph = part.ids.paragraphs().get(k)?;
-    Some(paragraph_text(&paragraph.element, View::Current))
+    Some(paragraph_text(&paragraph.element, View::Final))
 }
 
 /// Each place `own` starts in `text` (overlapping ones too, as `str.find` from the next

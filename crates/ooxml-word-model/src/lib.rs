@@ -51,6 +51,7 @@ pub mod styles;
 pub mod theme;
 pub mod typography;
 pub mod value;
+pub mod view;
 #[rustfmt::skip]
 pub mod w;
 pub mod xmlread;

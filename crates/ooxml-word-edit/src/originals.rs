@@ -16,9 +16,10 @@
 use crate::facts::py_space;
 use crate::WordDoc;
 use ooxml_word_model::docx::revisions::records;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{Entry, W};
+use ooxml_word_model::view::View;
 use ooxml_xml::{Children, Element, Node};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -103,7 +104,7 @@ impl<'a> Originals<'a> {
         let mut out = Vec::new();
         for paragraph in paragraphs(node) {
             let kept = self.without_inserted(part, &paragraph);
-            out.push(paragraph_text(&kept, View::Current));
+            out.push(paragraph_text(&kept, View::Final));
         }
         collapse(&out.join(" "))
     }
@@ -165,7 +166,7 @@ fn paragraphs(node: &Arc<Element>) -> Vec<Arc<Element>> {
 pub fn shown(node: &Arc<Element>) -> String {
     let text: String = paragraphs(node)
         .iter()
-        .map(|p| paragraph_text(p, View::Current))
+        .map(|p| paragraph_text(p, View::Final))
         .collect();
     text.trim_matches(py_space).to_owned()
 }

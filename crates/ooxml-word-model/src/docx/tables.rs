@@ -8,9 +8,11 @@
 //!
 //! Must not: change a table or resolve its formatting.
 
-use crate::docx::text::{paragraph_text, View};
-use crate::docx::{at_path, find_path, StoryPart};
+use crate::docx::text::paragraph_text;
+
+use crate::docx::{at_path, StoryPart};
 use crate::ids::{TableId, W};
+use crate::view::View;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,7 +30,7 @@ pub use grid::{
     Coverage, Elements, Grid, GridCell, GridRow, GridSource, RowSpec, GRID_VALUE_MAX, TABLE_COLUMNS_MAX,
 };
 pub use labels::{collapse_space, no_cell_text};
-pub use merge_heads::{cell_merge, merge_heads, VMerge};
+pub use merge_heads::{merge_heads, VMerge};
 pub use places::{GridPlaces, PlaceRun, Spot};
 
 /// A cell element with its place in its part.
@@ -107,10 +109,7 @@ impl<'a> TableGrid<'a> {
     /// How many rows accepting the tracked changes keeps: every row not deleted as one.
     #[must_use]
     pub fn accepted_rows(&self) -> usize {
-        self.rows
-            .iter()
-            .filter(|r| find_path(r, &["trPr", "del"]).is_none())
-            .count()
+        self.rows.iter().filter(|r| !View::Final.removes_row(r)).count()
     }
 
     /// The number of rows.
@@ -144,7 +143,7 @@ impl<'a> TableGrid<'a> {
             .ids
             .paragraphs_within(path)
             .iter()
-            .map(|p| paragraph_text(&p.element, View::Current))
+            .map(|p| paragraph_text(&p.element, View::Final))
             .collect();
         Some(paragraphs.join("\n"))
     }
@@ -219,79 +218,22 @@ pub fn cells_lost_on_accept(part: &StoryPart, rows: &[crate::ids::Path]) -> Vec<
         let Some(row) = at_path(part.root(), path) else {
             continue;
         };
-        if find_path(row, &["trPr", "del"]).is_some() {
+        if View::Final.removes_row(row) {
             continue;
         }
         let shown: Vec<PlacedCell> = cells_at(row, path)
             .into_iter()
-            .filter(|cell| !cell_deleted(&cell.element))
+            .filter(|cell| !View::Final.removes_cell(&cell.element))
             .collect();
         let cells: Vec<&Element> = shown.iter().map(|cell| &*cell.element).collect();
-        let (groups, gone) = crate::read::cell_ends(&cells);
-        let taken: std::collections::HashSet<usize> = groups.iter().flat_map(|g| g.iter().skip(1).copied()).collect();
-        for (n, cell) in shown.into_iter().enumerate() {
-            if gone.contains(&n) && !taken.contains(&n) {
-                out.push((r, cell));
-            }
-        }
+        let lost: Vec<usize> = crate::view::cell_ends(&cells).lost().collect();
+        out.extend(
+            shown
+                .into_iter()
+                .enumerate()
+                .filter(|(n, _)| lost.contains(n))
+                .map(|(_, cell)| (r, cell)),
+        );
     }
     out
-}
-
-fn cell_deleted(cell: &Element) -> bool {
-    find_path(cell, &["tcPr", "cellDel"]).is_some()
-}
-
-/// Run content a reader sees (docx-agent's `review._SHOWN`).
-const SHOWN: [&str; 10] = [
-    "t",
-    "tab",
-    "br",
-    "cr",
-    "drawing",
-    "pict",
-    "object",
-    "sym",
-    "noBreakHyphen",
-    "ptab",
-];
-
-/// Whether a deleted cell keeps anything (docx-agent's `_content_kept`): content outside
-/// deletions and moves away, or a paragraph mark of its own not deleted.
-pub(crate) fn content_kept(cell: &Element) -> bool {
-    fn shown(node: &Element, deleted: bool) -> bool {
-        node.child_elements().any(|e| {
-            let gone = deleted || e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom");
-            let visible = e.name().namespace() == Some(W)
-                && SHOWN.contains(&e.name().local())
-                && !(e.name().local() == "t" && crate::docx::text::leading_text(e).is_empty());
-            (visible && !gone) || shown(e, gone)
-        })
-    }
-    fn marks(node: &Element, own: bool) -> bool {
-        node.child_elements().any(|e| {
-            if e.name().is(Some(W), "tc") {
-                return false;
-            }
-            if own && e.name().is(Some(W), "p") {
-                let mark = find_path(e, &["pPr", "rPr"]);
-                let record = mark.and_then(|m| {
-                    m.child_elements().find(|c| {
-                        ["ins", "del", "moveFrom", "moveTo"]
-                            .iter()
-                            .any(|t| c.name().is(Some(W), t))
-                    })
-                });
-                let deleted = mark.is_some_and(|m| {
-                    m.child_elements()
-                        .any(|c| c.name().is(Some(W), "del") || c.name().is(Some(W), "moveFrom"))
-                });
-                if record.is_none() || !deleted {
-                    return true;
-                }
-            }
-            marks(e, own)
-        })
-    }
-    shown(cell, false) || marks(cell, true)
 }

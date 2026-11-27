@@ -5,9 +5,10 @@
 //!
 //! Must not: group anything outside one part.
 
-use super::{container, is_mark, Grouping};
+use super::{adds, is_mark, moves, Grouping};
 use crate::docx::tables::{CellSpec, RowSpec, VMerge};
 use crate::ids::W;
+use crate::view::{Revision, View};
 use std::collections::{BTreeMap, HashMap};
 
 /// What a paragraph's walk passes through to its runs.
@@ -89,7 +90,7 @@ impl Grouping<'_> {
                 continue;
             }
             let local = e.name().local();
-            if container(e).is_some() {
+            if adds(e).is_some() {
                 out.push((true, child));
             } else if local == "r" {
                 let content = self
@@ -151,9 +152,7 @@ impl Grouping<'_> {
             }
             if let Some(&change) = changes.get(&p) {
                 for candidate in [mark, first_rec, last_rec].into_iter().flatten() {
-                    if self.who(candidate) == self.who(change)
-                        && container(self.arena.element(candidate)) == Some("ins")
-                    {
+                    if self.who(candidate) == self.who(change) && adds(self.arena.element(candidate)) == Some(true) {
                         self.join(candidate, change, false);
                         break;
                     }
@@ -197,10 +196,10 @@ impl Grouping<'_> {
         if e.name().is(Some(W), "cellDel") {
             return Some("del");
         }
-        if e.name().is(Some(W), "moveFrom") || e.name().is(Some(W), "moveTo") {
+        if moves(e) {
             return None;
         }
-        container(e)
+        adds(e).map(|adds| if adds { "ins" } else { "del" })
     }
 
     fn property(&self, k: usize) -> bool {
@@ -267,7 +266,7 @@ impl Grouping<'_> {
     fn deleted_above(&self, k: usize) -> bool {
         let mut at = self.arena.parent(k);
         while let Some(p) = at {
-            if self.arena.is(p, "del") || self.arena.is(p, "moveFrom") {
+            if Revision::of(self.arena.element(p)).is_some_and(|r| !View::Final.keeps(r)) {
                 return true;
             }
             at = self.arena.parent(p);

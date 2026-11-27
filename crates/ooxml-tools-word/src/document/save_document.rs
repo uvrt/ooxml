@@ -22,8 +22,9 @@ use ooxml_word_edit::{clean, serialise, AppStatistics, FileKind, WordDoc};
 use ooxml_word_model::docx::statistics::text_counts;
 use ooxml_word_model::markdown::read::project;
 use ooxml_word_model::markdown::render::render;
-use ooxml_word_model::markdown::{Stories, ViewName};
+use ooxml_word_model::markdown::Stories;
 use ooxml_word_model::parts::main_part;
+use ooxml_word_model::view::View;
 use serde_json::{Map, Value};
 
 /// The formats `save_document` names (every kind's).
@@ -225,7 +226,7 @@ fn refuse_format(args: &SaveDocument) -> Result<(), ToolError> {
 /// The document's Markdown: every story, the final view, no ids.
 fn markdown(args: &SaveDocument, version: &Version<'_>) -> Result<Done<Value>, ToolError> {
     let docx = version.docx()?;
-    let blocks = project(&docx, None, ViewName::Final, Stories::All, false)
+    let blocks = project(&docx, None, View::Final, Stories::All, false)
         .map_err(|e| ToolError::internal(e.to_string(), "word:markdown"))?;
     let mut done = Done::new(format!("Saved {} (Markdown) for the application", args.name));
     done.files.push(File {

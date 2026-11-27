@@ -32,9 +32,10 @@ use ooxml_word_model::address::syntax::parse_range;
 use ooxml_word_model::address::{in_table, paragraph, resolve, text_range, AddressError};
 use ooxml_word_model::docx::provenance::text_records;
 use ooxml_word_model::docx::tables::{cells_at, no_cell_text, own_rows};
-use ooxml_word_model::docx::text::{char_runs, View, OBJECT};
+use ooxml_word_model::docx::text::{char_runs, OBJECT};
 use ooxml_word_model::docx::{at_path, find_path, style_id, style_kind, style_name, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, W};
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -380,7 +381,7 @@ impl<'r> Reader<'r> {
     #[allow(clippy::type_complexity)]
     fn text_of(&self, target: &str, followed: &str) -> Result<(Para<'r>, Option<String>, usize, usize), Missed> {
         let no_range = |why: &str| Missed::Skip(format!("no range {target}: {why}"));
-        let length = |p: &Para<'_>| char_runs(&p.element, View::Current).len();
+        let length = |p: &Para<'_>| char_runs(&p.element, View::Final).len();
         match in_table(self.docx, followed) {
             Ok(Some(found)) => {
                 let Some(column) = found.column else {
@@ -470,7 +471,7 @@ impl<'r> Reader<'r> {
         label: Option<Value>,
         source: Option<&str>,
     ) -> ScaleValue {
-        let atoms = char_runs(&para.element, View::Current);
+        let atoms = char_runs(&para.element, View::Final);
         let (text, runs) = runs_over(&atoms, start, end);
         if py_strip(&text).is_empty() {
             return ScaleValue::skipped(target, given, format!("{target} holds no text"));
@@ -515,7 +516,7 @@ impl<'r> Reader<'r> {
         let mut read: Vec<(String, String, usize)> = Vec::new();
         let mut runs: Vec<(Arc<Element>, Box<[u32]>)> = Vec::new();
         for p in &paragraphs {
-            let atoms = char_runs(&p.element, View::Current);
+            let atoms = char_runs(&p.element, View::Final);
             let (text, own) = runs_over(&atoms, 0, None);
             read.push((p.id.clone(), text, atoms.len()));
             runs.extend(own.into_iter().map(|r| (Arc::clone(&p.element), r)));
@@ -796,7 +797,7 @@ fn cell_text(cell: &Cell<'_>) -> String {
         .ids
         .paragraphs_within(&cell.path)
         .iter()
-        .map(|p| ooxml_word_model::docx::text::paragraph_text(&p.element, View::Current))
+        .map(|p| ooxml_word_model::docx::text::paragraph_text(&p.element, View::Final))
         .collect::<Vec<_>>()
         .join("\n")
 }

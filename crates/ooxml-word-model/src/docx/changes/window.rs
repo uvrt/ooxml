@@ -144,7 +144,7 @@ impl<'r> Stretch<'r> {
             let reaches_out = group
                 .members
                 .iter()
-                .any(|k| !inside(*k) || held.get(*k).is_some_and(|r| super::is_move(&r.element)));
+                .any(|k| !inside(*k) || held.get(*k).is_some_and(|r| super::moves(&r.element)));
             if reaches_out && !whole {
                 return None;
             }
