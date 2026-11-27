@@ -168,6 +168,7 @@ Only downward dependencies are allowed.
 L6  ooxml-python (cdylib, PyO3: sessions, handles, JSON calls)        xtask (codegen, layers, data tables)
 L5  ooxml-session (sessions, documents, refs, datasets, blobs, outputs, scheduler, budgets)
 L4  ooxml-tools (contract: specs, strict-schema derive, validation, results, refusals, budgets, batch)
+    ooxml-tools-chart  (chart tools over a format's GraphicHost / GraphicWriter)
     ooxml-tools-word   ooxml-tools-slides   ooxml-tools-sheets   (tool handlers = commands)
 L3  ooxml-word  ooxml-word-layout   ooxml-slides  ooxml-slides-layout   ooxml-sheets
 L2  ooxml-drawingml  ooxml-chart  ooxml-metafile  ooxml-scene  ooxml-render (SVG writer)  ooxml-raster (PNG via resvg)

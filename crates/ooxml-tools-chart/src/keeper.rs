@@ -5,14 +5,14 @@
 //! shifted and named again for an edit that changes the data's shape, and at the end the
 //! workbook's bytes where it changed -- or the reason the edit changed the cache only.
 //!
-//! Must not: change the chart part, or decide which cells an edit moves (`chart_block`).
+//! Must not: change the chart part, or decide which cells an edit moves (`block`).
 
-use super::chart_workbook::workbook_part;
+use crate::workbook::workbook_part;
 use ooxml_base::pyfmt::repr_str;
+use ooxml_chart::edit::{GraphicError, PartWrite};
 use ooxml_chart::edit::{PointValue, SourceRef};
 use ooxml_opc::{Limits, Package};
 use ooxml_sheets::{parse_formula, Cell, SheetRange, SheetsError, Shift, WorkbookWriter, Write};
-use ooxml_word_edit::{EditError, PartWrite};
 use std::sync::Arc;
 
 /// What docx-agent calls the package in a reason (`edit/charts.py`'s `DOCUMENT`).
@@ -20,7 +20,7 @@ const DOCUMENT: &str = "document";
 
 /// The embedded workbook kept in step with the cache: opened when first written, or the
 /// reason the edit changed the cache only.
-pub(crate) struct Keeper<'p> {
+pub struct Keeper<'p> {
     package: &'p Package,
     chart_part: &'p str,
     opened: bool,
@@ -29,7 +29,8 @@ pub(crate) struct Keeper<'p> {
 }
 
 impl<'p> Keeper<'p> {
-    pub(crate) fn new(package: &'p Package, chart_part: &'p str) -> Keeper<'p> {
+    /// The workbook of the chart `chart_part` in `package`, not opened yet.
+    pub fn new(package: &'p Package, chart_part: &'p str) -> Keeper<'p> {
         Keeper {
             package,
             chart_part,
@@ -47,13 +48,13 @@ impl<'p> Keeper<'p> {
 
     /// Open the workbook the first time it is written (`_Editor.workbook`): a reason the
     /// chart has none replaces any noted before, as ooxml-edit sets it.
-    fn open(&mut self) -> Result<(), EditError> {
+    fn open(&mut self) -> Result<(), GraphicError> {
         if !self.opened {
             self.opened = true;
             let root = self
                 .package
                 .tree(self.chart_part)?
-                .ok_or_else(|| EditError::no_part(self.chart_part.to_owned()))?;
+                .ok_or_else(|| GraphicError::NoPart(self.chart_part.to_owned()))?;
             let found = workbook_part(self.package, self.chart_part, root.root(), DOCUMENT)
                 .map_err(|why| not_supported(why.0))?;
             match found {
@@ -62,7 +63,7 @@ impl<'p> Keeper<'p> {
                     let bytes = self
                         .package
                         .read(&part)?
-                        .ok_or_else(|| EditError::no_part(part.clone()))?;
+                        .ok_or_else(|| GraphicError::NoPart(part.clone()))?;
                     // ooxml-edit words a workbook it cannot open with the exception's text
                     let writer = WorkbookWriter::open(bytes, &Limits::default())
                         .map_err(|_| not_supported("an embedded workbook that cannot be read"))?;
@@ -80,7 +81,7 @@ impl<'p> Keeper<'p> {
 
     /// Whether the sheet `range` points into is there to write (`_Editor.sheet`, for a
     /// source with a formula): the workbook opened, the reason noted where it is not.
-    pub(crate) fn sheet(&mut self, range: &SheetRange) -> Result<bool, EditError> {
+    pub(crate) fn sheet(&mut self, range: &SheetRange) -> Result<bool, GraphicError> {
         self.open()?;
         let has_sheet = match self.workbook.as_mut() {
             Some((_, workbook)) => workbook.has_sheet(&range.sheet).map_err(sheets_error)?,
@@ -92,7 +93,7 @@ impl<'p> Keeper<'p> {
         Ok(has_sheet)
     }
 
-    fn writer(&mut self) -> Result<&mut WorkbookWriter, EditError> {
+    fn writer(&mut self) -> Result<&mut WorkbookWriter, GraphicError> {
         self.workbook
             .as_mut()
             .map(|(_, w)| w)
@@ -100,17 +101,17 @@ impl<'p> Keeper<'p> {
     }
 
     /// Whether `cell` of `sheet` holds no value (`is_empty`).
-    pub(crate) fn is_empty(&mut self, sheet: &str, cell: Cell) -> Result<bool, EditError> {
+    pub(crate) fn is_empty(&mut self, sheet: &str, cell: Cell) -> Result<bool, GraphicError> {
         self.writer()?.is_empty(sheet, cell).map_err(sheets_error)
     }
 
     /// Move a cell (`move`).
-    pub(crate) fn move_cell(&mut self, sheet: &str, from: Cell, to: Cell) -> Result<(), EditError> {
+    pub(crate) fn move_cell(&mut self, sheet: &str, from: Cell, to: Cell) -> Result<(), GraphicError> {
         self.writer()?.move_cell(sheet, from, to).map_err(sheets_error)
     }
 
     /// Remove a cell (`clear`).
-    pub(crate) fn clear(&mut self, sheet: &str, cell: Cell) -> Result<(), EditError> {
+    pub(crate) fn clear(&mut self, sheet: &str, cell: Cell) -> Result<(), GraphicError> {
         self.writer()?.clear(sheet, cell).map_err(sheets_error)
     }
 
@@ -121,29 +122,24 @@ impl<'p> Keeper<'p> {
         cell: Cell,
         value: &Write,
         style_from: Option<Cell>,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         self.writer()?
             .write_cell(sheet, cell, value, style_from)
             .map_err(sheets_error)
     }
 
     /// Keep the sheet's tables in step with a line put in or taken out (`shift_tables`).
-    pub(crate) fn shift(&mut self, sheet: &str, shift: Shift) -> Result<(), EditError> {
+    pub(crate) fn shift(&mut self, sheet: &str, shift: Shift) -> Result<(), GraphicError> {
         self.writer()?.shift_tables(sheet, shift).map_err(sheets_error)
     }
 
     /// Name the sheet's tables' columns after their headers again (`sync_tables`).
-    pub(crate) fn sync(&mut self, sheet: &str) -> Result<(), EditError> {
+    pub(crate) fn sync(&mut self, sheet: &str) -> Result<(), GraphicError> {
         self.writer()?.sync_tables(sheet).map_err(sheets_error)
     }
 
     /// Write point `index` of `source` into its cell (`_Editor.write`).
-    pub(crate) fn write(
-        &mut self,
-        source: Option<&SourceRef>,
-        index: usize,
-        value: &PointValue,
-    ) -> Result<(), EditError> {
+    pub fn write(&mut self, source: Option<&SourceRef>, index: usize, value: &PointValue) -> Result<(), GraphicError> {
         let Some(formula) = source.and_then(|s| s.formula.as_deref()) else {
             return Ok(()); // a literal: nothing in the workbook to keep in step
         };
@@ -181,11 +177,7 @@ impl<'p> Keeper<'p> {
 
     /// The workbook's bytes among `writes` where it changed (its part among `read` where it
     /// was opened); the reason the edit changed the cache only, if it did.
-    pub(crate) fn finish(
-        self,
-        writes: &mut Vec<PartWrite>,
-        read: &mut Vec<String>,
-    ) -> Result<Option<String>, EditError> {
+    pub fn finish(self, writes: &mut Vec<PartWrite>, read: &mut Vec<String>) -> Result<Option<String>, GraphicError> {
         if let Some((part, writer)) = self.workbook {
             read.push(part.clone());
             if let Some(bytes) = writer.finish().map_err(sheets_error)? {
@@ -198,12 +190,8 @@ impl<'p> Keeper<'p> {
 
 /// A chart edit ooxml-edit refuses (`ChartDataError`, `IndexError`), as docx-agent words it:
 /// `invalid_arguments` with the message stripped of quotes at its ends.
-pub(crate) fn refused(message: &str) -> EditError {
-    EditError::Argument {
-        field: String::new(),
-        message: unquoted(message).to_owned(),
-        options: Vec::new(),
-    }
+pub fn refused(message: &str) -> GraphicError {
+    GraphicError::Argument(unquoted(message).to_owned())
 }
 
 /// `message` without the quotes a Python `KeyError`'s text has at both ends (one quoted at
@@ -217,11 +205,13 @@ fn unquoted(message: &str) -> &str {
     message
 }
 
-pub(crate) fn not_supported(what: &str) -> EditError {
-    EditError::Unsupported(format!("edit_chart: {what}"))
+/// `what` refused as not supported yet, as `edit_chart` names it.
+pub fn not_supported(what: &str) -> GraphicError {
+    GraphicError::Unsupported(format!("edit_chart: {what}"))
 }
 
-pub(crate) fn sheets_error(error: SheetsError) -> EditError {
+/// A workbook `ooxml-sheets` refused, as not supported yet.
+pub fn sheets_error(error: SheetsError) -> GraphicError {
     match error {
         SheetsError::Unsupported(what) => not_supported(&what),
         // ooxml-edit words a workbook it cannot write with its exceptions' texts

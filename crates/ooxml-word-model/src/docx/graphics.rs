@@ -12,7 +12,7 @@
 use crate::docx::drawings::{C, DGM};
 use crate::docx::Docx;
 use crate::w::NS_R;
-use ooxml_chart::data::{chart_data, ChartData, Point};
+use ooxml_chart::data::{chart_data, point_json, points_json, ChartData};
 use ooxml_drawingml::diagram::{diagram_nodes, diagram_summary, DiagramNode};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
@@ -187,21 +187,4 @@ pub fn chart_json(data: &ChartData) -> Value {
         );
     }
     Value::Object(out)
-}
-
-/// Points as JSON: text, integers and floats as written, `null` for a blank.
-#[must_use]
-pub fn points_json(values: &[Option<Point>]) -> Value {
-    values.iter().map(Option::as_ref).map(point_json).collect()
-}
-
-/// A point as JSON (`null` for none).
-#[must_use]
-pub fn point_json(value: Option<&Point>) -> Value {
-    match value {
-        None => Value::Null,
-        Some(Point::Text(t)) => Value::from(t.as_str()),
-        Some(Point::Int(i)) => Value::from(*i),
-        Some(Point::Float(f)) => Value::from(*f),
-    }
 }

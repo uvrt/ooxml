@@ -16,6 +16,9 @@ ooxml-drawingml.workspace = true
 ooxml-fonts.workspace = true
 ooxml-text.workspace = true
 ooxml-numfmt.workspace = true
+ooxml-opc.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

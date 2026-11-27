@@ -140,8 +140,7 @@ pub use delete_blocks::{blocks_named, BlocksDeleted, DeleteBlocks};
 pub use doc::{Change, Draw, DrawFrom, Key, ModelError, Setup, Shared, WordDoc};
 pub use drawings::{
     image_format, picture_size, written_size, ChartInserted, ChartParts, DrawingEdited, DrawingValues, EditGraphic,
-    FloatDrawing, GraphicEdit, GraphicEdited, GraphicParts, InlineDrawing, InsertChart, InsertPicture, InsertShape,
-    PartWrite, RecordChange, SetDrawing, ZOrder,
+    FloatDrawing, GraphicEdited, InlineDrawing, InsertChart, InsertPicture, InsertShape, SetDrawing, ZOrder,
 };
 pub use drawn::Drawn;
 pub use editor::{EditTiming, Edited, Editor};

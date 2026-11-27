@@ -3,26 +3,26 @@
 //! without one is for, `scale_axis`; its keys as keywords, `scale_arguments`),
 //! `set_gridlines`, `format_series`, `format_point`, `set_series_type`, `set_text_style` and
 //! `set_point_labels` (Value From Cells: the labels written into the workbook too,
-//! `chart_block`) -- their arguments checked in ooxml-edit's order and the chart part
-//! changed (`ooxml_chart::edit`), one [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
+//! `block`) -- their arguments checked in ooxml-edit's order and the chart part
+//! changed (`ooxml_chart::edit`), one [`GraphicEdit`] the host applies.
 //!
-//! New text is in the language `edit_chart` gives (`chart_language`: the document's
-//! default language, else the call's locale's).
+//! New text is in the language the host's writer gives (Word's: the document's default
+//! language, else the call's locale's).
 //!
-//! Must not: resolve a series or category by name but through `chart_names`, or write but
-//! through the command.
+//! Must not: resolve a series or category by name but through `names`, or write but
+//! through the host.
 
-use super::chart_block::{all_sources, Block};
-use super::chart_data::Warnings;
-use super::chart_keeper::{not_supported, refused, Keeper};
-use super::chart_names::{category_names, choices, position, series_names, Stop};
-use super::{ChartAction, ChartAxis, ChartType, EditChart, Gridlines, ScaleArg, ScaleKey, StyleArg};
+use crate::block::{all_sources, Block};
+use crate::keeper::{not_supported, refused, Keeper};
+use crate::names::{category_names, choices, position, series_names, Stop};
+use crate::Warnings;
+use crate::{ChartAction, ChartAxis, ChartType, EditChart, Gridlines, ScaleArg, ScaleKey, StyleArg};
 use ooxml_chart::data::{axis_names, ChartData, Point};
 use ooxml_chart::edit::{
     text_size, ChartTree, Colour, DataError, PointLabels, ScaleChange, SeriesFormat, TextHost, TextLook, TextStop,
 };
+use ooxml_chart::edit::{GraphicEdit, GraphicError, GraphicParts, PartWrite, RecordChange};
 use ooxml_tools::{ArgEnum, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite, RecordChange};
 use ooxml_xml::view::{child, children};
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -39,62 +39,87 @@ const SCALE_KEYS: &str = "min, max, major_unit, minor_unit, number_format, rever
 
 /// A style action, its series and point resolved to positions.
 #[derive(Debug, Clone)]
-pub(crate) enum StyleAction {
+pub enum StyleAction {
     /// An axis' scale; `values_format` is the values' number format.
     Scale {
+        /// The axis, as the chart's data names it.
         axis: &'static str,
+        /// What changes in its scale.
         change: ScaleChange,
+        /// The values' number format.
         values_format: Option<String>,
     },
     /// An axis' gridlines shown or taken away.
     Gridlines {
+        /// The axis.
         axis: &'static str,
+        /// Whether its major gridlines show.
         major: bool,
+        /// Whether its minor gridlines show.
         minor: bool,
     },
     /// A series' look, or one point's.
     Format {
+        /// The series' position.
         series: usize,
+        /// The point's position, for one point's look.
         point: Option<usize>,
+        /// The look.
         look: SeriesFormat,
     },
     /// A series drawn as a line (on the secondary axes) or a column; `values_format` is
     /// the values' number format.
     SeriesType {
+        /// The series' position.
         series: usize,
+        /// Drawn as a line (else a column).
         line: bool,
+        /// On the secondary axes.
         secondary: bool,
+        /// The values' number format.
         values_format: Option<String>,
     },
     /// A series' own point labels (`None`: taken away) at a position (by name), in the
     /// workbook too with `cells`; their text in `lang`.
     PointLabels {
+        /// The series' position.
         series: usize,
+        /// The labels, one per point (`None`: taken away).
         labels: Option<Vec<String>>,
+        /// Their position, by name.
         position: Option<&'static str>,
+        /// Written into the workbook too (Value From Cells).
         cells: bool,
+        /// The language of their text.
         lang: String,
     },
     /// The text's look, of one part or all; new text properties in `lang`.
     Text {
+        /// The text part (a [`crate::TextPart`] by name), or all (`None`).
         part: Option<&'static str>,
+        /// The look.
         look: TextLook,
+        /// The language of new text properties.
         lang: String,
     },
 }
 
 /// A style action on the chart `address` (the target, as ooxml-edit's messages name it).
 #[derive(Debug, Clone)]
-pub(crate) struct ChartStyleEdit {
-    pub(crate) address: String,
-    pub(crate) action: StyleAction,
+pub struct ChartStyleEdit {
+    /// The chart's address.
+    pub address: String,
+    /// The action.
+    pub action: StyleAction,
 }
 
 impl GraphicEdit for ChartStyleEdit {
     type Out = Warnings;
 
-    fn edit(&self, package: &ooxml_opc::Package, part: &str) -> Result<GraphicParts<Warnings>, EditError> {
-        let tree = package.tree(part)?.ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    fn edit(&self, package: &ooxml_opc::Package, part: &str) -> Result<GraphicParts<Warnings>, GraphicError> {
+        let tree = package
+            .tree(part)?
+            .ok_or_else(|| GraphicError::NoPart(part.to_owned()))?;
         let mut chart = ChartTree::new(Arc::clone(tree.root()));
         let address = self.address.as_str();
         let refusal = |error: DataError| refused(&error.0);
@@ -120,7 +145,7 @@ impl GraphicEdit for ChartStyleEdit {
                 secondary,
                 values_format,
             } => {
-                let hash = &ooxml_word_model::ids::sha256;
+                let hash = &ooxml_base::sha256::sha256;
                 changed = chart
                     .set_series_type(address, *series, *line, *secondary, values_format.as_deref(), hash)
                     .map_err(refusal)?;
@@ -170,7 +195,7 @@ impl ChartStyleEdit {
         chart: &mut ChartTree,
         package: &'p ooxml_opc::Package,
         part: &'p str,
-    ) -> Result<Option<Keeper<'p>>, EditError> {
+    ) -> Result<Option<Keeper<'p>>, GraphicError> {
         let StyleAction::PointLabels {
             series,
             labels,
@@ -203,7 +228,7 @@ impl ChartStyleEdit {
             lang: Some(lang.as_str()),
             part,
         };
-        chart.set_point_labels(*series, &look, &ooxml_word_model::ids::sha256);
+        chart.set_point_labels(*series, &look, &ooxml_base::sha256::sha256);
         Ok(keeper)
     }
 }
@@ -392,7 +417,7 @@ impl Plan<'_> {
 ///
 /// # Errors
 /// As `set_axis_scale` refuses the scale.
-pub(super) fn add_scale(
+pub fn add_scale(
     address: &str,
     root: &Element,
     data: &ChartData,
@@ -546,7 +571,7 @@ fn style_keys(style: &StyleArg) -> Vec<(&'static str, bool)> {
 }
 
 /// `"none"` is no colour (`_colour`).
-pub(super) fn colour_given(value: Option<&String>) -> Option<Option<String>> {
+pub fn colour_given(value: Option<&String>) -> Option<Option<String>> {
     value.map(|v| (v.trim().to_lowercase() != "none").then(|| v.clone()))
 }
 
@@ -584,7 +609,7 @@ fn dash_value(dash: &str) -> &str {
 
 /// `set_text_style`'s style, checked as `apply_style_action` and `set_text_style` check it
 /// before anything changes (the size, then the colour).
-pub(super) fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
+pub fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
     let keys = style.map(style_keys).unwrap_or_default();
     if let Some((key, _)) = keys.iter().find(|(_, series)| *series) {
         return Err(DataError(format!(
@@ -610,7 +635,7 @@ fn label_cells(
     address: &str,
     series: usize,
     labels: &[String],
-) -> Result<String, EditError> {
+) -> Result<String, GraphicError> {
     chart.drop_label_range(series);
     let sources = all_sources(chart)?;
     let Some(block) = Block::find(address, &sources, keeper, chart.point_count())? else {

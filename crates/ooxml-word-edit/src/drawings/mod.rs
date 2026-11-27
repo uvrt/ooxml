@@ -22,7 +22,7 @@ mod shape;
 
 pub use chart::{ChartInserted, ChartParts, InsertChart};
 pub use frame::{FloatDrawing, InlineDrawing, SetDrawing};
-pub use graphic::{EditGraphic, GraphicEdit, GraphicEdited, GraphicParts, PartWrite, RecordChange};
+pub use graphic::{EditGraphic, GraphicEdited};
 pub use picture::{image_format, picture_size, written_size, InsertPicture};
 pub use settings::{DrawingValues, ZOrder};
 pub use shape::InsertShape;

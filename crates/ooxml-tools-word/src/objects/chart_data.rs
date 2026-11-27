@@ -1,7 +1,7 @@
 //! Owns: `edit_chart`'s data actions (docx-agent's `_edit_chart` through ooxml-edit's
 //! `apply_data_action`): `set_values`, `set_value`, `rename_series` and `rename_category`
 //! (points changed in place), `add_category`, `remove_category`, `add_series` and
-//! `remove_series` (the data's shape: `chart_block` keeps the workbook's lines in step),
+//! `remove_series` (the data's shape: `ooxml_tools_chart::block` keeps the workbook's lines in step),
 //! `set_title` and `set_axis_title`, `set_legend`, `show_data_labels`, `hide_data_labels`
 //! and `set_gap_width` -- the chart part's caches changed (`ooxml_chart::edit`) and the
 //! embedded workbook kept in step (`_Editor`, with `ooxml-sheets`' writer), or, where it
@@ -9,16 +9,17 @@
 //! (`ChartDataWarning`, in ooxml-edit's words); the chart's record of where its values
 //! came from kept true (`chart_record`).
 //!
-//! Must not: resolve a series or category by name (the handler does, `chart_names`), or
-//! write but through the [`EditGraphic`](ooxml_word_edit::EditGraphic) command.
+//! Must not: resolve a series or category by name (the handler does, `ooxml_tools_chart::names`), or
+//! write but through the host's writer (`ooxml_tools_chart::GraphicWriter`).
 
-use super::chart_block::{all_sources, Block};
-use super::chart_keeper::{not_supported, refused, Keeper};
 use super::chart_record::kept;
 use ooxml_chart::data::Point;
 use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
+use ooxml_chart::edit::{GraphicEdit, GraphicError, GraphicParts, PartWrite};
 use ooxml_opc::Package;
-use ooxml_word_edit::{EditError, GraphicEdit, GraphicParts, PartWrite};
+use ooxml_tools_chart::block::{all_sources, Block};
+use ooxml_tools_chart::keeper::{not_supported, refused, Keeper};
+use ooxml_tools_chart::Warnings;
 use std::sync::Arc;
 
 /// The application whose Edit Data a warning names (`edit/charts.py`'s `APPLICATION`).
@@ -79,14 +80,13 @@ pub(crate) struct ChartDataEdit {
     pub(crate) action: DataAction,
 }
 
-/// What the edit says beside the chart: its warnings (a cache-only edit).
-pub(crate) type Warnings = Vec<String>;
-
 impl GraphicEdit for ChartDataEdit {
     type Out = Warnings;
 
-    fn edit(&self, package: &Package, part: &str) -> Result<GraphicParts<Warnings>, EditError> {
-        let tree = package.tree(part)?.ok_or_else(|| EditError::no_part(part.to_owned()))?;
+    fn edit(&self, package: &Package, part: &str) -> Result<GraphicParts<Warnings>, GraphicError> {
+        let tree = package
+            .tree(part)?
+            .ok_or_else(|| GraphicError::NoPart(part.to_owned()))?;
         let mut edit = Edit {
             chart: ChartTree::new(Arc::clone(tree.root())),
             keeper: Keeper::new(package, part),
@@ -180,17 +180,17 @@ struct Edit<'p> {
 }
 
 impl Edit<'_> {
-    fn points(&self, series: usize, which: Which) -> Result<Vec<Option<Point>>, EditError> {
+    fn points(&self, series: usize, which: Which) -> Result<Vec<Option<Point>>, GraphicError> {
         self.chart
             .points(series, which)
             .map_err(|_| not_supported("a chart whose data the model cannot read"))
     }
 
-    fn set(&mut self, series: usize, which: Which, index: usize, value: &PointValue) -> Result<bool, EditError> {
+    fn set(&mut self, series: usize, which: Which, index: usize, value: &PointValue) -> Result<bool, GraphicError> {
         self.chart.set_point(series, which, index, value).map_err(data_refusal)
     }
 
-    fn set_values(&mut self, address: &str, series: usize, values: &[Option<f64>]) -> Result<(), EditError> {
+    fn set_values(&mut self, address: &str, series: usize, values: &[Option<f64>]) -> Result<(), GraphicError> {
         let current = self.points(series, Which::Values)?;
         if values.len() != current.len() {
             return Err(refused(&format!(
@@ -215,7 +215,7 @@ impl Edit<'_> {
         Ok(())
     }
 
-    fn set_value(&mut self, series: usize, category: usize, value: f64) -> Result<(), EditError> {
+    fn set_value(&mut self, series: usize, category: usize, value: f64) -> Result<(), GraphicError> {
         let current = self.points(series, Which::Values)?;
         let was = current
             .get(category)
@@ -232,7 +232,7 @@ impl Edit<'_> {
         Ok(())
     }
 
-    fn rename_series(&mut self, series: usize, text: &str) -> Result<(), EditError> {
+    fn rename_series(&mut self, series: usize, text: &str) -> Result<(), GraphicError> {
         let name = self.points(series, Which::Name)?.into_iter().next().flatten();
         if name == Some(Point::Text(text.to_owned())) {
             return Ok(());
@@ -250,7 +250,7 @@ impl Edit<'_> {
         Ok(())
     }
 
-    fn rename_category(&mut self, category: usize, text: &str) -> Result<(), EditError> {
+    fn rename_category(&mut self, category: usize, text: &str) -> Result<(), GraphicError> {
         let given = self.category_label(text);
         let label = match &given {
             PointValue::Number(n) if n.fract() == 0.0 && n.abs() < 1e15 => {
@@ -305,7 +305,7 @@ impl Edit<'_> {
         }
     }
 
-    fn add_category(&mut self, address: &str, text: &str, values: Option<&[Option<f64>]>) -> Result<(), EditError> {
+    fn add_category(&mut self, address: &str, text: &str, values: Option<&[Option<f64>]>) -> Result<(), GraphicError> {
         let count = self.chart.point_count();
         let series = self.chart.series_count();
         let per_series = match values {
@@ -340,7 +340,7 @@ impl Edit<'_> {
     }
 
     /// `remove_category`.
-    fn remove_category(&mut self, address: &str, index: usize) -> Result<(), EditError> {
+    fn remove_category(&mut self, address: &str, index: usize) -> Result<(), GraphicError> {
         let count = self.chart.point_count();
         if index >= count {
             return Err(refused(&format!("{address}: no category {index} (have {count})")));
@@ -368,7 +368,7 @@ impl Edit<'_> {
         part: &str,
         text: &str,
         values: Option<&[Option<f64>]>,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         self.ran = true;
         let series = self.chart.series_count();
         if series == 0 {
@@ -412,7 +412,7 @@ impl Edit<'_> {
     }
 
     /// `remove_series`: from the workbook first, then from the chart with its legend entries.
-    fn remove_series(&mut self, address: &str, series: usize) -> Result<(), EditError> {
+    fn remove_series(&mut self, address: &str, series: usize) -> Result<(), GraphicError> {
         self.ran = true;
         if self.chart.series_count() <= 1 {
             return Err(refused(&format!("{address}: a chart keeps at least one series")));
@@ -434,7 +434,7 @@ impl Edit<'_> {
         show: bool,
         series: Option<usize>,
         look: &LabelLook<'_>,
-    ) -> Result<(), EditError> {
+    ) -> Result<(), GraphicError> {
         if let Some(format) = look.number_format {
             if format.trim_matches(ooxml_xml::view::py_space).is_empty() || format.chars().count() > 255 {
                 return Err(refused(&format!(
@@ -457,7 +457,7 @@ impl Edit<'_> {
 
     /// `set_title` (no `axis`) or `set_axis_title`: a title drawn from a cell has its cell
     /// written too.
-    fn title(&mut self, axis: Option<&str>, text: Option<&str>, look: &TitleLook<'_>) -> Result<(), EditError> {
+    fn title(&mut self, axis: Option<&str>, text: Option<&str>, look: &TitleLook<'_>) -> Result<(), GraphicError> {
         let done = match axis {
             None => self.chart.set_title(text, look),
             Some(axis) => self
@@ -483,7 +483,7 @@ impl Edit<'_> {
     }
 
     /// `set_gap_width`, past the handler's whole-number check.
-    fn gap_width(&mut self, address: &str, percent: i64) -> Result<(), EditError> {
+    fn gap_width(&mut self, address: &str, percent: i64) -> Result<(), GraphicError> {
         if !(0..=500).contains(&percent) {
             return Err(refused(&format!("{address}: a gap width is a whole percentage, 0-500")));
         }
@@ -509,6 +509,6 @@ fn same(a: Option<&Point>, b: Option<f64>) -> bool {
     }
 }
 
-fn data_refusal(error: DataError) -> EditError {
+fn data_refusal(error: DataError) -> GraphicError {
     refused(&error.0)
 }
