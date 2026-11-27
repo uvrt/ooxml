@@ -52,6 +52,8 @@ FORBIDDEN = (
 #: What the package may import besides the standard library and itself: lxml, and
 #: ooxml-common (format-neutral, standard library only, and never importing ooxml-edit).
 ALLOWED_THIRD_PARTY = {"lxml", "ooxml_common"}
+#: The modules that reach the Rust core (``ooxml_core``, internal: Phase 3 E2), and only they.
+CORE_MODULES = {"chunks", "hosted"}
 
 
 def _modules() -> list[Path]:
@@ -86,9 +88,8 @@ def test_imports_only_the_standard_library_lxml_ooxml_common_and_itself(module):
             continue
         for name in names:
             top = name.partition(".")[0]
-            assert top in stdlib or top in ALLOWED_THIRD_PARTY or top == "ooxml_edit", (
-                f"{module.name} imports {name}"
-            )
+            assert top in stdlib or top in ALLOWED_THIRD_PARTY or top == "ooxml_edit" or (
+                top == "ooxml_core" and module.stem in CORE_MODULES), f"{module.name} imports {name}"
 
 
 @pytest.mark.parametrize("module", _modules(), ids=lambda path: path.stem)
@@ -212,7 +213,8 @@ def test_the_tools_import_only_the_standard_library_lxml_ooxml_common_and_the_co
         for name in names:
             top = name.partition(".")[0]
             assert top in stdlib or top in ALLOWED_THIRD_PARTY or (
-                top == "ooxml_edit" and "charts" not in name), f"tools/{module.name} imports {name}"
+                top == "ooxml_edit" and "charts" not in name) or (
+                top == "ooxml_core" and module.stem in CORE_MODULES), f"tools/{module.name} imports {name}"
 
 
 def test_importing_the_tools_registers_nothing_and_loads_no_format():
