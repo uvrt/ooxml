@@ -253,8 +253,12 @@ impl HostSession {
 impl HostSession {
     /// `doc`, the open document `id`, as the call reads it: a stand-in of a document the
     /// application's own host holds answering with what the application resolved of it for
-    /// the call (`held`; nothing resolved: every read refused); any other as it is.
+    /// the call (`held`; nothing resolved: every read refused; no values handed at all, as it
+    /// is); any other as it is.
     pub(crate) fn answering(&self, id: &DocId, doc: Arc<dyn FormatDoc>, held: &[HeldValues]) -> Arc<dyn FormatDoc> {
+        if held.is_empty() {
+            return doc; // (no document is held elsewhere: the session's lock not taken)
+        }
         let handle = id.to_string();
         let Some(stand_in) = self.stores().held.get(&handle).cloned() else {
             return doc;
