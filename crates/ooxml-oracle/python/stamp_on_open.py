@@ -155,9 +155,21 @@ def host_event(event: dict, documents: dict[str, dict[str, str]]) -> dict:
     if kind == "open" and event.get("returned") and event.get("input"):
         documents[event["returned"]] = documents.get("#maps", {}).get(resolved(event["input"]["path"]), {})
         return event
+    def docs(value, found: list) -> list:
+        if isinstance(value, dict):
+            if isinstance(value.get("doc"), str):
+                found.append(value["doc"])
+            for item in value.values():
+                docs(item, found)
+        elif isinstance(value, list):
+            for item in value:
+                docs(item, found)
+        return found
+
     def of(arguments) -> dict[str, str]:
-        doc = arguments.get("doc") if isinstance(arguments, dict) else None
-        return documents.get(doc, {}) if isinstance(doc, str) else {}
+        # the document the call names (a batch's ops name theirs: the first named)
+        named = docs(arguments, [])
+        return documents.get(named[0], {}) if named else {}
     out = dict(event)
     if kind == "call":
         ids = of(event.get("arguments"))
