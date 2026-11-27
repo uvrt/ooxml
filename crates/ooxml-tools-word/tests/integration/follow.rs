@@ -95,7 +95,10 @@ fn copies_follow_as_docx_agent_makes_them_follow() {
     // a copy asked for by the id it has is not said again (`asked`: the address given, where
     // it names the copy otherwise)
     let asked_as_named = |mut reply: Value| {
-        let copies = reply.get_mut("data").and_then(|d| d.get_mut("copies")).and_then(Value::as_array_mut);
+        let copies = reply
+            .get_mut("data")
+            .and_then(|d| d.get_mut("copies"))
+            .and_then(Value::as_array_mut);
         for copy in copies.into_iter().flatten() {
             if copy.get("asked").is_some() && copy["asked"] == copy["copy"] {
                 copy.as_object_mut().unwrap().remove("asked");
@@ -108,7 +111,10 @@ fn copies_follow_as_docx_agent_makes_them_follow() {
         if want["reply"]["summary"].is_null() {
             // refused when the sample and its copies were named by place (a preview leaves
             // the document unstamped): named by the ids an open gives, it is previewed
-            assert!(have["reply"]["summary"].as_str().unwrap().contains("would follow"), "{have}");
+            assert!(
+                have["reply"]["summary"].as_str().unwrap().contains("would follow"),
+                "{have}"
+            );
             assert_eq!(have["document"], want["document"], "{call}");
             continue;
         }

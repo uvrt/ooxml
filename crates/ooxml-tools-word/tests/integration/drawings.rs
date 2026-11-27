@@ -43,7 +43,13 @@ fn picture_blobs() -> BlobList {
 /// `author` when given): the replies, and the main part as it was left.
 fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
     let package = Package::open(Arc::from(FIXTURE), &Limits::default()).unwrap();
-    let editor = Editor::open(package.clone(), StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let editor = Editor::open(
+        package.clone(),
+        StoreConfig::default(),
+        Arc::new(Still),
+        Arc::new(Unlimited),
+    )
+    .unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let blobs = picture_blobs();

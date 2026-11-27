@@ -366,7 +366,18 @@ mod tests {
         let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
         let before = editor.store().snapshot();
         // the body's first paragraph, by the id it has from the first read
-        let first = before.doc().docx().unwrap().body().unwrap().ids.paragraphs().iter().next().unwrap().id;
+        let first = before
+            .doc()
+            .docx()
+            .unwrap()
+            .body()
+            .unwrap()
+            .ids
+            .paragraphs()
+            .iter()
+            .next()
+            .unwrap()
+            .id;
         let (args, _) = WordDrawings::accept(
             json!({"doc": "d1", "action": "insert_picture", "image": "b1", "at": format!("after:{first}"),
                    "alt_text": "x", "wrap": "square"}),

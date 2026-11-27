@@ -91,7 +91,10 @@ fn a_cell_address_in_a_table_without_ids_names_its_table_across_edits() {
                 now(json!({"table": "t@body/0", "action": "insert_row", "index": 1})),
             ),
             ("word_format", now(json!({"targets": ["t@body/0/c1,0"], "bold": true}))),
-            ("word_format", now(json!({"targets": ["t@body/0/c0,1"], "italic": true}))),
+            (
+                "word_format",
+                now(json!({"targets": ["t@body/0/c0,1"], "italic": true})),
+            ),
         ],
     );
     for reply in &replies {

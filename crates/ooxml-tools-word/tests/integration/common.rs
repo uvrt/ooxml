@@ -114,7 +114,9 @@ pub fn stamped_ids(package: &ooxml_opc::Package) -> Vec<(String, String)> {
         let (Ok(Some(old)), Ok(Some(new))) = (package.tree(&part), word.tree(&part)) else {
             continue;
         };
-        let pairs = names(PartIds::new(&story, old.root())).into_iter().zip(names(PartIds::new(&story, new.root())));
+        let pairs = names(PartIds::new(&story, old.root()))
+            .into_iter()
+            .zip(names(PartIds::new(&story, new.root())));
         renamed.extend(pairs.filter(|(a, b)| a != b));
     }
     renamed.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
@@ -130,7 +132,11 @@ pub fn now(package: &ooxml_opc::Package, value: serde_json::Value) -> serde_json
         match value {
             Value::String(text) => Value::String(named(&text, renamed)),
             Value::Array(items) => Value::Array(items.into_iter().map(|v| walk(v, renamed)).collect()),
-            Value::Object(map) => Value::Object(map.into_iter().map(|(k, v)| (named(&k, renamed), walk(v, renamed))).collect()),
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| (named(&k, renamed), walk(v, renamed)))
+                    .collect(),
+            ),
             other => other,
         }
     }
