@@ -19,6 +19,7 @@ is kept.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
@@ -32,8 +33,11 @@ _cache: Any = None
 
 def model_cache() -> Any:
     """The process's :class:`pptx2svg.ModelCache`, made on first use; ``None`` with a
-    pptx2svg that has none.  Bounded (pptx2svg's defaults: 512 resolved slides, 256
-    parsed layouts, masters and themes), shared by every deck and thread of the process."""
+    pptx2svg that has none.  Bounded (pptx2svg's defaults: 256 MB of resolved slides and
+    their pictures, each picture once, and at most 512 slides; 256 parsed layouts, masters
+    and themes), shared by every deck and thread of the process.  A host logs and sets it
+    with :func:`model_cache_stats`, :func:`set_model_cache_budget` and
+    :func:`clear_model_cache`."""
     global _cache
     import pptx2svg
 
@@ -44,6 +48,42 @@ def model_cache() -> Any:
         if _cache is None:
             _cache = factory()
         return _cache
+
+
+def model_cache_stats() -> dict[str, int]:
+    """What the process's cache holds (:meth:`pptx2svg.ModelCache.stats`), for a host to log:
+    ``entries`` and ``entry_bytes`` (resolved slides, their pictures left out), ``images``
+    and ``image_bytes`` (the pictures they hold, each once), ``bytes`` (the two together),
+    ``parts``, ``hits``, ``misses``, ``budget`` and ``limit``; ``{}`` with no cache."""
+    cache = model_cache()
+    if cache is None:                          # pragma: no cover - pptx2svg before 0.3.8
+        return {}
+    found = cache.stats()
+    return {**dataclasses.asdict(found), "bytes": found.bytes}
+
+
+def set_model_cache_budget(budget: int) -> None:
+    """Hold at most ``budget`` bytes of resolved slides and their pictures in the process's
+    cache (0 keeps none), letting go of the least recently used at once.  A host with
+    worker processes tells each of them too: ``toolbox.pool.broadcast(set_model_cache_budget,
+    budget)`` (a registered worker task)."""
+    cache = model_cache()
+    if cache is not None:
+        cache.budget = budget
+
+
+def clear_model_cache() -> None:
+    """Let go of everything the process's cache holds (a registered worker task, as
+    :func:`set_model_cache_budget`)."""
+    cache = model_cache()
+    if cache is not None:
+        cache.clear()
+
+
+# Worker tasks (:func:`ooxml_edit.tools.worker_task`), marked without importing the tool layer.
+for _task in (model_cache_stats, set_model_cache_budget, clear_model_cache):
+    setattr(_task, "__ooxml_edit_task__", True)
+del _task
 
 
 def convert_options(**options: Any) -> Any:

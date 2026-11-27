@@ -26,11 +26,10 @@ placeholder and a warning rather than being dropped silently.
 
 from __future__ import annotations
 
-import base64
 from datetime import datetime
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, NamedTuple, Sequence
 
 from ooxml_common.drawingml.diagram import (  # noqa: F401  (moved; re-exported)
     DIAGRAM_DRAWING_REL_TYPES,
@@ -42,6 +41,7 @@ from ooxml_common.locales import EN_US, Locale
 
 from .. import model as m
 from ..fonts.embedded import NO_EMBEDDED_FONTS, EmbeddedFonts
+from ..images import ImageTexts
 from ooxml_common.metafile import metafile_to_svg
 
 from ..metafile import extract_metafile_preview
@@ -165,6 +165,9 @@ class ResolveContext:
     field_languages_warned: set[str] = field(default_factory=set)
     #: Whether a date field drew the clock (``now``) on this slide.
     shows_clock: bool = False
+    #: Where every picture's base64 text is taken from: one string per picture for the
+    #: whole conversion (:mod:`pptx2svg.images`).
+    images: ImageTexts = field(default_factory=ImageTexts)
 
     def warn(self, code: str, message: str) -> None:
         self.warnings.append(
@@ -209,12 +212,16 @@ def resolve_presentation(
     now: datetime | None = None,
     locale: Locale = EN_US,
     templates: Iterable[str] = (),
+    images: ImageTexts | None = None,
 ) -> ResolvedPresentation:
     """Resolve the slides.  ``color_names``, when given, collects the theme name of every
     scheme colour resolved (``id(resolved) -> (resolved, "accent1 lumMod=75%")``), which
     the agent view writes beside the hex (:mod:`.naming`); drawing is unaffected.
     ``templates`` -- layout and master part paths -- adds their template views
-    (:mod:`.templates`) after the slides, in that order."""
+    (:mod:`.templates`) after the slides, in that order.  ``images``: where the pictures'
+    base64 text is taken from (:mod:`pptx2svg.images`); by default one for this call, so
+    a picture every slide shows is one string."""
+    images = images if images is not None else ImageTexts()
     wanted = set(slide_numbers) if slide_numbers is not None else None
     # One clock for the whole deck, so every slide's date field agrees.
     now = now if now is not None else datetime.now()
@@ -234,6 +241,7 @@ def resolve_presentation(
         context.east_asian = east_asian
         context.now = now
         context.locale = locale
+        context.images = images
         slides.append(resolve_slide(context))
         warnings.extend(context.warnings)
         if context.shows_clock:
@@ -248,7 +256,7 @@ def resolve_presentation(
             view = resolve_template(
                 package, presentation, part_path, metafile_converter=metafile_converter,
                 east_asian=east_asian, color_names=color_names, now=now, locale=locale,
-                warnings=warnings,
+                warnings=warnings, images=images,
             )
             slides.append(view)
             master = presentation.masters.get(
@@ -655,7 +663,7 @@ def _resolve_image(context: ResolveContext, image: s.SourceImage) -> m.SlideElem
         )
         return None
 
-    payload, mime_type = media
+    payload, mime_type, part = media
     if mime_type in METAFILE_MIME_TYPES:
         preview = _metafile_preview(
             context,
@@ -671,12 +679,11 @@ def _resolve_image(context: ResolveContext, image: s.SourceImage) -> m.SlideElem
                 fill=m.SolidFill(color=m.ResolvedColor(hex="#e0e0e0")),
                 alt_text=image.alt_text or image.name,
             )
-        payload, mime_type = preview
+        (payload, mime_type), part = preview, None
 
-    data = base64.b64encode(payload).decode("ascii")
     return m.ImageElement(
         transform=_resolve_transform(context, transform),
-        image_data=data,
+        image_data=context.images.text(payload, part),
         mime_type=mime_type,
         effects=_resolve_effects(context, image.effects),
         blip_effects=_resolve_blip_effects(context, image.blip_effects),
@@ -1098,7 +1105,7 @@ def _resolve_unsupported(
     if node.fallback_rel_id is not None and node.what == "ole":
         media = _load_media_bytes(context, node.fallback_rel_id)
         if media is not None:
-            payload, mime_type = media
+            payload, mime_type, part = media
             if mime_type in METAFILE_MIME_TYPES:
                 preview = _metafile_preview(
                     context,
@@ -1108,10 +1115,11 @@ def _resolve_unsupported(
                     described_as=f"OLE preview {node.name or ''!r}",
                 )
                 payload, mime_type = preview if preview is not None else (b"", "")
+                part = None
             if mime_type in SUPPORTED_IMAGE_MIME_TYPES:
                 return m.ImageElement(
                     transform=_resolve_transform(context, node.transform),
-                    image_data=base64.b64encode(payload).decode("ascii"),
+                    image_data=context.images.text(payload, part),
                     mime_type=mime_type,
                     alt_text=node.alt_text or node.name,
                 )
@@ -1726,7 +1734,7 @@ def _resolve_fill(
         media = _preferring_vector(context, fill.svg_relationship_id, fill.blip_relationship_id)
         if media is None:
             return None
-        payload, mime_type = media
+        payload, mime_type, part = media
         if mime_type in METAFILE_MIME_TYPES:
             # A metafile is as legal a fill as it is a picture.  There is no on-slide
             # extent to size the raster by here -- the fill is scaled by whatever shape
@@ -1736,12 +1744,12 @@ def _resolve_fill(
             )
             if preview is None:
                 return None
-            payload, mime_type = preview
+            (payload, mime_type), part = preview, None
         if mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
             context.warn("unsupported-fill-image", f"image fill of type {mime_type} not rendered")
             return None
-        data = base64.b64encode(payload).decode("ascii")
-        return m.ImageFill(image_data=data, mime_type=mime_type, tile=_tile(fill.tile))
+        return m.ImageFill(image_data=context.images.text(payload, part), mime_type=mime_type,
+                           tile=_tile(fill.tile))
 
     if isinstance(fill, s.SourceGroupFill):
         return context.group_fill_stack[-1] if context.group_fill_stack else None
@@ -1956,8 +1964,16 @@ def _resolve_blip_effects(
 # --------------------------------------------------------------------------------------
 
 
-def _load_media_bytes(context: ResolveContext, rel_id: str | None) -> tuple[bytes, str] | None:
-    """Relationship id -> (raw payload, MIME type)."""
+class _Media(NamedTuple):
+    """A picture read from the package: its bytes, MIME type and part."""
+
+    data: bytes
+    mime_type: str
+    part: str
+
+
+def _load_media_bytes(context: ResolveContext, rel_id: str | None) -> _Media | None:
+    """Relationship id -> the picture's bytes, MIME type and part."""
     if rel_id is None:
         return None
     target = context.package.related_part(context.part_path, rel_id)
@@ -1970,12 +1986,12 @@ def _load_media_bytes(context: ResolveContext, rel_id: str | None) -> tuple[byte
     if mime_type is None:
         extension = target.rsplit(".", 1)[-1].lower()
         mime_type = MIME_BY_EXTENSION.get(extension, "image/png")
-    return payload, mime_type
+    return _Media(payload, mime_type, target)
 
 
 def _preferring_vector(
     context: ResolveContext, svg_rel_id: str | None, raster_rel_id: str | None
-) -> tuple[bytes, str] | None:
+) -> _Media | None:
     """The vector original of a picture when there is one, else the raster it ships with.
 
     ``asvg:svgBlip`` names the SVG a picture was rasterised *from*, and the raster in
@@ -1990,18 +2006,9 @@ def _preferring_vector(
     """
     if svg_rel_id is not None:
         vector = _load_media_bytes(context, svg_rel_id)
-        if vector is not None and vector[1] == "image/svg+xml":
+        if vector is not None and vector.mime_type == "image/svg+xml":
             return vector
     return _load_media_bytes(context, raster_rel_id)
-
-
-def _load_media(context: ResolveContext, rel_id: str | None) -> tuple[str, str] | None:
-    """Relationship id -> (base64 payload, MIME type)."""
-    media = _load_media_bytes(context, rel_id)
-    if media is None:
-        return None
-    payload, mime_type = media
-    return base64.b64encode(payload).decode("ascii"), mime_type
 
 
 def _metafile_preview(
