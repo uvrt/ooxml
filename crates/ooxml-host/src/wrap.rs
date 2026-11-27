@@ -217,7 +217,8 @@ impl HostSession {
     }
 }
 
-/// `describe`'s `problems`: those the document opened with (at most 20), after its controls.
+/// `describe`'s `problems`: those the document opened with (at most 20), after its controls, in
+/// the one problems shape.
 fn describe_problems(format: &dyn FormatDoc, result: &mut ToolResult<Value>) {
     let Outcome::Done(done) = &mut result.outcome else {
         return;
@@ -228,12 +229,7 @@ fn describe_problems(format: &dyn FormatDoc, result: &mut ToolResult<Value>) {
     if !data.contains_key("controls") {
         return;
     }
-    let problems: Vec<Value> = format
-        .baseline()
-        .iter()
-        .take(20)
-        .map(|p| Value::from(p.message.as_str()))
-        .collect();
+    let problems: Vec<Value> = format.baseline().iter().take(20).map(Problem::to_json).collect();
     let mut out = Map::new();
     for (key, value) in std::mem::take(data) {
         let controls = key == "controls";

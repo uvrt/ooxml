@@ -221,7 +221,7 @@ impl HostSession {
             going.lock.waited += at.lock.waited;
         }
         let result = self.published(&run, &mut attempt, &published, (&named, holds), notes);
-        self.at_primary(result, primary.as_deref())
+        self.at_published(result, primary.as_deref(), &published)
     }
 
     /// What a published batch answers: its effects kept, its checks and what it touched, the
@@ -281,6 +281,25 @@ impl HostSession {
     }
 
     /// `result` naming the batch's first document at its head, where it names one.
+    /// `result` at the version the batch published on its first document `primary` -- never
+    /// the head by the time it answers: a writer beside it may have committed since -- else as
+    /// [`HostSession::at_primary`] gives it.
+    fn at_published(
+        &self,
+        result: ToolResult<Value>,
+        primary: Option<&str>,
+        published: &BTreeMap<String, Published>,
+    ) -> ToolResult<Value> {
+        match primary.and_then(|doc| published.get(doc)) {
+            Some(at) => ToolResult {
+                doc: primary.map(str::to_owned),
+                version: Some(at.version.number()),
+                ..result
+            },
+            None => self.at_primary(result, primary),
+        }
+    }
+
     fn at_primary(&self, mut result: ToolResult<Value>, primary: Option<&str>) -> ToolResult<Value> {
         result.doc = primary.map(str::to_owned);
         result.version = primary

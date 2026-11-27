@@ -400,7 +400,9 @@ fn describe_lists_the_problems_the_document_opened_with_after_its_controls() {
     assert_eq!(keys, ["parts", "controls", "problems", "after"]);
     assert_eq!(
         described["data"]["problems"],
-        json!(["[odd] toy/problem-odd.xml: made up"])
+        json!([{"code": "odd", "part": "toy/problem-odd.xml", "element": "made up",
+            "message": "[odd] toy/problem-odd.xml: made up", "severity": "problem"}]),
+        "in the one problems shape"
     );
 }
 

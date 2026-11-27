@@ -101,9 +101,9 @@ def _rules(rules: Any) -> dict[str, Any]:
 
 def _date(moment: _dt.datetime) -> str:
     """The moment a call's writes are dated by: UTC, to the second (docx-agent's date)."""
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=_dt.timezone.utc)
-    return moment.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(_dt.timezone.utc)
+    return f"{moment.year:04d}-{moment.month:02d}-{moment.day:02d}T{moment.hour:02d}:{moment.minute:02d}:{moment.second:02d}Z"
 
 
 class Hosting:
@@ -211,7 +211,7 @@ def _arguments_text(arguments: Any, comments: list[dict[str, Any]]) -> str:
             return arguments            # (the host refuses it, in its words)
     else:
         parsed = arguments
-    if isinstance(parsed, Mapping):
+    if isinstance(parsed, Mapping) and "ops" in parsed:
         parsed = _op_comments(parsed, comments)
     try:
         return json.dumps(parsed, ensure_ascii=False)
@@ -313,13 +313,15 @@ class HostedSession(Session):
     # The roles are the Rust session's (it holds every call to them).
     @property                               # type: ignore[override]
     def roles(self) -> tuple[str, ...]:
-        return tuple(self.rust.roles())
+        return self._roles
 
     @roles.setter
     def roles(self, value: Any) -> None:
         from .registry import role_set
 
-        self.rust.set_roles(list(role_set(value)))
+        roles = role_set(value)
+        self.rust.set_roles(list(roles))
+        self._roles = roles                 # (as the Rust session holds them: read per call)
 
     # -- documents -------------------------------------------------------------------------------
 

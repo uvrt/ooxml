@@ -29,14 +29,32 @@ cause = "Phase 3 D1b (ooxml-host): an edit's checks.validate says each problem i
 [[difference]]
 decision = "structured-problems-2026-11-25"
 tool = "check"
-fields = ["result.data.validate.new", "result.data.validate.fixed", "result.data.validate.problems", "result.data.validate.warnings", "result.data.validation.new", "result.data.validation.fixed"]
-cause = "Phase 3 E1a (ooxml-tools-word, ooxml-host): check's validate (new, fixed, problems, warnings) and validation (new, fixed) say each problem as {code, part, element, message, severity}, element the problem's detail and message today's text; a warning (what Word repairs the same way each time) has severity warning"
+fields = ["result.data.validate.new", "result.data.validate.fixed", "result.data.validate.problems", "result.data.validate.warnings"]
+cause = "Phase 3 E1a (ooxml-tools-word): check's validate (new, fixed, problems, warnings) says each problem as {code, part, element, message, severity}, element the problem's detail and message today's text; a warning (what Word repairs the same way each time) has severity warning"
+
+[[difference]]
+decision = "structured-problems-2026-11-25"
+tool = "check"
+fields = ["result.data.validation.new", "result.data.validation.fixed"]
+cause = "Phase 3 E1a (ooxml-host): check's validation (what saving would refuse as new, and what is fixed) says each problem as {code, part, element, message, severity}"
 
 [[difference]]
 decision = "structured-problems-2026-11-25"
 tool = "save_document"
-fields = ["result.error.details.validate.new", "result.error.details.validate.fixed", "result.data.validate.new", "result.data.validate.fixed"]
-cause = "Phase 3 E1a (ooxml-host): a save the gate refuses says what blocked it in details.validate, and a save's validate says the problems, each as {code, part, element, message, severity}; valid_options still lists each new problem by its words"
+fields = ["result.error.details.validate.new", "result.error.details.validate.fixed"]
+cause = "Phase 3 E1a (ooxml-host): a save the gate refuses says what blocked it in details.validate, each problem as {code, part, element, message, severity}; valid_options still lists each new problem by its words"
+
+[[difference]]
+decision = "structured-problems-2026-11-25"
+tool = "save_document"
+fields = ["result.data.validate.new", "result.data.validate.fixed", "outputs[0].validate.new", "outputs[0].validate.fixed"]
+cause = "Phase 3 E1a (ooxml-host): a save's validate, and the output's (Output.validate), say each problem as {code, part, element, message, severity}"
+
+[[difference]]
+decision = "structured-problems-2026-11-25"
+tool = "describe"
+fields = ["result.data.problems"]
+cause = "Phase 3 E1a (ooxml-host): describe's problems, those the document opened with, are each {code, part, element, message, severity}"
 
 [[difference]]
 decision = "optimistic-batches-2026-11-25"
