@@ -18,6 +18,7 @@ members = [
     "crates/ooxml-drawingml",
     "crates/ooxml-numfmt",
     "crates/ooxml-style-names",
+    "crates/ooxml-provenance",
     "crates/ooxml-markdown",
     "crates/ooxml-sheets",
     "crates/ooxml-chart",
@@ -81,6 +82,7 @@ ooxml-raster = { path = "crates/ooxml-raster" }
 ooxml-word-pages = { path = "crates/ooxml-word-pages" }
 ooxml-numfmt = { path = "crates/ooxml-numfmt" }
 ooxml-style-names = { path = "crates/ooxml-style-names" }
+ooxml-provenance = { path = "crates/ooxml-provenance" }
 ooxml-markdown = { path = "crates/ooxml-markdown" }
 ooxml-chart = { path = "crates/ooxml-chart" }
 ooxml-sheets = { path = "crates/ooxml-sheets" }

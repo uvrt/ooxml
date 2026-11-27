@@ -22,7 +22,6 @@ ooxml-fonts.workspace = true
 ooxml-scene.workspace = true
 ooxml-store.workspace = true
 ooxml-chart.workspace = true
-ooxml-sheets.workspace = true
 ooxml-zip.workspace = true
 serde_json.workspace = true
 

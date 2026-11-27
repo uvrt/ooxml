@@ -39,7 +39,7 @@ const SCALE_KEYS: &str = "min, max, major_unit, minor_unit, number_format, rever
 
 /// A style action, its series and point resolved to positions.
 #[derive(Debug, Clone)]
-pub enum StyleAction {
+pub(crate) enum StyleAction {
     /// An axis' scale; `values_format` is the values' number format.
     Scale {
         /// The axis, as the chart's data names it.
@@ -108,9 +108,9 @@ pub enum StyleAction {
 #[derive(Debug, Clone)]
 pub struct ChartStyleEdit {
     /// The chart's address.
-    pub address: String,
+    pub(crate) address: String,
     /// The action.
-    pub action: StyleAction,
+    pub(crate) action: StyleAction,
 }
 
 impl GraphicEdit for ChartStyleEdit {
@@ -415,7 +415,7 @@ impl Plan<'_> {
 ///
 /// # Errors
 /// As `set_axis_scale` refuses the scale.
-pub fn add_scale(
+pub(crate) fn add_scale(
     address: &str,
     root: &Element,
     data: &ChartData,
@@ -569,7 +569,7 @@ fn style_keys(style: &StyleArg) -> Vec<(&'static str, bool)> {
 }
 
 /// `"none"` is no colour (`_colour`).
-pub fn colour_given(value: Option<&String>) -> Option<Option<String>> {
+pub(crate) fn colour_given(value: Option<&String>) -> Option<Option<String>> {
     value.map(|v| (v.trim().to_lowercase() != "none").then(|| v.clone()))
 }
 
@@ -607,7 +607,7 @@ fn dash_value(dash: &str) -> &str {
 
 /// `set_text_style`'s style, checked as `apply_style_action` and `set_text_style` check it
 /// before anything changes (the size, then the colour).
-pub fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
+pub(crate) fn text_look(style: Option<&StyleArg>) -> Result<TextLook, DataError> {
     let keys = style.map(style_keys).unwrap_or_default();
     if let Some((key, _)) = keys.iter().find(|(_, series)| *series) {
         return Err(DataError(format!(

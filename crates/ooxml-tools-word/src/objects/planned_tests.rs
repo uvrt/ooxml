@@ -481,11 +481,8 @@ mod sync {
 /// `edit_chart` `set_value`: the series named resolved to its index where the edit is applied.
 mod edit_chart {
     use super::*;
-    use crate::objects::chart_data::{ChartDataEdit, DataAction};
-    use crate::objects::edit_chart::planned;
     use crate::objects::graphics::WordGraphics;
-    use ooxml_tools_chart::names::{category_names, series_names};
-    use ooxml_tools_chart::{planner, EditChart};
+    use ooxml_tools_chart::{category_names, planned, planner, series_names, ChartDataEdit, DataAction, EditChart};
     use ooxml_word_edit::EditGraphic;
     use ooxml_word_model::docx::drawings::graphics;
     use ooxml_word_model::docx::graphics::chart_part;

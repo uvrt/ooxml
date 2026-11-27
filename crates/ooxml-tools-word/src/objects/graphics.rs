@@ -2,9 +2,12 @@
 //! [`GraphicWriter`]): the chart a target names on a version -- the first drawing or group
 //! member with that id (docx-agent's `Document.chart`), its part through its first
 //! `c:chart`'s relationship -- refused as `not_found` or `refused` with the call that lists
-//! the drawings; and a chart edit planned in its own transaction and applied as one
+//! the drawings; a chart edit planned in its own transaction and applied as one
 //! [`EditGraphic`] command, the language new text is written in the document's
-//! (`chart_language`), the styles part read for it.
+//! (`chart_language`), the styles part read for it; and a new chart inserted
+//! ([`InsertChart`]: inline, in a paragraph of its own after the target, or at a position
+//! in one) and finished in the same command, each finishing edit planned on the chart as
+//! the step left it.
 //!
 //! Must not: plan a chart edit or word its reply (the chart tools do), or change the
 //! document but through the command.
@@ -12,18 +15,22 @@
 use super::edit_chart::{chart_language, styles_part};
 use crate::planned::run_planned;
 use crate::review::edit_refusal;
-use crate::structure::common::{call, policy};
+use crate::structure::common::{call, outcome, policy, Outcome};
 use crate::{Editing, Version};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Cancel;
 use ooxml_chart::edit::GraphicEdit;
-use ooxml_store::Txn;
+use ooxml_store::{Command, Txn};
 use ooxml_tools::{Refusal, ToolError, TryCall, WayOut};
-use ooxml_tools_chart::{Found, Graphic, GraphicHost, GraphicWriter, NoChart, Warnings, Written};
-use ooxml_word_edit::{EditGraphic, Key, WordDoc};
+use ooxml_tools_chart::{
+    FinishGraphic, Found, Graphic, GraphicHost, GraphicWriter, Inserted, NewGraphic, NoChart, Warnings, Written,
+};
+use ooxml_word_edit::{ChartInserted, ChartParts, EditError, EditGraphic, InsertChart, Key, RevisionPolicy, WordDoc};
+use ooxml_word_model::address::Address;
 use ooxml_word_model::docx::drawings::graphics;
 use ooxml_word_model::docx::graphics::chart_part;
 use ooxml_word_model::docx::Docx;
+use ooxml_xml::Tree;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -77,6 +84,112 @@ impl GraphicWriter for WordGraphics<'_, '_> {
             warnings: edited.warnings.into_iter().chain(edited.out).collect(),
             after: word_graphic(&after, self.doc, address)?,
         })
+    }
+
+    fn insert(
+        &self,
+        at: &str,
+        read: &TryCall,
+        graphic: &dyn NewGraphic,
+        size: (f64, f64),
+        finish: &dyn FinishGraphic,
+    ) -> Result<Inserted, ToolError> {
+        let command = InsertFinished {
+            insert: InsertChart {
+                at: Address::parse(at),
+                chart: Parts(graphic),
+                size,
+                policy: policy(self.editing),
+            },
+            finish,
+            policy: policy(self.editing),
+        };
+        let done = match self.editing.editor.run(self.editing.caller, &command) {
+            Ok(done) => done,
+            Err(error) => return Err(edit_refusal(error, "", read.clone())),
+        };
+        let (inserted, warnings) = done.out;
+        let after = done
+            .version
+            .doc()
+            .docx()
+            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+        let tree = after
+            .package
+            .tree(&inserted.part)
+            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
+        let frame = inserted.drawing.id.clone();
+        let block = inserted.drawing.created.iter().find(|c| c.starts_with("p:")).cloned();
+        let edit: Outcome = inserted.drawing.into();
+        let mut result = outcome(&[edit], String::new(), None);
+        // one warning per edit of the chart made untracked, as docx-agent warns each
+        result.warnings.extend(warnings);
+        Ok(Inserted {
+            frame,
+            block,
+            root: tree.map(|t| Arc::clone(t.root())),
+            result,
+        })
+    }
+
+    fn language(&self) -> Result<String, ToolError> {
+        self.editing
+            .editor
+            .current()
+            .doc()
+            .docx()
+            .map(|docx| chart_language(&docx, self.editing))
+            .map_err(|e| ToolError::internal(e.to_string(), "word:model"))
+    }
+}
+
+/// A new chart's parts (the chart tools' [`NewGraphic`]) as the edit core makes a chart of
+/// them.
+struct Parts<'a>(&'a dyn NewGraphic);
+
+impl ChartParts for Parts<'_> {
+    fn parts(&self, part: &str, workbook_rel: &str) -> Result<(Tree, Arc<[u8]>), EditError> {
+        Ok(self.0.parts(part, workbook_rel)?)
+    }
+}
+
+/// A new chart inserted and finished, one step: the chart, then each finishing edit planned
+/// on the chart as the edit before left it.
+struct InsertFinished<'a> {
+    insert: InsertChart<Parts<'a>>,
+    finish: &'a dyn FinishGraphic,
+    policy: RevisionPolicy,
+}
+
+impl Command<WordDoc> for InsertFinished<'_> {
+    type Out = (ChartInserted, Warnings);
+    type Error = EditError;
+
+    fn validate(&self, doc: &WordDoc) -> Result<(), EditError> {
+        self.insert.validate(doc)
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, WordDoc>) -> Result<Self::Out, EditError> {
+        let inserted = self.insert.insert(tx)?;
+        let drawing = inserted.drawing.id.clone();
+        let mut warnings = Vec::new();
+        let mut done = 0;
+        loop {
+            let docx = tx.doc().docx()?;
+            let Some(edit) = self.finish.next(done, &docx.package, &inserted.part, &drawing) else {
+                break;
+            };
+            let command = EditGraphic {
+                drawing: drawing.clone(),
+                edit: edit?,
+                policy: self.policy.clone(),
+            };
+            command.validate(tx.doc())?;
+            let edited = command.prepare(tx)?;
+            warnings.extend(edited.warnings.into_iter().chain(edited.out));
+            done += 1;
+        }
+        Ok((inserted, warnings))
     }
 }
 

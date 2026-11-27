@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 ooxml-schema.workspace = true
 ooxml-base.workspace = true
+ooxml-provenance.workspace = true
 ooxml-xml.workspace = true
 ooxml-opc.workspace = true
 ooxml-chart.workspace = true
