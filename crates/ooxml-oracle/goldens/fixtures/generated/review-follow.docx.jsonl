@@ -1615,7 +1615,11 @@
 {"digest":"sha256:a7d2191fa54fdae9435ff56f7e6bd21a","id":"structure:ccadbf0fd6d613d4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8a30f697634a14ceaca951a5826e3fbc","id":"structure:c54462b20c9eb5b2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:55ccc2e146f19808661cdc832adb306b","id":"structure:2752fcf7d4eb5b28","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:208bc99fc702a337c669e06cc600dfac","id":"structure:f76d8a2578bdcf8f","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:9e7d521bdd40aac591b7792f8dbb42f2","id":"structure:a9c07b4800230b3b","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:8dd493249bf0586106925d90da944ca3","id":"structure:287cb861d22b730b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:d3d757347013469e4329804ccf852b83","id":"structure:11b787834ea80109","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:d9317046387b73e7e1e4ac65a4b4c63c","id":"structure:6278cf06e2c21db1","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:33a77402f01cd4ffaca36682a4f1729a","id":"structure:3f8220088e538473","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bb7818f8d359f3f2aa7024b01c29d62e","id":"structure:79639947657e1f01","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4679926349d7d064610cf94aa97fc2e9","id":"structure:0c2bed1d3ecf349f","source":"frozen Python a512c901, unmeasured"}
@@ -1651,7 +1655,11 @@
 {"digest":"sha256:bc484e76603469ea58f9126dece1d3a4","id":"structure:aad3fc80a0e36255","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8a30f697634a14ceaca951a5826e3fbc","id":"structure:6c37831b52147a1b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fe6d2b5fac715dc99481dd28c1970339","id":"structure:a3763c99601d892e","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:840850ef30b6b369d5b3c8fc4f8e4040","id":"structure:59df102124e9c958","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:121dc033a4994ceddd923ba104185599","id":"structure:c63449fefd6d2075","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:78e47f4e4eb241b94dde1ec40b5fadc4","id":"structure:a2749573367fdf5b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:dd7bef2826763f37163e0c145c9521e9","id":"structure:c911980d8b680d40","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:565ac0b210a1f2871f5027f4bd7dbc30","id":"structure:9bd8df5e485c1ad0","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:6baf2c5162021028fd6960ed7128509e","id":"structure:8d04244dd8f08125","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bb7818f8d359f3f2aa7024b01c29d62e","id":"structure:1152bb8fa6a0d7a7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e4f2f07242df0986dac269177f5c95ab","id":"structure:11b4602da6f52e5b","source":"frozen Python a512c901, unmeasured"}
@@ -2308,6 +2316,8 @@
 {"digest":"sha256:2ce534d60ab328aaa748b09e6005273a","id":"style:41ffe23ecddbf864","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9b374127f3beaeeb08a913cd0a59e8c1","id":"style:0239aef0068c8195","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9b374127f3beaeeb08a913cd0a59e8c1","id":"style:473a72ba35385630","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e7068e8660a6ea37243520c7f9fe2c0c","id":"style:59bd403e0510da64","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:e7068e8660a6ea37243520c7f9fe2c0c","id":"style:2cf2743457dca768","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:afd3187d576644963408369f83edd51a","id":"style:2f9e240801d325ab","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b0b91cf5585bc5eb66e7ce0ad80f75b4","id":"style:dc116787bd22a9c8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:79a3afa15476f4453735b5cd3c6551a3","id":"style:e05527839fae8ba5","source":"frozen Python a512c901, unmeasured"}
@@ -2674,6 +2684,7 @@
 {"digest":"sha256:869f8b2863ffc76fcc341ae64d8cba13","id":"inspect:0492f6587b0a65a6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a2c50f8cded0c010c1d144a64acf688f","id":"inspect:bfade6c2d008ff16","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d3c52b94d7ebc84ba3afbc7164cf9222","id":"inspect:94c9ee4d486342ae","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:4ae2691bb32859b9b2bdbcd73b4ec2a1","id":"inspect:5edeaec5e64f3701","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:d9b66dcc5d374c8f1738f181b2cb8405","id":"inspect:15d1307094de4813","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a66c826e7427f9ee229bb94762b8c0d8","id":"inspect:a9feeffa897e0d85","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:aaec9065e747631621000fcfc37c1234","id":"inspect:682a66c585c51d4d","source":"frozen Python a512c901, unmeasured"}
@@ -2686,6 +2697,7 @@
 {"digest":"sha256:fac5a8b1dd50dc0784509ee11eced823","id":"ranges:9ca6ffb3ced5071f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:30f00bab9e55359720d5e62113cfa28f","id":"ranges:770103eef4e7e53f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b0430ce07a435afdda38260295ea22ec","id":"ranges:a842653f8734bc97","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:89c4a411404efbb94a30c07c526eb573","id":"ranges:eb89c727af570b20","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:595c63878b94ff0dc3c9bd038b653740","id":"ranges:cb2c9df906f06864","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0842b7518375c845da5afe3cf01575f6","id":"ranges:aecf7d733eac26e9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a5214b2ed38302329e9f81380e10643c","id":"ranges:836223382f3ca698","source":"frozen Python a512c901, unmeasured"}

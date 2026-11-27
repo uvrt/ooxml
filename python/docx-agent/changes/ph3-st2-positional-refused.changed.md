@@ -10,3 +10,4 @@
 - `touched` of a document's first edit names only the blocks the edit changed, and lists plain each part the edit
   wrote ids into: for example `set_properties` on a file without paragraph ids now gives `{"part":
   "word/document.xml"}` where it gave a section of body blocks whose content did not change.
+- word_follow_sample: a copy named by a row's tr: id now follows its table, as a cell does; it was refused before.

@@ -1857,7 +1857,11 @@
 {"digest":"sha256:bd04d10843589d31ac6f1bc90032c4a9","id":"structure:f4a58ee287cbb449","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a1db528e8b911b21a68a5b257e94d305","id":"structure:ccdf638bd3e96572","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:60cd517ee2de3e83bd9bb5ebd05a5a19","id":"structure:d349e2452f6ef932","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:61b765c6247cfb63444676bd19a421e4","id":"structure:1199f36003128c69","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:483aa0bb0780e64240ffcd98e4c254d0","id":"structure:7b1181a597376cc6","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:b469fb9d93268df8e07067382751dafe","id":"structure:735839794c2ca599","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:fe1f7312439b6d4dc3d268cd63d4345d","id":"structure:94ffb394d8c7238a","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:14d8a85a88f4febd1286897bdefea2bb","id":"structure:21ee0e9bab5df1e7","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:0438ca55765dc16faf3701f4161c1fab","id":"structure:9f5201ef86e8c919","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2144bb97e956d1ae5bdad44492fe5e6a","id":"structure:485e13c26e68d6c8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:83f10068a28bfa70655ab7e0d8a40f07","id":"structure:e1e790944ce990a0","source":"frozen Python a512c901, unmeasured"}
@@ -1884,7 +1888,11 @@
 {"digest":"sha256:f59f29eb3e5bc7906551843a53a7f6fb","id":"structure:d57024b094789431","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a1db528e8b911b21a68a5b257e94d305","id":"structure:045a305524bfb5cb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:29f9dc10c712d2a315ba7471f8e7d445","id":"structure:14fee174035e21ef","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:52e75064c564a8f5f4392fb045a3884d","id":"structure:ee1296106f90aefd","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:82884de7b2acb7b9129da9d5b7857fe5","id":"structure:68771800d956c797","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:175a0d5752ea616735eafd8128fb826e","id":"structure:14ec491521537be2","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:711f027bf92e76ab0e0ed1409e453f6d","id":"structure:7dfa45823726ad2e","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:c5498956913b452bb828e380c94e6bd8","id":"structure:4f413ed395b394f1","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:0438ca55765dc16faf3701f4161c1fab","id":"structure:3414039a98ed81f9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:57ad25170cc5bbdae07b3a6a29c87638","id":"structure:dc01801ffcb45bc7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9542612583019e1c5d18f7e42bfe3149","id":"structure:ccf1a6b9d3ebc93c","source":"frozen Python a512c901, unmeasured"}
@@ -2497,6 +2505,8 @@
 {"digest":"sha256:d376f470623c74f7c896de1de1b213a8","id":"style:79cd4d1ccacdebb0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4e216d8af386f9e30f6db012ff485898","id":"style:7e84fe62bfd2979e","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4e216d8af386f9e30f6db012ff485898","id":"style:89fba04deab8f4b1","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:1b502a8fd53a5428e86b54eedbcdb5ac","id":"style:f813f21d254b869d","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:1b502a8fd53a5428e86b54eedbcdb5ac","id":"style:f208417509308b02","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:1f65c79ca3d6f45e0065adb1f1127586","id":"style:f814ffebd3bf829a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:375cf4c2e9e1b9b59c94cf329487e7e8","id":"style:d7c46b7a497fd2be","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9c9bae27498f38da2324c57cfc61f2ab","id":"style:bd9257bf72b57353","source":"frozen Python a512c901, unmeasured"}
@@ -2814,6 +2824,7 @@
 {"id":"inspect:529f5e8766eae877","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"inspect:73af2a2fe8827b4e","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"inspect:91819f08c7386388","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
+{"id":"inspect:542a419de372aee9","not_supported":"word_inspect of Accept All's cell ends","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"id":"inspect:ef4dd738b1ddc3b6","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"inspect:ad752ba3d754df6a","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"inspect:682a66c585c51d4d","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
@@ -2826,6 +2837,7 @@
 {"id":"ranges:d8950e8a5bbb426e","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"ranges:be796676f48822cc","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"ranges:4945e4b1ba3f8131","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
+{"id":"ranges:888ff6fabc1d8472","not_supported":"word_read final view of Accept All's cell ends","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:45bf1604432de408a80aa46100a1dcd8","id":"ranges:e291dd74835c06c9","source":"frozen Python a512c901, unmeasured"}
 {"id":"ranges:f218f2f1204f9f70","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
 {"id":"ranges:836223382f3ca698","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
