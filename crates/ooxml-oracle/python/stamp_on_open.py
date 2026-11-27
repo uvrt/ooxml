@@ -6,6 +6,7 @@ gate cases and the host goldens that named blocks by place re-targeted to those 
     python crates/ooxml-oracle/python/stamp_on_open.py maps --rust target/release/word-ids --out maps.jsonl
     python crates/ooxml-oracle/python/stamp_on_open.py cases --maps maps.jsonl --renamed case-ids.jsonl
     python crates/ooxml-oracle/python/stamp_on_open.py host --maps maps.jsonl
+    python crates/ooxml-oracle/python/stamp_on_open.py suite --renamed crates/ooxml-oracle/cases/stamp-on-open-renamed.jsonl
 
 * ``maps``: each document of the trees, ``cases/inputs`` and ``host/inputs`` read by
   ``word-ids --renamed``: the ids an unstamped reading gave (``p@body/3``, ``t@body/0``, a row
@@ -225,6 +226,38 @@ def cmd_host(args) -> int:
     return 0
 
 
+def cmd_suite(args) -> int:
+    """The Word suite's names of gates cases (``gates/<fixture>/<case id>``) re-targeted by the
+    old -> new case id map: its sample (word/suite/gate-sample.json) and the keys of Word's
+    recorded answers (word/observations/suite-word.json), kept as Word gave them."""
+    renamed_ids: dict[tuple[str, str], str] = {}
+    for line in Path(args.renamed).read_text().splitlines():
+        entry = json.loads(line)
+        if entry["tree"] == "fixtures":
+            renamed_ids[(entry["document"], entry["old"])] = entry["new"]
+
+    def name(case: str) -> str:
+        if not case.startswith("gates/"):
+            return case
+        fixture, _, case_id = case[len("gates/"):].rpartition("/")
+        new = renamed_ids.get((fixture, case_id))
+        return f"gates/{fixture}/{new}" if new else case
+
+    count = 0
+    sample_path = ORACLE / "word" / "suite" / "gate-sample.json"
+    sample = json.loads(sample_path.read_text())
+    count += sum(name(c) != c for c in sample["cases"])
+    sample["cases"] = [name(c) for c in sample["cases"]]
+    sample_path.write_text(json.dumps(sample, indent=1, ensure_ascii=False) + "\n")
+    observed_path = ORACLE / "word" / "observations" / "suite-word.json"
+    observed = json.loads(observed_path.read_text())
+    count += sum(name(k) != k for k in observed)
+    observed_path.write_text(json.dumps({name(k): v for k, v in observed.items()}, indent=1,
+                                        ensure_ascii=False) + "\n")
+    print(f"{count} names of gates cases re-targeted")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -236,8 +269,10 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--renamed", required=True, help="the old -> new case id map (appended to)")
     h = sub.add_parser("host")
     h.add_argument("--maps", required=True)
+    w = sub.add_parser("suite")
+    w.add_argument("--renamed", required=True, help="the old -> new case id map (cases/stamp-on-open-renamed.jsonl)")
     args = parser.parse_args(argv)
-    return {"maps": cmd_maps, "cases": cmd_cases, "host": cmd_host}[args.command](args)
+    return {"maps": cmd_maps, "cases": cmd_cases, "host": cmd_host, "suite": cmd_suite}[args.command](args)
 
 
 if __name__ == "__main__":
