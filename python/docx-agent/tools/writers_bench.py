@@ -1,6 +1,6 @@
-"""Writers on one long document through docx-agent's toolbox, on the Rust session: per-edit
+"""Writers on one long document through docx-agent's toolbox, on the Rust host: per-edit
 wall (p50, p99, max), the time each call held the document and waited for its lock, the calls
-the session served and the memory.  The 3k-page bench of the heavy gates (.github/workflows/gates.yml), as lanes
+by tool, the document's store counters and the memory.  The 3k-page bench of the heavy gates (.github/workflows/gates.yml), as lanes
 P2c6 and P2c7 ran it.
 
     python tools/writers_bench.py long.docx [writers=24] [edits=5] [mix=rust|mixed]
@@ -50,7 +50,6 @@ def percentile(values: list[float], p: float) -> float:
 def main() -> None:
     from ooxml_edit.tools import Toolbox
 
-    from docx_agent.rust import edits, reads
     from docx_agent.tools import FORMAT, GROUPS, TOOLS as ALL
 
     path = sys.argv[1]
@@ -108,7 +107,10 @@ def main() -> None:
         return {tool: (round(reduce([c[index] for c in calls if c[0] == tool]) * 1000, 1)
                        if any(c[0] == tool for c in calls) else None) for tool in TOOLS}
 
-    rust = reads.session()
+    served: dict[str, int] = {}
+    for record in session.log:          # (the session's record of every call)
+        if record.ok:
+            served[record.tool] = served.get(record.tool, 0) + 1
     print(json.dumps({
         "writers": writers, "edits": len(calls), "mix": mix, "wall_s": round(wall, 2), "cpu_s": round(cpu, 2),
         "p50_ms": round(percentile(walls, 0.5) * 1000, 1), "p99_ms": round(percentile(walls, 0.99) * 1000, 1),
@@ -116,8 +118,8 @@ def main() -> None:
         "by_tool_p99_ms": by_tool(1, lambda v: percentile(v, 0.99)),
         "held_max_ms": by_tool(2, max), "lock_wait_max_ms": by_tool(3, max),
         "errors": len(errors), "first_error": errors[:1],
-        "served": edits.served(),
-        "store": dict(rust.store_stats(session.entry(doc).handle.doc)),
+        "served": served,
+        "store": dict(session.rust.store_stats(doc)),
         "open_s": round(opened, 2), "rss_open_mb": round(after_open - before, 1), "rss_max_mb": round(rss_mb(), 1),
     }))
 

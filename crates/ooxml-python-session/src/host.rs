@@ -471,6 +471,24 @@ impl PyHostSession {
         Ok(found.as_deref().map(PyWordPages::of))
     }
 
+    /// `doc`'s store counters: commits, conflicts, exclusive runs (a bench's, an
+    /// application's monitoring).
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open.
+    fn store_stats(&self, py: Python<'_>, doc: &str) -> PyResult<Vec<(&'static str, u64)>> {
+        let id = self.doc(doc)?;
+        let session = &self.inner;
+        let s = py
+            .detach(|| session.session().store_stats(&id))
+            .map_err(|e| to_py(&e))?;
+        Ok(vec![
+            ("commits", s.commits),
+            ("conflicts", s.conflicts),
+            ("exclusive", s.exclusive),
+        ])
+    }
+
     /// What the session keeps of `doc` in its memory budget now, bytes: its page engine's
     /// accounts (0 where it has none).
     ///
