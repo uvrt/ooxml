@@ -28,6 +28,7 @@ use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{Change, EarlierIds, Editor, IdsChange, WordDoc};
 use ooxml_word_model::docx::Versions;
 use ooxml_word_model::ids::LoadedState;
+use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_xml::Tree;
 use serde_json::Value;
 use std::any::Any;
@@ -54,12 +55,18 @@ impl ooxml_derive::CacheBudget for Budget {
     }
 }
 
-/// Word documents (`docx`), laid out by the session with `pages` where given.
+/// Word documents (`docx`), laid out by the session with `pages` where given, with the
+/// application's settings of the format (docx-agent's `docx_format`).
 #[derive(Debug, Clone, Default)]
 pub struct WordFormat {
     /// What the session lays its Word documents out with, each document's engine its own
     /// (fonts and memory budget); `None`: only with the layout a call's host gives.
     pub pages: Option<crate::SessionPages>,
+    /// The application's minimum text size (`docx_format(min_text_size=...)`, round 17 P6b;
+    /// never a tool argument): one number for every kind of text, or one per kind, read with
+    /// [`ooxml_tools_word::minimum_of`]. `check` reports the text drawn below it where the
+    /// call gives no `min_size` of its own; `None`: no minimum.
+    pub min_text_size: Option<Minimum>,
 }
 
 impl Format for WordFormat {
@@ -84,7 +91,7 @@ impl Format for WordFormat {
     }
 
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
-        let word = Word::open(package, env, &EarlierIds::default(), self.pages.clone())?;
+        let word = Word::open(package, env, &EarlierIds::default(), self)?;
         Ok(Arc::new(word))
     }
 
@@ -94,7 +101,7 @@ impl Format for WordFormat {
         state: &str,
         env: &OpenEnv<'_>,
     ) -> Result<ooxml_session::WithState, SessionError> {
-        let (word, numbers) = Word::open_seeded(package, env, state, self.pages.clone()).map_err(|error| {
+        let (word, numbers) = Word::open_seeded(package, env, state, self).map_err(|error| {
             if crate::refuses_state(&error) {
                 SessionError::StateRefused {
                     kind: ooxml_session::DocKind::Docx,
@@ -265,6 +272,8 @@ pub struct Word {
     pub(crate) versions: Arc<Versions>,
     /// What the session lays it out with by default ([`WordFormat::pages`]).
     pub(crate) default_pages: Option<crate::SessionPages>,
+    /// The application's minimum text size for its checks ([`WordFormat::min_text_size`]).
+    pub(crate) min_text_size: Option<Minimum>,
 }
 
 impl Word {
@@ -278,11 +287,11 @@ impl Word {
         package: Package,
         env: &OpenEnv<'_>,
         earlier: &EarlierIds,
-        pages: Option<crate::SessionPages>,
+        format: &WordFormat,
     ) -> Result<Word, SessionError> {
         let (clock, budget) = ports(env.context);
         let editor = Editor::open_with(package, env.store, clock, budget, earlier).map_err(SessionError::format)?;
-        Self::of_editor(editor, env.context, pages)
+        Self::of_editor(editor, env.context, format)
     }
 
     /// `package` opened as a Word document with the id state saved beside its bytes
@@ -296,12 +305,12 @@ impl Word {
         package: Package,
         env: &OpenEnv<'_>,
         state: &str,
-        pages: Option<crate::SessionPages>,
+        format: &WordFormat,
     ) -> Result<(Word, LoadedState), SessionError> {
         let (clock, budget) = ports(env.context);
         let (editor, loaded) =
             Editor::open_with_state(package, env.store, clock, budget, state).map_err(SessionError::format)?;
-        Ok((Self::of_editor(editor, env.context, pages)?, loaded))
+        Ok((Self::of_editor(editor, env.context, format)?, loaded))
     }
 
     /// `package` opened with its id state as [`Word::open_state`] opens it, the ids the
@@ -314,9 +323,9 @@ impl Word {
         package: Package,
         env: &OpenEnv<'_>,
         state: &str,
-        pages: Option<crate::SessionPages>,
+        format: &WordFormat,
     ) -> Result<(Word, (i64, i64)), SessionError> {
-        let (word, loaded) = Self::open_state(package, env, state, pages)?;
+        let (word, loaded) = Self::open_state(package, env, state, format)?;
         word.retired().seed(crate::session::retired_rows(&loaded));
         Ok((word, (loaded.versions.version, loaded.versions.last)))
     }
@@ -365,7 +374,7 @@ impl Word {
     }
 
     /// A Word document's state as the session holds it, from its editor.
-    fn of_editor(editor: Editor, context: &Context, pages: Option<crate::SessionPages>) -> Result<Word, SessionError> {
+    fn of_editor(editor: Editor, context: &Context, format: &WordFormat) -> Result<Word, SessionError> {
         let opened = editor.store().snapshot();
         // the paragraph texts every find reads and the facts the document-wide
         // lookups read (bookmarks, controls, revisions, frames), read once as the
@@ -392,7 +401,8 @@ impl Word {
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
             versions: Arc::new(Versions::new()),
-            default_pages: pages,
+            default_pages: format.pages.clone(),
+            min_text_size: format.min_text_size.clone(),
         })
     }
 

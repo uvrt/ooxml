@@ -81,16 +81,18 @@ pub struct Known {
     /// The tool design rule that makes the new answer right (rule 1), where it is one.
     pub rule: Option<i64>,
     /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
-    /// `optimistic-batches-2026-11-25`, `stamp-on-open-2026-11-26`).
+    /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`,
+    /// `stamp-on-open-2026-11-26`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 3] = [
+pub const DECISIONS: [&str; 4] = [
     "structured-problems-2026-11-25",
     "optimistic-batches-2026-11-25",
+    "limits-in-details-2026-11-25",
     "stamp-on-open-2026-11-26",
 ];
 
@@ -713,8 +715,8 @@ impl Replayer {
     }
 
     /// A session for a case whose head is `head`: the toolbox and session settings it gives
-    /// (roles, locale, limits; `Settings` for any other), its clock; Word's format laid out
-    /// with the repository's open faces (a bench's host too).
+    /// (roles, locale, limits, Word's `min_text_size`; `Settings` for any other), its clock;
+    /// Word's format laid out with the repository's open faces (a bench's host too).
     ///
     /// # Errors
     /// What it waits for: a setting the replay does not make yet.
@@ -728,6 +730,7 @@ impl Replayer {
         let given = |which: &str| head.get(which).and_then(Value::as_object).cloned().unwrap_or_default();
         let (toolbox, session) = (given("toolbox"), given("session"));
         let mut locale = None;
+        let mut min_text_size = None;
         for (key, value) in toolbox.iter().chain(session.iter()) {
             match key.as_str() {
                 // (block_edits: when the Python host drafts an edit beside another; the Rust
@@ -736,6 +739,10 @@ impl Replayer {
                 "roles" => settings.roles = roles_of(value).ok_or(Waits::Settings)?,
                 "locale" => locale = Some(locale_of(value).ok_or(Waits::Settings)?),
                 "limits" => limits(&mut settings, value)?,
+                // docx_format(min_text_size=...): Word's format's setting
+                "min_text_size" => {
+                    min_text_size = ooxml_tools_word::minimum_of(value).map_err(|_| Waits::Settings)?;
+                }
                 _ => return Err(Waits::Settings),
             }
         }
@@ -749,7 +756,10 @@ impl Replayer {
             memory: MemoryBudget::new(256 << 20),
             raster: Some(Arc::clone(&self.raster)),
         };
-        let format = WordFormat { pages: Some(pages) };
+        let format = WordFormat {
+            pages: Some(pages),
+            min_text_size,
+        };
         let mut all: Vec<Arc<dyn ooxml_session::Format>> = vec![Arc::new(format)];
         all.extend(formats);
         let host = Arc::new(Host::new(all, settings, Arc::new(HostTools)));

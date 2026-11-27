@@ -92,6 +92,11 @@ OBSERVATIONS: dict[str, dict] = {
         "probe": "crates/ooxml-oracle/word/probes/merged_rows_probe.py",
         "readers": ["python/docx-agent/tests/test_merged_rows_r59.py"],
     },
+    "min-text-size-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/min_text_size_probe.py",
+        "readers": ["crates/ooxml-oracle/word/tests/test_min_text_size_recorded.py",
+                    "crates/ooxml-oracle/tests/integration/host_min_text_size.rs"],
+    },
     "paraid-durability.json": {
         "probe": "crates/ooxml-oracle/word/probes/paraid_probe.py",
         "readers": ["crates/ooxml-oracle/word/tests/test_paraid_recorded.py"],

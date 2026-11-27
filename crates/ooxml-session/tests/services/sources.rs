@@ -358,6 +358,7 @@ fn a_resolved_table_is_held_to_the_dataset_limit() {
         error["message"],
         "d2/t:sales has 12 values; at most 5: derive a smaller dataset"
     );
+    assert_eq!(error["details"], json!({"limit": 5, "given": 12}));
 }
 
 fn set_from(sess: &mut Sess, value: &str) -> crate::toy_session::Reply {

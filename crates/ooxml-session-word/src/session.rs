@@ -91,13 +91,13 @@ impl WordSession for Session {
             return self.open(bytes, kind, name);
         }
         let package = Package::open(bytes, &self.context().limits)?;
-        let word = Word::open(package, &self.open_env(), earlier, pages_of(self))?;
+        let word = Word::open(package, &self.open_env(), earlier, &format_of(self))?;
         Ok(self.insert(DocKind::Docx, name, Arc::new(word)))
     }
 
     fn open_state(&self, bytes: Arc<[u8]>, name: &str, state: &str) -> Result<(DocId, (i64, i64)), SessionError> {
         let package = Package::open(bytes, &self.context().limits)?;
-        let (word, numbers) = Word::open_seeded(package, &self.open_env(), state, pages_of(self))?;
+        let (word, numbers) = Word::open_seeded(package, &self.open_env(), state, &format_of(self))?;
         let id = self.insert(DocKind::Docx, name, Arc::new(word));
         Ok((id, numbers))
     }
@@ -147,13 +147,15 @@ impl WordSession for Session {
     }
 }
 
-/// What the session lays its Word documents out with by default: its Word format's.
-fn pages_of(session: &Session) -> Option<crate::SessionPages> {
+/// The session's Word format (what it lays its Word documents out with by default, the
+/// application's settings), or the default one where it holds none.
+fn format_of(session: &Session) -> crate::WordFormat {
     session
         .formats()
         .iter()
         .find_map(|f| f.as_any().downcast_ref::<crate::WordFormat>())
-        .and_then(|f| f.pages.clone())
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// Whether `error` is the refusal of an id state given with a document's bytes (they open

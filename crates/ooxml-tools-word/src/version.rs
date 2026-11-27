@@ -181,6 +181,10 @@ pub struct Owned<'a> {
     /// Who the document's edits are tracked as when the call started (`describe`'s
     /// `tracking`); `None`: untracked.
     pub tracking: Option<&'a str>,
+    /// The application's minimum text size for the document's checks (docx-agent's
+    /// `docx_format(min_text_size=...)`): `check` reports the text drawn below it where the
+    /// call gives no `min_size`; `None`: none set.
+    pub min_text_size: Option<&'a ooxml_word_pages::layout_facts::sizes::Minimum>,
 }
 
 /// A table of another open document the host holds itself (a workbook's `t:stock`), as a

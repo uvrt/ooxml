@@ -31,11 +31,13 @@ pub enum Minimum {
 }
 
 impl Minimum {
-    /// The smallest of its points.
-    fn least(&self) -> Option<f64> {
+    /// The largest of its points: text at or above it is below no kind's minimum. (Round 60,
+    /// R140: docx-agent 0.1 kept only the text below the smallest, so a kind with a higher
+    /// minimum than another's was never checked against its own.)
+    fn most(&self) -> Option<f64> {
         match self {
             Minimum::One(points) => Some(*points),
-            Minimum::PerKind(kinds) => kinds.values().copied().reduce(f64::min),
+            Minimum::PerKind(kinds) => kinds.values().copied().reduce(f64::max),
         }
     }
 }
@@ -161,7 +163,8 @@ struct Seen {
 struct Fold<'f, 'a> {
     facts: &'f Facts<'a>,
     minimum: Option<&'f Minimum>,
-    least: Option<f64>,
+    /// The largest minimum ([`Minimum::most`]): what text below any kind's minimum is below.
+    most: Option<f64>,
     smallest: BTreeMap<String, f64>,
     /// Each line's paragraph, by its place (and its story's part, a header's or footer's),
     /// found once.
@@ -179,7 +182,7 @@ pub fn text_sizes(facts: &Facts<'_>, minimum: Option<&Minimum>) -> TextSizes {
     let mut fold = Fold {
         facts,
         minimum,
-        least: minimum.and_then(Minimum::least),
+        most: minimum.and_then(Minimum::most),
         smallest: BTreeMap::new(),
         owners: HashMap::new(),
         small: Vec::new(),
@@ -212,8 +215,8 @@ impl<'a> Fold<'_, 'a> {
             for &(kind, half_points) in &part.smallest {
                 self.smallest_is(kind, half_points);
             }
-            let Some(least) = self.least else { return };
-            for sized in part.sized.iter().filter(|s| size(s.half_points) < least) {
+            let Some(most) = self.most else { return };
+            for sized in part.sized.iter().filter(|s| size(s.half_points) < most) {
                 if let Some(owner) = self.owner(read, sized) {
                     self.small(number, sized, &owner);
                 }
@@ -227,7 +230,7 @@ impl<'a> Fold<'_, 'a> {
                 continue;
             }
             self.smallest_is(sized.kind, sized.half_points);
-            if self.least.is_some_and(|least| size(sized.half_points) < least) {
+            if self.most.is_some_and(|most| size(sized.half_points) < most) {
                 self.small(number, sized, &owner);
             }
         }

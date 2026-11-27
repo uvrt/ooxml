@@ -161,6 +161,7 @@ fn resolve<'a, 'v>(
                 items.len()
             ),
         )
+        .with_limit(MAX_COPIES, items.len())
         .at("copies"));
     }
     let mine = Doc {

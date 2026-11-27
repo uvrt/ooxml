@@ -107,6 +107,7 @@ pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Resu
                 ranges.len()
             ),
         )
+        .with_limit(MAX_RANGES, ranges.len())
         .at("range"));
     }
     let call = Drawer {
@@ -387,6 +388,7 @@ fn render_pages(
                 ooxml_tools::tiles::MAX_TILES
             ),
         )
+        .with_limit(per_call, pages.len())
         .at("pages"));
     }
     call.check_images(pages.len())?;

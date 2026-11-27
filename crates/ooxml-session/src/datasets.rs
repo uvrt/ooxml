@@ -373,7 +373,8 @@ fn full(count: usize, limits: &DatasetLimits, known: Vec<String>) -> ToolError {
             "{count} datasets are kept; at most {}: reuse an id to replace one",
             limits.max_datasets
         ),
-    );
+    )
+    .with_limit(limits.max_datasets, count);
     match WayOut::names(known) {
         Some(way_out) => error.with_way_out(way_out),
         None => error,
@@ -664,7 +665,8 @@ impl CallDatasets {
                     dataset.columns().len(),
                     limits.max_cells
                 ),
-            ));
+            )
+            .with_limit(limits.max_cells, dataset.cells()));
         }
         let mut known: Vec<String> = store
             .ids()

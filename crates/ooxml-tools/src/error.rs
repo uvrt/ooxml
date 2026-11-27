@@ -255,6 +255,14 @@ impl ToolError {
         self
     }
 
+    /// A `limit` refusal with its numbers as details (round 60, R142): `limit`, the most the
+    /// call may hold, and `given`, what it held, so an agent reads them without the message.
+    #[must_use]
+    pub fn with_limit(self, limit: usize, given: usize) -> Self {
+        self.with_detail("limit", Value::from(limit))
+            .with_detail("given", Value::from(given))
+    }
+
     /// The code.
     #[must_use]
     pub fn code(&self) -> ErrorCode {

@@ -47,7 +47,8 @@ impl Limits {
             return Err(ToolError::failure(
                 Failure::Limit,
                 format!("at most {} images per call", self.images_per_call),
-            ));
+            )
+            .with_limit(self.images_per_call, count));
         }
         for span in [BudgetSpan::Session, BudgetSpan::Round] {
             for budget in budgets.iter().filter(|b| b.span == span) {
@@ -148,6 +149,10 @@ mod tests {
         let limits = Limits::DEFAULT;
         let call = limits.check_images(5, &[]).unwrap_err();
         assert_eq!(call.message(), "at most 4 images per call");
+        assert_eq!(
+            serde_json::Value::Object(call.details().clone()),
+            json!({"limit": 4, "given": 5})
+        );
         let both = [budget(BudgetSpan::Round, 3, 3), budget(BudgetSpan::Session, 10, 9)];
         let session = limits.check_images(2, &both).unwrap_err();
         assert_eq!(

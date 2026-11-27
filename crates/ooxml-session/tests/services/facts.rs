@@ -631,6 +631,7 @@ fn more_than_fifty_references_in_one_text_is_refused() {
     let text = "{{d:by_item/#1/item}} ".repeat(51);
     let error = failed(say(&[&text]), "limit");
     assert_eq!(error["message"], "more than 50 references in one text");
+    assert_eq!(error["details"], json!({"limit": 50}));
 }
 
 /// A key written as a reference writes it (`quote`), and a day is a `Day`.

@@ -129,6 +129,7 @@ pub(crate) fn opened_version<'a>(
         rows_written: editing.rows_written,
         made_by: editing.made_by,
         tracking: editing.tracking.map(|t| t.author.as_str()),
+        min_text_size: None,
     };
     Version::new("case.docx", editing.opened.package(), 1, versions)
         .with_others(editing.others)
