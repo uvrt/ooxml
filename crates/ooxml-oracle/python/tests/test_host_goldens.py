@@ -1,5 +1,5 @@
-"""The host goldens (host_goldens.py): every recorded case replayed through today's Python host
-(docx-agent's Toolbox) gives what was recorded -- 0 differences but the known ones -- and the
+"""The host goldens (host_goldens.py): every recorded case replayed through docx-agent's Toolbox
+(its facade over the Rust host) gives what was recorded -- 0 differences but the known ones -- and the
 format's own pieces (normalisation, part digests, known differences) do what they say."""
 
 from __future__ import annotations

@@ -15,6 +15,7 @@
 use crate::session::HostSession;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_session::blobs::check_package;
+use ooxml_session::elsewhere::{ElsewhereFormat, HeldElsewhere};
 use ooxml_session::outputs::Output;
 use ooxml_session::{CallContext, DocId, DocKind, Format, SessionError};
 use serde_json::{Map, Value};
@@ -140,6 +141,81 @@ impl HostSession {
         Ok(id)
     }
 
+    /// A document the application's own host opened (design phase 3, decision D3): its id
+    /// from the session's one counter (`doc_id`: the application's, as [`Opening::doc_id`]),
+    /// a stand-in ([`HeldElsewhere`]) in the session's table, its `size` counted in the
+    /// session's room, at state `version`.
+    ///
+    /// # Errors
+    /// [`OpenRefused`]: an id refused or in use, a kind no format here holds elsewhere,
+    /// no room.
+    pub fn hold(
+        &self,
+        kind: DocKind,
+        name: &str,
+        size: u64,
+        version: u64,
+        how: &Opening<'_>,
+    ) -> Result<DocId, OpenRefused> {
+        let given = how.doc_id.map(given_doc_id).transpose()?;
+        if let Some(id) = &given {
+            self.free_id(id)?;
+        }
+        if !self
+            .host
+            .formats
+            .iter()
+            .any(|f| f.kind() == kind && f.as_any().is::<ElsewhereFormat>())
+        {
+            return Err(OpenRefused::Argument(format!(
+                "{} documents are not held by the application's own host here",
+                kind.as_str()
+            )));
+        }
+        self.room_for_document(size)?;
+        let held =
+            Arc::new(HeldElsewhere::new(kind, size, version).map_err(|e| OpenRefused::Unreadable(e.to_string()))?);
+        let id = self
+            .session
+            .insert_as(
+                kind,
+                name,
+                Arc::clone(&held) as Arc<dyn ooxml_session::FormatDoc>,
+                given,
+            )
+            .map_err(|error| match error {
+                SessionError::IdTaken(id) => self.taken(&id),
+                other => OpenRefused::Unreadable(other.to_string()),
+            })?;
+        let mut stores = self.stores();
+        stores.refs.insert(id.to_string(), ooxml_session::RefTable::new());
+        stores.docs.insert(
+            id.to_string(),
+            Held {
+                source: how.source.unwrap_or("app").to_owned(),
+                size,
+            },
+        );
+        Ok(id)
+    }
+
+    /// The application's own host's document `doc` is at state `version` now (a call or the
+    /// application changed it, or undid a change): what its datasets' staleness and the
+    /// rows read of it are compared with.
+    ///
+    /// # Errors
+    /// [`SessionError::NotOpen`]; [`SessionError::Kind`] for a document the session holds
+    /// itself.
+    pub fn held_moved(&self, doc: &DocId, version: u64) -> Result<(), SessionError> {
+        let format = self.session.format_doc(doc)?;
+        let held = format
+            .as_any()
+            .downcast_ref::<HeldElsewhere>()
+            .ok_or_else(|| SessionError::Kind(format!("{doc} is held by the session itself")))?;
+        held.moved(version);
+        Ok(())
+    }
+
     /// What `open_document` and `new_document` say of the open document `id`: its id, kind,
     /// name, where it came from and its version.
     pub(crate) fn described(&self, id: &DocId) -> Map<String, Value> {
@@ -230,6 +306,7 @@ impl HostSession {
             serial: stores.datasets.serial(id)?,
             stale: entry.stale(&heads),
             closed: entry.closed(),
+            source_version: entry.source.source_version(&heads),
             entry: entry.clone(),
         })
     }
@@ -406,4 +483,6 @@ pub struct KeptDataset {
     pub stale: bool,
     /// Whether its source document is closed.
     pub closed: bool,
+    /// Its source document's version now; `None` once closed, or with no source.
+    pub source_version: Option<u64>,
 }

@@ -1,11 +1,11 @@
-//! Owns: `edit_chart`'s handlers (docx-agent's `tools/shared.py`, `edit_chart`): `read` on
-//! the version the call pins -- the chart the target names (the first drawing or group
-//! member with that id, docx-agent's `Document.chart`) and its reply (`chart_read`) --
-//! the data actions (`apply_data_action`: points changed in place, categories and series
-//! added and removed, the titles, the legend, value labels and the gap width; their series
-//! and category named as `chart_names` resolves them, the edit `chart_data`'s, one
-//! [`EditGraphic`] command, the chart's record of where its values came from kept true by
-//! `chart_record`) through the editor -- and the style actions (`chart_style`).
+//! Owns: `edit_chart` as Word serves it (docx-agent's `tools/shared.py`, `edit_chart`):
+//! its handlers over Word's hosts of the chart tools (`graphics`) -- `read`, and the
+//! style actions, are the chart tools' (`ooxml_tools_chart`) -- the data actions
+//! (`apply_data_action`: points changed in place, categories and series added and removed,
+//! the titles, the legend, value labels and the gap width; their series and category
+//! named as `ooxml_tools_chart::names` resolves them, the edit `chart_data`'s, the chart's
+//! record of where its values came from kept true by `chart_record`) through Word's
+//! writer.
 //!
 //! And `add` (`chart_add`). New chart text is in the document's default language, else the
 //! call's locale's (the session's, en-US where the host sets none: [`chart_language`]).
@@ -17,55 +17,37 @@
 //! Must not: change the document but through a command.
 
 use super::chart_data::{ChartDataEdit, DataAction};
-use super::chart_names::{category_names, position, series_names, Stop};
-use super::chart_read::{chart_json, chart_read_json, style_json};
-use super::chart_style;
-use super::chart_style::ChartStyleEdit;
-use super::{ChartAction, ChartAxis, ChartPosition, EditChart};
-use crate::planned::run_planned;
-use crate::structure::common::{call, policy, refused};
+use super::graphics::{VersionGraphics, WordGraphics};
 use crate::{Editing, Version};
-use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Cancel;
-use ooxml_chart::data::{chart_data, ChartData};
-use ooxml_store::Txn;
+use ooxml_chart::data::ChartData;
 use ooxml_tools::TryCall;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolError, ToolResult, WayOut};
-use ooxml_word_edit::{EditGraphic, GraphicEdit, Key, WordDoc};
-use ooxml_word_model::docx::drawings::graphics;
-use ooxml_word_model::docx::graphics::chart_part;
+use ooxml_tools_chart::names::{category_names, position, series_names, Stop};
+use ooxml_tools_chart::{
+    changed, not_supported, read_call, style_action, ChartAction, ChartAxis, ChartPosition, EditChart, STYLE_ACTIONS,
+};
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::Element;
-use serde_json::{json, Value};
-use std::sync::Arc;
+use serde_json::Value;
 
 /// `edit_chart`'s `read`: what the chart holds and how it looks, changing nothing.
 ///
 /// # Errors
 /// `not_found` for a target no drawing has, `refused` for a drawing that is not a chart,
 /// `timeout` when the call is cancelled.
-pub fn edit_chart_read(args: &EditChart, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
-    crate::review::stopped(cancel)?;
-    let docx = version.docx()?;
-    let summary = format!("Read {}", args.target);
-    let (part, root) = match chart_of(args, &docx, "read")? {
-        Ok(found) => found,
-        Err(why) => return Err(not_supported(args, &why)),
+fn edit_chart_read(args: &EditChart, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
+    let host = VersionGraphics {
+        version,
+        cancel,
+        doc: &args.doc,
     };
-    crate::review::stopped(cancel)?;
-    match chart_read_json(&args.target, &docx.package, &part, &root) {
-        Ok(data) => {
-            let mut done = Done::new(summary);
-            done.data = Some(data);
-            Ok(done)
-        }
-        Err(why) => Err(not_supported(args, why.0)),
-    }
+    ooxml_tools_chart::edit_chart_read(args, &host)
 }
 
 /// `edit_chart`'s actions that change the chart.
 #[must_use]
-pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> {
+fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> {
     if let Err(error) = crate::review::stopped(editing.cancel) {
         return ToolResult::failed(error);
     }
@@ -78,6 +60,10 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
         // values from a table, with their provenance records: the host's (KeepText later)
         return ToolResult::failed(not_supported(args, &format!("edit_chart {action} from")));
     }
+    let writer = WordGraphics {
+        editing,
+        doc: &args.doc,
+    };
     let ran = if args.action == ChartAction::Add {
         let lang = editing
             .editor
@@ -89,8 +75,17 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
             Ok(lang) => super::chart_add::add(args, editing, lang),
             Err(e) => Err(ToolError::internal(e.to_string(), "word:model")),
         }
+    } else if STYLE_ACTIONS.contains(&args.action) {
+        style_action(args, &writer, summary)
     } else {
-        chart_action(args, editing, summary)
+        let read = read_call(args);
+        let edit = |data: &ChartData, _: &Element, lang: &str| {
+            planned(args, data, &read, lang).map(|action| ChartDataEdit {
+                address: args.target.clone(),
+                action,
+            })
+        };
+        changed(args, &writer, summary, false, &edit)
     };
     match ran {
         Ok(result) => result,
@@ -98,157 +93,10 @@ pub fn edit_chart(args: &EditChart, editing: &Editing<'_>) -> ToolResult<Value> 
     }
 }
 
-/// The style actions (ooxml-edit's `STYLE_ACTIONS`): `chart_style` plans them.
-const STYLE_ACTIONS: [ChartAction; 7] = [
-    ChartAction::SetAxisScale,
-    ChartAction::SetGridlines,
-    ChartAction::FormatSeries,
-    ChartAction::FormatPoint,
-    ChartAction::SetSeriesType,
-    ChartAction::SetTextStyle,
-    ChartAction::SetPointLabels,
-];
-
 /// Word's look for value labels: their size (`WORD_LOOK.data_labels`, hundredths of a point).
 const WORD_LABEL_SIZE: u32 = 900;
 /// Word's look for titles: a chart's and an axis' (`WORD_LOOK.title`, `.axis_title`).
 const WORD_TITLE_SIZES: (u32, u32) = (1400, 1000);
-
-/// A data or style action: the chart found and read where the edit is applied, its series
-/// and category resolved there, as one command.
-fn chart_action(args: &EditChart, editing: &Editing<'_>, summary: String) -> Result<ToolResult<Value>, ToolError> {
-    let read = call(
-        "edit_chart",
-        &[
-            ("doc", json!(args.doc)),
-            ("target", json!(args.target)),
-            ("action", json!("read")),
-        ],
-    );
-    let style = STYLE_ACTIONS.contains(&args.action);
-    // the series and categories are named as indices in the edit's transaction, on the
-    // version it is applied to: a series added or removed meanwhile is a conflict, and the
-    // names are resolved again
-    let ran = if style {
-        let edit = |data: &ChartData, root: &Element, lang: String| {
-            chart_style::planned(args, data, root, &read, lang).map(|action| ChartStyleEdit {
-                address: args.target.clone(),
-                action,
-            })
-        };
-        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
-        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
-    } else {
-        let edit = |data: &ChartData, _: &Element, lang: String| {
-            planned(args, data, &read, &lang).map(|action| ChartDataEdit {
-                address: args.target.clone(),
-                action,
-            })
-        };
-        let plan = |tx: &mut Txn<'_, WordDoc>| chart_plan(args, editing, tx, &edit);
-        run_planned(editing, plan)?.map(|done| (done.out.0, done.version))
-    };
-    let (edited, version) = match ran {
-        Ok(done) => done,
-        Err(error) => return Ok(refused(error, read)),
-    };
-    let after = version
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let data = match chart_data_of(chart_of(args, &after, args.action.as_str())?) {
-        Ok((data, root)) => {
-            let mut out = chart_json(&args.target, &root, &data);
-            // (the look's point labels unreadable: no data, as for a chart the model cannot read)
-            if style && style_json(&root, &data, &mut out).is_err() {
-                Value::Null
-            } else {
-                Value::Object(out)
-            }
-        }
-        Err(_) => Value::Null,
-    };
-    let mut out = Done::new(summary);
-    out.changed.push(args.target.clone());
-    out.data = Some(data);
-    let mut result = ToolResult::done(out);
-    result.warnings = edited.warnings.into_iter().chain(edited.out).collect();
-    Ok(result)
-}
-
-/// The chart found (`chart_of`) with its data read; why the call is left to the host where
-/// the model cannot read it.
-fn chart_data_of(found: Result<(String, Arc<Element>), String>) -> Result<(ChartData, Arc<Element>), String> {
-    found.and_then(|(_, root)| {
-        chart_data(&root)
-            .map(|data| (data, root))
-            .map_err(|_| "edit_chart: a chart whose data the model cannot read".to_owned())
-    })
-}
-
-/// The command a data or style action is on the transaction's version: the chart the
-/// target names read, `edit` working out the action from its data and its root in the
-/// language new text is written in; the styles part read for that language (the chart's
-/// part the command reads itself).
-pub(super) fn chart_plan<E: GraphicEdit>(
-    args: &EditChart,
-    editing: &Editing<'_>,
-    tx: &mut Txn<'_, WordDoc>,
-    edit: &dyn Fn(&ChartData, &Element, String) -> Result<E, Stop>,
-) -> Result<(EditGraphic<E>, ()), ToolError> {
-    let docx = tx
-        .doc()
-        .docx()
-        .map_err(|e| ToolError::internal(e.to_string(), "word:model"))?;
-    let (data, root) = match chart_data_of(chart_of(args, &docx, args.action.as_str())?) {
-        Ok(data) => data,
-        Err(why) => return Err(not_supported(args, &why)),
-    };
-    let edit = match edit(&data, &root, chart_language(&docx, editing)) {
-        Ok(edit) => edit,
-        Err(Stop::Refused(error)) => return Err(error),
-        Err(Stop::NotSupported(why)) => return Err(not_supported(args, why)),
-    };
-    let command = EditGraphic {
-        drawing: args.target.clone(),
-        edit,
-        policy: policy(editing),
-    };
-    if let Some(part) = styles_part(&docx) {
-        tx.read(Key::part(part.as_str()));
-    }
-    Ok((command, ()))
-}
-
-/// The chart the target names (the first drawing or group member with that id): its part
-/// and the part's root; the reason the call (`what`, its action) is left to the host where
-/// the part is missing or not XML.
-///
-/// # Errors
-/// `not_found` for a target no drawing has, `refused` for a drawing that is not a chart.
-fn chart_of(args: &EditChart, docx: &Docx, what: &str) -> Result<Result<(String, Arc<Element>), String>, ToolError> {
-    let drawings = graphics(docx);
-    let charts = || drawings.iter().filter(|d| d.kind == "chart").map(|d| d.id.clone());
-    let list = call("word_drawings", &[("doc", json!(args.doc)), ("action", json!("list"))]);
-    let way_out = || WayOut::names(charts()).map_or_else(|| WayOut::call(list.clone()), |w| w.and_call(list.clone()));
-    let Some(drawing) = drawings.iter().find(|d| d.id == args.target) else {
-        let message = format!("no drawing {}", repr_str(&args.target));
-        return Err(ToolError::refusal(Refusal::NotFound, message, way_out()));
-    };
-    if drawing.kind != "chart" {
-        let message = format!("{} is a {}, not a chart", args.target, drawing.kind);
-        return Err(ToolError::refusal(Refusal::Refused, message, way_out()));
-    }
-    let Some(part) = chart_part(docx, &drawing.part, &drawing.element) else {
-        return Ok(Err(format!("edit_chart {what}: a chart whose part is missing")));
-    };
-    let Ok(Some(tree)) = docx.package.tree(&part) else {
-        return Ok(Err(format!(
-            "edit_chart {what}: a chart part that is missing or not XML"
-        )));
-    };
-    Ok(Ok((part, Arc::clone(tree.root()))))
-}
 
 /// The action with its series and category resolved (`apply_data_action`, in its order:
 /// the series, the category, then what the action needs).
@@ -457,15 +305,9 @@ fn default_language(docx: &Docx) -> Option<String> {
 }
 
 /// The document's styles part, where it has one: what [`default_language`] reads.
-fn styles_part(docx: &Docx) -> Option<String> {
+pub(super) fn styles_part(docx: &Docx) -> Option<String> {
     const STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles";
     ooxml_word_model::parts::related(&docx.package, &docx.main, STYLES).ok()?
-}
-
-/// `what` refused as not supported yet, reading the chart as the way out.
-fn not_supported(args: &EditChart, what: &str) -> ToolError {
-    let read = json!({"doc": args.doc, "target": args.target, "action": "read"});
-    crate::refusal::not_supported(what, "edit_chart", read, &[])
 }
 
 /// Registers `edit_chart` (the group's [`super::register`]): the host asks the session first

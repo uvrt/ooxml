@@ -33,6 +33,7 @@ mod context;
 pub mod datasets;
 mod dispatch;
 mod document;
+pub mod elsewhere;
 mod error;
 pub mod facts;
 mod format;

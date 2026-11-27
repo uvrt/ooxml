@@ -1,5 +1,5 @@
 """Structure: ``word_move``, ``word_copy_from``, ``word_sections``, ``word_headers_footers``,
-``word_fields``, ``word_notes`` and ``word_links`` -- the Rust session's, with the roles the
+``word_fields``, ``word_notes`` and ``word_links`` -- the Rust host's, with the roles the
 tool layer gives their listing actions (``Tool.action_roles``)."""
 
 from __future__ import annotations

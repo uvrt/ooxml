@@ -469,9 +469,12 @@ dependencies = [
  "ooxml-drawingml",
  "ooxml-fonts",
  "ooxml-numfmt",
+ "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
  "ooxml-xml",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -749,6 +752,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-tools-chart"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "ooxml-chart",
+ "ooxml-opc",
+ "ooxml-sheets",
+ "ooxml-tools",
+ "ooxml-xml",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "ooxml-tools-derive"
 version = "0.1.0"
 dependencies = [
@@ -771,6 +788,7 @@ dependencies = [
  "ooxml-sheets",
  "ooxml-store",
  "ooxml-tools",
+ "ooxml-tools-chart",
  "ooxml-word-edit",
  "ooxml-word-layout",
  "ooxml-word-model",
@@ -778,7 +796,6 @@ dependencies = [
  "ooxml-xml",
  "ooxml-zip",
  "serde_json",
- "unicode-normalization",
 ]
 
 [[package]]
@@ -786,6 +803,7 @@ name = "ooxml-word-edit"
 version = "0.1.0"
 dependencies = [
  "ooxml-base",
+ "ooxml-chart",
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-markdown",

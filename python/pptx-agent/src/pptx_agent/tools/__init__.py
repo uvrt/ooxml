@@ -78,7 +78,7 @@ import zipfile
 from collections.abc import Mapping
 
 from ooxml_edit.opc import rels_path_for
-from ooxml_edit.tools import DocumentFormat, ToolGroup, shared
+from ooxml_edit.tools import DocumentFormat, ToolGroup, offered_by, shared
 
 from ..edit.chart import ChartDataError, ChartDataWarning
 from ..edit.deck import TemplateOpenedWarning
@@ -337,7 +337,7 @@ GROUPS = [*shared.GROUPS,
                     "comparing a run of like slides, and making copies follow a sample.")]
 
 #: Every PowerPoint tool, the shared ones included, in the order they are offered.
-TOOLS = [
+TOOLS = offered_by(KIND, [
     *[tool for tool in shared.SESSION_TOOLS if tool.name != "batch"],
     *shared_tools.TOOLS,
     *read.TOOLS,
@@ -354,7 +354,7 @@ TOOLS = [
     *review.TOOLS,
     # Round 36, R31: last, so the strict plan's tools before it keep their places.
     shared_tools.style_by_value,
-]
+])
 
 __all__ = ["FORMAT", "GROUPS", "KIND", "PROMPT", "STRICT_FIRST", "TOOLS", "deck_format",
            "detect"]

@@ -328,6 +328,11 @@ class Tool:
     #: runs, so the handler reads the document as it finds it.  Not part of the definition
     #: (:meth:`same_definition`).
     aheads: dict[str | None, Handler] = field(default_factory=dict)
+    #: The document kind of the format library that offers this tool (:func:`offered_by`: a
+    #: library's tools are its kind's), whatever kinds its handlers serve; ``None``: the
+    #: application's own (``tool(...)``), or a tool several libraries share.  Not part of the
+    #: definition (:meth:`same_definition`).
+    library: str | None = None
 
     def __post_init__(self) -> None:
         problems = definition_problems(self)
@@ -543,6 +548,7 @@ class Tool:
         combined = copy.copy(self)
         combined.handlers = {**self.handlers, **other.handlers}
         combined.aheads = {**self.aheads, **other.aheads}
+        combined.library = self.library if self.library == other.library else None
         return combined
 
 
@@ -871,6 +877,17 @@ class ToolGroup:
     def __post_init__(self) -> None:
         if not NAME.match(self.name):
             raise ValueError(f"group name {self.name!r} does not match {NAME.pattern}")
+
+
+def offered_by(kind: str, tools: Iterable[Tool]) -> list[Tool]:
+    """``tools`` as the format library of ``kind`` documents offers them (:attr:`Tool.library`):
+    copies, so a tool the application also lists is its own unchanged."""
+    out = []
+    for item in tools:
+        offered = copy.copy(item)
+        offered.library = kind
+        out.append(offered)
+    return out
 
 
 def merge_tools(tools: Iterable[Tool]) -> dict[str, Tool]:

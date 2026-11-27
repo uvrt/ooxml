@@ -797,6 +797,26 @@ pub fn empty_session(settings: HostSettings) -> HostSession {
     )
 }
 
+/// A host of the toy format and of workbooks the application's own host holds (their rows
+/// `t:`), and a session of it with the toy document `d1` open.
+pub fn session_holding_elsewhere() -> HostSession {
+    let workbooks = ooxml_session::elsewhere::ElsewhereFormat {
+        kind: DocKind::Xlsx,
+        prefixes: vec!["t:".into()],
+    };
+    let formats: Vec<Arc<dyn Format>> = vec![Arc::new(ToyFormat), Arc::new(workbooks)];
+    let host = Arc::new(Host::new(formats, HostSettings::default(), Arc::new(HostTools)));
+    let session = host.session(
+        SessionConfig {
+            store: StoreConfig::default(),
+            locale: None,
+        },
+        context(),
+    );
+    session.open(package(), DocKind::Pptx, "deck.pptx").unwrap();
+    session
+}
+
 /// [`session_with`] the default settings.
 pub fn session() -> HostSession {
     session_with(HostSettings::default())

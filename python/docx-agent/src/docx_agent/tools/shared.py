@@ -1,163 +1,26 @@
-"""The Word handlers of the shared tools (``ooxml_edit.tools.shared``): one definition each
-for every format, dispatched by the document's kind.
+"""The shared tools (``ooxml_edit.tools.shared``) for Word documents: one definition each for
+every format, dispatched by the document's kind.
 
-``open_document``, ``close_document``, ``undo``, ``batch``, ``read_blob`` and
-``read_batch`` are the session's own (``shared.SESSION_TOOLS``, ``shared.READ_BATCH``);
-this module adds docx's ``new_document`` (the host's: a new blank package from the Rust core,
-opened in the session), and the session's ``save_document``, ``describe`` (its handler is in
-:mod:`.read`), ``find_text``, ``replace_text``, ``render``, ``check``, ``edit_chart`` (its
-``read`` action too) and ``set_properties``.  The shared definitions are the Rust session's
-specs of these tools byte for byte (``ooxml_core.tool_specs``; a test holds them so); they
-are kept as ooxml-edit's so that a toolbox with another library's tools merges them into
-one tool."""
+``open_document``, ``close_document``, ``undo``, ``batch``, ``read_blob`` and ``read_batch`` are
+the session's own (``shared.SESSION_TOOLS``, ``shared.READ_BATCH``); this module offers the others
+for docx -- ``new_document``, ``save_document``, ``describe``, ``find_text``, ``replace_text``,
+``render``, ``check``, ``edit_chart`` and ``set_properties`` -- whose calls on a Word document
+run on the Rust host, as every Word tool's do.  The shared definitions are the Rust host's specs
+of these tools byte for byte (a test holds them so); they are kept as ooxml-edit's so that a
+toolbox with another library's tools merges them into one tool."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any
+from ooxml_edit.tools import shared
 
-from ooxml_edit.tools import Result, ToolError, shared
+from .specs import KIND, on_host
 
-from ..rust import reads
-from . import handlers
-from .read import describe
+#: The shared tools docx offers, each handled on the Rust host.
+HANDLERS = {name: on_host for name in (
+    "new_document", "save_document", "describe", "find_text", "replace_text", "render", "check",
+    "edit_chart", "set_properties")}
 
-KIND = "docx"
-PAGE_SIZES = ("A4", "Letter", "Legal", "A5", "A3")
-#: The text's language of a new document made without a locale.
-FALLBACK_LANGUAGE = "en-US"
-
-
-def _decks_only(name: str, use: str) -> ToolError:
-    return ToolError("invalid_arguments", f"{name} is for decks; for a document use {use}", field=name)
-
-
-# -- new_document -------------------------------------------------------------------------------
-
-
-def new_document(call: Any, kind: str, template_blob: str | None = None, size: str | None = None,
-                 title: str | None = None, author: str | None = None, name: str | None = None) -> Result:
-    """A new document's package made by the Rust core -- blank (``ooxml_core.new_document``),
-    or from the template a blob holds (``Session.new_from_template``: its content left out) --
-    opened by the session alone."""
-    if size is not None and size not in PAGE_SIZES:
-        raise ToolError("invalid_arguments", f"a document's size is a page size, not {size!r}", field="size",
-                        valid_options=list(PAGE_SIZES))
-    if template_blob:
-        data = _from_template(call, call.blob(template_blob).data, size, title, author)
-    else:
-        data = _blank_bytes(call, size, title, author)
-    doc_id = call.session.open(data, name or "new.docx", kind=KIND, source=template_blob or "new")
-    entry = call.session.entry(doc_id)
-    from .format import summary
-
-    return Result(summary=f"Made {entry.name} as {doc_id}", created=[doc_id],
-                  data={**entry.describe(), "summary": summary(entry.subject)})
-
-
-def _from_template(call: Any, template: bytes, size: str | None, title: str | None, author: str | None) -> bytes:
-    """A new document's bytes from a template's (a .dotx, .dotm, .docx or .docm) made by the
-    Rust session: its content left out, the page, the properties and the call's clock."""
-    try:
-        return bytes(reads.session().new_from_template(template, created=_stamp(call.now()), page=size,
-                                                       title=title, author=author))
-    except ValueError as error:
-        raise ToolError("invalid_arguments", f"the blob is not a Word document or template: {error}",
-                        field="template_blob") from None
-
-
-def _stamp(value: Any) -> str:
-    """The session clock's moment (a datetime, naive is UTC, or ISO 8601 text) in W3CDTF,
-    UTC to the second, as Word writes ``dcterms:created``."""
-    if isinstance(value, str):
-        text = value.strip()
-        value = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
-    if not isinstance(value, datetime):
-        value = datetime.now(timezone.utc)
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _blank_bytes(call: Any, size: str | None, title: str | None, author: str | None) -> bytes:
-    """A new blank document's bytes made by the Rust core: the page, the call's locale's
-    language and separators (en-US's without one), the properties and the call's clock."""
-    import ooxml_core
-    from ooxml_common.locales import EN_US
-
-    locale = call.locale
-    separators = locale if locale is not None else EN_US
-    data = ooxml_core.new_document(
-        page=(size or "A4", False),
-        language=locale.language if locale is not None else FALLBACK_LANGUAGE,
-        separators=(separators.decimal_separator, separators.list_separator),
-        properties=(title, author, _stamp(call.now())))
-    return bytes(data)
-
-
-# -- save_document ------------------------------------------------------------------------------
-
-
-def save_document(call: Any, doc: str, name: str, format: str, clean: bool = False) -> Result:
-    """The file written by the Rust session (its bytes come back beside the reply), its
-    ``app.xml`` pages and lines and the reply's coverage from the document's page engine; the
-    output and its id state (``call.output``) are the host's."""
-    files: list[tuple[str, str, bytes]] = []
-
-    def answer(envelope: dict[str, Any]) -> Result:
-        (_, given_format, data), = files
-        if given_format == "markdown":
-            return Result(summary=envelope.get("summary", ""), data=call.output(name, "markdown", data))
-        result = Result(summary=envelope.get("summary", ""), data=call.output(name, format, data, state=True))
-        replied = envelope.get("data") or {}
-        if replied.get("cleaned") is not None:
-            result.data["cleaned"] = replied["cleaned"]
-        # How much of the document the layout could lay out: a check that passed on a complete
-        # layout is told from one that could not see everything (the session's engine's).
-        result.data["coverage"] = replied["coverage"]
-        return result
-
-    return reads.serve(call, "save_document", {"name": name, "format": format, "clean": clean or None},
-                       answer=answer, layout=reads.session_layout(call), files=files)
-
-
-# -- find_text, render, check -------------------------------------------------------------------
-
-
-def find_text(call: Any, doc: str, text: str, regex: bool = False, slides: list | None = None,
-              range: str | None = None, stories: str = "body", cursor: str | None = None) -> Result:
-    if slides is not None:
-        raise _decks_only("slides", "range or stories")
-    return reads.serve(call, "find_text", {"text": text, "regex": regex or None, "range": reads.refs(call, range),
-                                           "stories": stories, "cursor": cursor})
-
-
-def render(call: Any, doc: str, range: Any = None, fast: Any = None, **arguments: Any) -> Result:
-    """Laid out by the document's page engine, its pages drawn in Rust
-    (:func:`docx_agent.rust.reads.serve_render`).  ``range`` and ``fast`` are named:
-    ooxml-edit hands them only to a handler that takes them."""
-    return reads.serve_render(call, {**arguments, "range": range, "fast": fast})
-
-
-def check(call: Any, doc: str, range: Any = None, copies: Any = None, min_size: Any = None, styles: Any = None,
-          **arguments: Any) -> Result:
-    """The document's facts, the session's (:func:`docx_agent.rust.reads.serve_check`): it
-    keeps what the check saw for the next one's ``since_last_check``.  ``range``, ``copies``,
-    ``min_size`` and ``styles`` are named: ooxml-edit hands them only to a handler that
-    takes them."""
-    return reads.serve_check(call, {**arguments, "range": range, "copies": copies, "min_size": min_size,
-                                    "styles": styles})
-
-
-#: The shared tools' Word handlers, by name.
-HANDLERS = {
-    "new_document": new_document, "save_document": save_document, "describe": describe,
-    "find_text": find_text, "replace_text": handlers.edit, "render": render, "check": check,
-    "edit_chart": handlers.edit, "set_properties": handlers.edit,
-}
-
-#: The shared tools with their Word handlers, in the order the toolbox lists them.  The
-#: session's own tools follow (``read_batch``: many reads in one call, a reader's tool, in
-#: the core).
+#: The shared tools docx offers, in the order the toolbox lists them.  The session's own tools
+#: follow (``read_batch``: many reads in one call, a reader's tool).
 TOOLS = [shared.handler(name, kind=KIND)(handler) for name, handler in HANDLERS.items()] \
     + [*shared.SESSION_TOOLS, shared.READ_BATCH]

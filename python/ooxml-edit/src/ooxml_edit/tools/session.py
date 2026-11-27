@@ -133,7 +133,7 @@ from .memory import reclaim
 from ..opc import forget_joined
 from .numbers import NumberRules, rules_of
 from .registry import role_set
-from .results import Result, ToolError
+from .results import ToolError
 from .timing import TimedLock
 from .ownundo import OwnUndo, OwnUndoing
 from ..errors import ArgumentError, ArgumentTypeError
@@ -200,13 +200,9 @@ class DocumentFormat:
     """What a format library tells the tool layer about its documents.
 
     The tool layer knows no format; a library describes its own with this, and the toolbox
-    opens, checks and validates documents of that kind through it.
-
-    Lane H7a: for a document the format's :attr:`owner` holds, the hooks that take a
+    opens, checks and validates documents of that kind through it.  The hooks that take a
     document -- ``summary``, ``problems``, ``state``, ``closed`` and ``restored`` -- are given
-    an :class:`~.owned.OwnedDocument` (the owner, its handle, the version read), never the
-    entry (:attr:`DocumentEntry.subject`; a hook taking the call reads
-    :attr:`~.dispatch.Call.subject`).
+    :attr:`DocumentEntry.subject` (a hook taking the call reads :attr:`~.dispatch.Call.subject`).
     """
 
     #: The kind tools are written for (``Tool.kinds``) and results report.
@@ -220,8 +216,8 @@ class DocumentFormat:
     #: How a problem is compared with the baseline; ``str`` by default.
     problem_key: Callable[[Any], Hashable] = str
     #: The save gate's comparison (:func:`.savegate.validation`: ``{"new", "fixed",
-    #: "baseline"}``) of an entry's version, where the format keeps the document itself (a
-    #: Rust owner) and compares there; ``None`` (the hook or its answer): the problems are
+    #: "baseline"}``) of an entry's version, where the format compares problems itself;
+    #: ``None`` (the hook or its answer): the problems are
     #: found here (``problems``) and compared with the baseline.  Not asked inside a batch,
     #: whose ops change the document before its version moves.
     validation: Callable[[Any], dict[str, Any] | None] | None = None
@@ -423,18 +419,6 @@ class DocumentFormat:
     #: committed before ``at_call``.  ``None`` (or a hook that raises): the read reads the
     #: committed version as before.  ``None`` here: no hook.
     read_version: Callable[..., Any] | None = None
-    #: Lane P2c4: the store that owns the format's documents -- their versions, their steps,
-    #: their ids and their saved bytes (a library's native session, say); the tool layer keeps
-    #: no copy of its own (:mod:`.owned`, which says what the object does): the owner opens a
-    #: document from its bytes (``open_data``), and a document made in memory is not handed to
-    #: it (:meth:`Session.adopt` refuses).  ``None``: the document the tool layer holds is the
-    #: document.
-    owner: Any = None
-    #: Lane P2c6: the changing calls the owner edits with itself, run side by side without the
-    #: document's lock (:mod:`.served`): ``serve(call, arguments) -> Served | None``, called
-    #: within :meth:`~.owned.OwnedEntry.serving`; ``None``: the call runs as any other (the
-    #: owner changed nothing).
-    serve: Callable[..., Any] | None = None
     #: Phase 3 E1: the Rust host that holds the format's documents and runs its tools
     #: (:mod:`.hosted`: ``make``, ``pages``, ``catalogue``).  ``None``: the format's
     #: documents are the Python host's.
@@ -567,8 +551,7 @@ class DocumentEntry:
     kind: str
     name: str
     source: str
-    #: The document as the session holds it; calls read it as :attr:`document` (``None`` for
-    #: an owned entry: its owner alone holds it, :class:`~.owned.OwnedEntry`).
+    #: The document as the session holds it; calls read it as :attr:`document`.
     held: Any
     size: int = 0
     #: The session's :attr:`~Session.font_dirs` (``None``: the renderers' own default),
@@ -664,18 +647,12 @@ class DocumentEntry:
 
     @property
     def subject(self) -> Any:
-        """What the format's hooks are given for this document (lane H7a): the document
-        itself; for a read copy of a document its format's owner holds, that document at
-        the copy's version (:class:`~.owned.OwnedDocument`), so no hook reads a Python copy
-        of an owned document."""
-        live = self.live
-        if live is not None and live.owned and self.pinned is not None:
-            return live.subject_at(self.pinned)
+        """What the format's hooks are given for this document: the document itself."""
         return self.document
 
     def subject_at(self, version: int) -> Any:
         """:attr:`subject` at the committed version ``version``, for a read copy of this
-        document (an owned one's: :meth:`~.owned.OwnedEntry.subject_at`)."""
+        document."""
         return self.document
 
     @property
@@ -692,20 +669,6 @@ class DocumentEntry:
             return history.version
         return self._own_version
 
-    #: Lane P2c4: whether the format's owner holds the document (:mod:`.owned`): no call runs
-    #: on a draft of it (round 45).
-    owned = False
-    @property
-    def owns_history(self) -> bool:
-        """Lane U4: whether the owner keeps the document's history and undoes it in its own
-        undo tool (:meth:`owned_history`): no steps or owners are kept here."""
-        return False
-
-    def owned_history(self, steps: int, redo: bool, caller: Mapping[str, Any] | None) -> dict[str, Any]:
-        """The owner's undo or redo of up to ``steps`` steps (``caller``'s own, with one): its
-        reply. Only an entry whose owner keeps the history has one (:attr:`owns_history`)."""
-        raise TypeError(f"{self.kind} documents keep their history here: undo them by their steps")
-
     def step_target(self, direction: str) -> Any:
         """What makes one plain undo or redo (``direction``): the document's own, else its
         history's; ``None`` when it has neither."""
@@ -715,8 +678,7 @@ class DocumentEntry:
         return target
 
     def touched_of(self, change: Any, fmt: Any) -> list[dict[str, Any]]:
-        """The format's ``touched`` of ``change`` (lane P2c4: an owned document says it
-        from the owner's step, :class:`~.owned.OwnedEntry`)."""
+        """The format's ``touched`` of ``change``."""
         return list(fmt.touched(self.document, change))
 
     def bump(self) -> None:
@@ -1018,13 +980,6 @@ class DocumentEntry:
                 yield True
             return
         yield False
-
-    @contextmanager
-    def op_step(self, owner: "StepOwner | None" = None) -> Iterator[None]:
-        """Around one op of a :meth:`batch` that changes the document: nothing here (an
-        owned document's op is a sub-step of the owner's step group,
-        :meth:`~.owned.OwnedEntry.op_step`)."""
-        yield
 
     @contextmanager
     def watch(self) -> Iterator[Any]:
@@ -1433,12 +1388,6 @@ class Session:
         check_package(data, self.limits, name)
         self._room_for_document(len(data))
         try:
-            if fmt.owner is not None:
-                # Lane H7c: the owner holds the document from its bytes, and no Python
-                # document is made.
-                handle = fmt.owner.open_data(data, state, name)
-                return self._enter(None, handle, fmt, name, source=source, size=len(data),
-                                   doc_id=doc_id)
             if state is None or open_with_state is None:
                 document = fmt.open(data)
             else:
@@ -1461,18 +1410,13 @@ class Session:
         fmt = self.formats[kind]
         if fmt.configure is not None:
             fmt.configure(document, self)
-        if fmt.owner is not None:
-            # (the owner opens its documents from their bytes alone: Session.open)
-            raise ArgumentError(f"{kind} documents are held by their format's owner: open one "
-                                "from its bytes (Session.open), not from a document made in memory")
-        return self._enter(document, None, fmt, name, source=source, size=size, doc_id=doc_id)
+        return self._enter(document, fmt, name, source=source, size=size, doc_id=doc_id)
 
-    def _enter(self, document: Any, handle: Any, fmt: "DocumentFormat", name: str, *,
+    def _enter(self, document: Any, fmt: "DocumentFormat", name: str, *,
                source: str, size: int, doc_id: str | None) -> str:
-        """The entry of a document: ``document`` held (``None``: the owner holds it alone,
-        as ``handle``, lane H7c), its id, the problems it opened with as its baseline."""
-        subject = document if handle is None else OwnedDocument(fmt.owner, handle, None)
-        baseline = list(fmt.problems(subject)) if fmt.problems else []
+        """The entry of a document: ``document`` held, its id, the problems it opened with as
+        its baseline."""
+        baseline = list(fmt.problems(document)) if fmt.problems else []
         kind = fmt.kind
         with self._lock:
             self._room_for_document(size)
@@ -1481,16 +1425,13 @@ class Session:
             else:
                 self._free_id(doc_id)
                 self._given_ids.add(doc_id)
-            made = DocumentEntry if handle is None else OwnedEntry
-            self.documents[doc_id] = made(
+            self._entries()[doc_id] = DocumentEntry(
                 doc_id=doc_id, kind=kind, name=name, source=source, held=document,
                 size=size, baseline_problems=baseline, font_dirs=self.font_dirs,
                 locale=self.locale,
                 render_cache=LRU(self.limits.render_cache_size),
                 check_cache=LRU(self.limits.check_cache_size))
-            entry = self.documents[doc_id]
-            if isinstance(entry, OwnedEntry):
-                entry.own(fmt.owner, handle)
+            entry = self._entries()[doc_id]
             entry.ref_states[entry.version] = {}
             entry.change_version = entry.version
             if fmt.problems:
@@ -1520,10 +1461,20 @@ class Session:
                 "open this one without doc_id for the next free id"
                 + (f" (open now: {', '.join([doc_id, *others])})" if others else ""))
 
-    def held_in_python(self, tool: str, doc_ids: Iterable[str]) -> None:
-        """Refuse a call of ``tool`` the Python dispatcher runs on ``doc_ids`` when this
-        session holds any of them elsewhere (a session on the Rust host: :mod:`.hosted`);
-        here every document is held in Python."""
+    def _entries(self) -> dict[str, DocumentEntry]:
+        """The entries of the documents held here, by id: every open one (a session on the
+        Rust host holds only some: :mod:`.hosted`)."""
+        return self.documents
+
+    def held_in_python(self, tool: Any, doc_ids: Iterable[str]) -> None:
+        """Refuse a call of ``tool`` (a :class:`~.registry.Tool`) the Python dispatcher runs on
+        ``doc_ids`` when this session holds any of them elsewhere (a session on the Rust
+        host: :mod:`.hosted`); here every document is held in Python."""
+
+    def held_here(self, doc_ids: Iterable[str]) -> list[str]:
+        """Of ``doc_ids``, those held here, in order (a batch's: the others' ops run where
+        their documents are held); here every one."""
+        return list(doc_ids)
 
     def entry(self, doc_id: str) -> DocumentEntry:
         """The open document ``doc_id``; ``not_found`` names the open ones."""
@@ -1578,7 +1529,7 @@ class Session:
         entry = self.entry(doc_id)
         with entry.lock:
             with self._lock:
-                self.documents.pop(doc_id, None)
+                self._entries().pop(doc_id, None)
                 kept = []
                 for dataset in self.datasets.values():
                     if dataset.doc == doc_id and not dataset.closed:
@@ -1686,47 +1637,9 @@ class Session:
         ``caller``, that caller's own undos (its latest first)."""
         return self._history(doc_id, steps, scope, "redo", caller)
 
-    def owned_history(self, doc_id: str, steps: int = 1, *, redo: bool = False,
-                      scope: str | None = None,
-                      caller: Mapping[str, Any] | None = None) -> Result | None:
-        """Lane U4: undo or redo (:meth:`undo`) of a document whose owner keeps its history
-        (:attr:`DocumentEntry.owns_history`), by the owner's own undo tool: its reply as a
-        :class:`Result`, its refusal raised; ``None`` for any other document.  What the tool
-        layer keeps beside the document follows: the refs of the state it is at, no checks
-        cached."""
-        entry = self.entry(doc_id)
-        if not entry.owns_history:
-            return None
-        if scope is not None:
-            raise ToolError("invalid_arguments", f"{doc_id} ({entry.kind}) undoes document-wide "
-                            "only: leave scope out", field="scope")
-        with entry.lock:
-            reply = entry.owned_history(steps, redo, dict(caller) if caller else None)
-            error = reply.get("error")
-            if error is not None:
-                raise ToolError(error["code"], error["message"], field=error.get("field"),
-                                valid_options=error.get("valid_options"),
-                                details=error.get("details"), try_call=error.get("try_call"))
-            entry.check_cache.clear()
-            entry.restore_refs()
-        result = Result(summary=reply["summary"], changed=list(reply.get("changed") or []),
-                        data=reply.get("data"))
-        result.warnings.extend(reply.get("warnings") or [])
-        return result
-
     def _history(self, doc_id: str, steps: int, scope: str | None, direction: str,
                  caller: Mapping[str, Any] | None) -> int:
-        """Undo or redo (:meth:`undo`): the owner's (:meth:`owned_history`), else a caller's
-        own, a scope's, or the session's."""
-        if self.entry(doc_id).owns_history:
-            try:
-                done = self.owned_history(doc_id, steps, redo=direction == "redo", scope=scope,
-                                          caller=caller)
-            except ToolError as error:
-                if error.code == "refused":     # nothing (of the caller's) to take
-                    return 0
-                raise
-            return int(done.data["steps"]) if done is not None else 0
+        """Undo or redo (:meth:`undo`): a caller's own, a scope's, or the session's."""
         if caller:
             return self._own(doc_id, steps, scope, direction, caller)
         if scope is not None:
@@ -2229,5 +2142,3 @@ def _require_bytes(data: Any, what: str) -> bytes:
         raise ArgumentTypeError(f"{what} takes bytes, not {kind}: the tool layer reads no files")
     return data
 
-
-from .owned import OwnedDocument, OwnedEntry  # noqa: E402 -- owned.py builds on DocumentEntry

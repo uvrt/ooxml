@@ -8,18 +8,10 @@ import zipfile
 
 import pytest
 
-ooxml_core = pytest.importorskip("ooxml_core")
-if not hasattr(ooxml_core, "Session"):          # an ooxml-core before 0.9.0
-    pytest.skip("ooxml_core has no Session", allow_module_level=True)
+from ooxml_edit.tools import Toolbox
 
-from ooxml_edit.tools import Toolbox  # noqa: E402
-
-from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from conftest import FIXTURE_DIR  # noqa: E402
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR
 
 #: A few fixtures, and a template saved as a .docx (its main part retyped on a .dotx save).
 FIXTURES = sorted({*sorted((FIXTURE_DIR).rglob("*.docx"))[:6],
@@ -38,10 +30,7 @@ CALLS = [
 
 
 @pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
-def test_the_served_saves_write_their_files(path):
-    from docx_agent.rust import reads
-
-    served = reads.served().get("save_document", 0)
+def test_the_saves_write_their_files(path):
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as box:
         session = box.session()
         d = session.open(path.read_bytes(), "old.docx")
@@ -59,29 +48,4 @@ def test_the_served_saves_write_their_files(path):
             with zipfile.ZipFile(io.BytesIO(written)) as package:
                 types = package.read("[Content_Types].xml").decode("utf-8")
             assert (TEMPLATE in types) == (arguments["format"] == "dotx"), arguments
-    saves = sum(tool == "save_document" for tool, _ in CALLS)
-    assert reads.served().get("save_document", 0) - served == saves
 
-
-def test_a_served_save_still_refuses_a_new_validation_problem():
-    """The save gate is the host's on the served path too: the session writes the file, and
-    ``call.output`` refuses it when the version has a problem the document did not open
-    with -- compared by the session, which holds the version saved -- and hands the
-    application nothing."""
-    import dataclasses
-
-    asked: list = []
-
-    def problem(entry):
-        asked.append(entry.version)
-        return {"new": ["word/document.xml: bad"], "fixed": [], "baseline": 0}
-
-    gated = dataclasses.replace(FORMAT, validation=problem)
-    with Toolbox(TOOLS, formats=[gated], groups=GROUPS, workers=0) as box:
-        session = box.session()
-        d = session.open(FIXTURES[0].read_bytes(), "old.docx")
-        result = box.dispatch(session, "save_document", {"doc": d, "name": "a.docx", "format": "docx"})
-        assert not result.ok and result.error.code == "refused", result
-        assert result.error.valid_options == ["word/document.xml: bad"]
-        assert session.take_outputs() == []
-    assert asked, "the gate did not compare the version"

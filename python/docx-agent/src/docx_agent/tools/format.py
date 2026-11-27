@@ -1,23 +1,17 @@
 """The docx :class:`~ooxml_edit.tools.DocumentFormat`: how the tool layer recognises a Word
-document, the Rust session that opens and owns it (:class:`docx_agent.rust.owner.RustOwner`:
-its versions, its steps, its ids, its saved bytes), the hooks that read it -- each the
-session's reading of the version asked (:mod:`docx_agent.rust.hooks`), never a Python view
--- and the Word system-prompt fragment (mechanics only: no house style)."""
+document, the Rust host that holds it (:attr:`~ooxml_edit.tools.DocumentFormat.host`,
+:class:`.hosting.WordHosting`: it opens, edits, checks, lays out, renders and saves every Word
+document, and runs every call of a Word tool), and the Word system-prompt fragment (mechanics
+only: no house style)."""
 
 from __future__ import annotations
 
 import io
 import zipfile
-from typing import Any
 
 from ooxml_edit.tools import DocumentFormat, ToolError
 
-from ..rust import hooks
-from ..rust.edits import serve_owned
-from ..rust.owner import OWNER, TemplateOpened, session_validation
-from ._base import checks, problem_key
-from .hosting import HOSTING
-from .table_data import own_source, source_hint
+from .hosting import HOSTING, TemplateOpened
 
 KIND = "docx"
 EXTENSIONS = (".docx", ".docm", ".dotx", ".dotm")
@@ -65,14 +59,6 @@ STRICT_FIRST = ("replace_text", "word_changes", "word_set_tracking", "word_inser
                 "word_template")
 
 
-def _opened_by_the_session(data: bytes, state: Any = None) -> Any:
-    """The format's ``open`` and ``open_with_state``: never reached -- the session opens a
-    Word document's bytes itself (the owner's ``open_data``), and the tool layer holds no
-    document of its own."""
-    raise ToolError("internal", "a Word document is opened by the Rust session (RustOwner.open_data), "
-                    "never by the tool layer")
-
-
 def detect(data: bytes, name: str) -> bool:
     if not data.startswith(b"PK"):
         return False
@@ -84,11 +70,6 @@ def detect(data: bytes, name: str) -> bool:
     except zipfile.BadZipFile:
         return False
 
-
-#: The references a deck resolves in its own text that a Word document refuses in words of
-#: its own (``DocumentFormat.own_facts``), with no deck format loaded too: pptx-agent's
-#: ``{{slide:s:262}}``, a slide's number.
-OWN_REFUSED = {"slide:": "slide references are for decks; a Word document has no slides"}
 
 #: Tool names a model writes that ooxml-edit's reading of names (its tools' names and
 #: actions, verbs and plurals read) does not settle, or settles wrongly -- a link is a
@@ -130,30 +111,7 @@ TOOL_HINTS = {
 }
 
 
-def summary(document: Any) -> dict[str, Any]:
-    """What ``open_document`` says of a Word document: cheap facts, no layout -- the
-    session's reading of the version (:func:`docx_agent.rust.hooks.summary`)."""
-    return hooks.summary(document)
-
-
-def touched(document: Any, change: Any) -> list[dict[str, Any]]:
-    """The format's ``touched``: for a document the owner holds, what a change touched is the
-    owner's to say between the versions it went from and to (``RustOwner.touched``), which
-    the tool layer asks for every docx entry; this hook is never handed a document."""
-    raise ToolError("internal", "a Word document's changes are said by the Rust session (RustOwner.touched)")
-
-
-def number_texts(call: Any, scope: Any) -> list[Any]:
-    """The texts a check of numbers reads, the session's (:func:`docx_agent.rust.hooks.number_texts`)."""
-    return hooks.number_texts(call, call.subject, scope)
-
-
-def scale_values(call: Any, scale: Any, scope: Any) -> list[Any]:
-    """The values a scale's targets name, the session's (:func:`docx_agent.rust.hooks.scale_values`)."""
-    return hooks.scale_values(call, call.subject, scale, scope)
-
-
-#: The tools out of docx-agent since 0.2.0 until the Rust session has them, each with what
+#: The tools out of docx-agent since 0.2.0 until the Rust host has them, each with what
 #: to call instead (a call of one is refused with this way out, not as an unknown tool).
 WITHDRAWN = {
     "edit_smartart": "SmartArt is kept as it is; word_drawings inserts a text box or a shape "
@@ -164,10 +122,14 @@ WITHDRAWN = {
                        "and image.",
 }
 
+
+
+def _opened_on_the_host(data: bytes, state: object = None) -> object:
+    """The format's ``open``: never reached -- the Rust host opens a Word document's bytes
+    itself, and the tool layer holds no document of its own."""
+    raise ToolError("internal", "a Word document is opened by the Rust host, never by the tool layer")
+
+
 FORMAT = DocumentFormat(
-    kind=KIND, open=_opened_by_the_session, detect=detect, problems=hooks.problems, problem_key=problem_key,
-    validation=session_validation, warnings=(TemplateOpened,), prompt=PROMPT, summary=summary, checks=checks,
-    strict_first=STRICT_FIRST, source_hint=source_hint, own_source=own_source, read_provenance=hooks.provenance,
-    own_facts=dict(OWN_REFUSED), tool_hints=TOOL_HINTS, touched=touched, number_texts=number_texts,
-    scale_values=scale_values, state=hooks.id_state, open_with_state=_opened_by_the_session, owner=OWNER,
-    serve=serve_owned, withdrawn=dict(WITHDRAWN), host=HOSTING)
+    kind=KIND, open=_opened_on_the_host, detect=detect, warnings=(TemplateOpened,), prompt=PROMPT,
+    strict_first=STRICT_FIRST, tool_hints=TOOL_HINTS, withdrawn=dict(WITHDRAWN), host=HOSTING)

@@ -168,6 +168,7 @@ Only downward dependencies are allowed.
 L6  ooxml-python (cdylib, PyO3: sessions, handles, JSON calls)        xtask (codegen, layers, data tables)
 L5  ooxml-session (sessions, documents, refs, datasets, blobs, outputs, scheduler, budgets)
 L4  ooxml-tools (contract: specs, strict-schema derive, validation, results, refusals, budgets, batch)
+    ooxml-tools-chart  (chart tools over a format's GraphicHost / GraphicWriter)
     ooxml-tools-word   ooxml-tools-slides   ooxml-tools-sheets   (tool handlers = commands)
 L3  ooxml-word  ooxml-word-layout   ooxml-slides  ooxml-slides-layout   ooxml-sheets
 L2  ooxml-drawingml  ooxml-chart  ooxml-metafile  ooxml-scene  ooxml-render (SVG writer)  ooxml-raster (PNG via resvg)
@@ -656,6 +657,11 @@ All are under 0.1 % of the edit budgets.
 - A review tried on a table (`facts::scratch`): the table alone in the body of a scratch version of its package, the main part's relationships dropped so no other story is read, settled by `Review` in a store of its own and dropped. Not memoised yet (docx-agent keeps 512 accepted shapes by the table's bytes); only tables whose pending changes reshape them pay for it. `made_by` (the session's call that put a table off its grid or ragged) is the session's record, added when `check` serves the fact. Elements are found by place (child-index paths), never by node address: green nodes are shared between equal subtrees.
 - Shared reads they added to `ooxml-word-model`: `cells::PartCells` (a paragraph's cell context, each outermost table read once; `format`'s keeps use it too), `tables::cells_at` / `PlacedCell` (a row's cells with places and grid columns), `tables::cells_lost_on_accept`, `tables::own_rows`, `numbering::Lists::definition_of`.
 - Not served yet: `check` adds them under `layout`, which waits for the layout facts on the page engine (P5b). Their differential is the reads gate's `facts` mode (`word_reads_diff.py facts`, `word-reads`' `fact` cases, made-up documents for each fact on every run).
+
+**As built (Phase 3 E2: the Python docx host deleted).**
+- Every docx call runs on the Rust host (`ooxml-host`, `ooxml_edit.tools.hosted`: one `Host` per toolbox, one `HostSession` per session, decision D7). The Python host's own serving of Word documents, which the as-built entries of lanes P1c to P5a above describe, is deleted: `docx_agent/rust` (the owner, the mirror and its numbering, the edits, reads and hooks, the `served` adapters), ooxml-edit's `owned`, `served` and `gate` modules with `DocumentFormat.owner` and `serve`, and the docx format's Python hooks (`summary`, `problems`, `validation`, `state`, `own_source`, `number_texts`, `scale_values`...). docx-agent's `FORMAT` is its definitions, its prompt and its host (`WordHosting`).
+- A toolbox holding docx-agent's format beside a Python-held format of a kind the Rust session cannot name is refused when it is made (`runs_on_host`), with the kinds it can name: the Rust host's documents have no other host.
+- **pptx and xlsx keep the Python host until Phase 4**: their documents stay in ooxml-edit's dispatcher, named and counted by the Rust session (`HeldElsewhere`), their rows reaching Word calls through the values channel (`hosted_values`). Phase 4 ports each format and deletes the Python host, the facade's routing and the values channel.
 
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.

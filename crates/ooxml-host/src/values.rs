@@ -18,6 +18,7 @@
 use crate::catalogue::Entry;
 use crate::session::HostSession;
 use ooxml_session::datasets::{CallDatasets, DatasetStore};
+use ooxml_session::elsewhere::answering;
 use ooxml_session::facts::{expand_arguments, known_prefixes, one_value, qualify_text, walk_texts, FactEnv};
 use ooxml_session::sources::{offered, CallSources, FormatOpen, FormatSources, SourceHost};
 use ooxml_session::{AnyVersion, DocId, Format, FormatDoc};
@@ -85,6 +86,7 @@ impl HostSession {
         arguments: Map<String, Value>,
         retry: &TryCall,
         datasets: &mut CallDatasets,
+        given: &CallValues,
     ) -> Result<WithValues, Refused> {
         let sources = entry.spec.paths(Holding::Sources);
         let named = entry.spec.paths(Holding::Datasets);
@@ -96,7 +98,7 @@ impl HostSession {
                 held: Vec::new(),
             });
         }
-        let opens = self.opens();
+        let opens = self.opens(given);
         let host = sources_of(&self.host.formats, &opens, retry);
         // (the session's datasets as they stand: read without the stores' lock held)
         let store: DatasetStore = self.stores().datasets.clone();
@@ -172,9 +174,10 @@ impl HostSession {
     pub(crate) fn with_facts<R>(
         &self,
         retry: &TryCall,
+        given: &CallValues,
         read: impl FnOnce(&dyn Fn(&str) -> Result<String, String>) -> R,
     ) -> R {
-        let opens = self.opens();
+        let opens = self.opens(given);
         let host = sources_of(&self.host.formats, &opens, retry);
         let store: DatasetStore = self.stores().datasets.clone();
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
@@ -219,18 +222,20 @@ impl HostSession {
     /// # Errors
     /// `limit`: the session would keep over its limit.
     pub(crate) fn finish_datasets(&self, datasets: CallDatasets) -> Result<Vec<String>, ToolError> {
-        let opens = self.opens();
+        let opens = self.opens(&CallValues::default());
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
         datasets.finish(&mut self.stores().datasets, &heads)
     }
 
-    /// The open documents, each at its head.
-    fn opens(&self) -> Vec<Open> {
+    /// The open documents, each at its head; one the application's own host holds as the
+    /// call reads it, with what the application resolved of it (`given`).
+    fn opens(&self, given: &CallValues) -> Vec<Open> {
         let mut out = Vec::new();
         for id in self.session.documents() {
             let (Ok(opened), Ok(doc)) = (self.session.snapshot(&id), self.session.format_doc(&id)) else {
                 continue;
             };
+            let doc = answering(doc, &id.to_string(), given);
             let Some(format) = self.host.formats.iter().find(|f| f.kind() == opened.kind()) else {
                 continue;
             };
@@ -243,6 +248,30 @@ impl HostSession {
             });
         }
         out
+    }
+}
+
+/// The values a call wrote for references, in its reply's `data.facts` where its tool said
+/// none of its own (ooxml-edit's `_report_facts`): each reference, the text written and its
+/// sources.
+pub(crate) fn report_facts(result: &mut ooxml_tools::ToolResult<Value>, written: &[Written]) {
+    if written.is_empty() {
+        return;
+    }
+    let ooxml_tools::Outcome::Done(done) = &mut result.outcome else {
+        return;
+    };
+    let said: Vec<Value> = written.iter().map(|w| Value::Object(w.brief.clone())).collect();
+    match &mut done.data {
+        None => {
+            let mut data = Map::new();
+            data.insert("facts".into(), Value::from(said));
+            done.data = Some(Value::Object(data));
+        }
+        Some(Value::Object(data)) if !data.contains_key("facts") => {
+            data.insert("facts".into(), Value::from(said));
+        }
+        Some(_) => {}
     }
 }
 
@@ -330,7 +359,7 @@ fn read_values(
                 text: fact.text.clone(),
                 record: fact.record.clone(),
                 brief: fact.brief(),
-                markdown: None,
+                markdown: fact_markdown(&fact.address, &fact.field, call, env, store),
             })
             .collect(),
         ..CallValues::default()
@@ -466,7 +495,7 @@ fn read_source(
         .and_then(|(rows, row, column)| Ok((ooxml_session::facts::fact(value, field, env, call)?, rows, row, column)));
     match (read, rows_refused) {
         (Ok(((text, record), rows, row, column)), _) => {
-            let markdown = dataset_markdown(value, store, &rows, row, column);
+            let markdown = value_markdown(value, store, &rows, (row, column), call);
             values.written.push(as_written(value, field, text, record, &markdown));
             values.one_values.push(OneValue {
                 given: value.to_owned(),
@@ -485,6 +514,39 @@ fn read_source(
         }
     }
     Ok(())
+}
+
+/// The Markdown of the one value a reference writes (`{{d:notes/Roof/body}}`,
+/// `{{t:Notes/#2/Body}}`), where its source holds one apart from its text (docx-agent's
+/// `written_json`: a reference standing alone as a paragraph writes it as blocks); `None` for
+/// any other.
+fn fact_markdown(
+    address: &str,
+    field: &str,
+    call: &CallSources<'_>,
+    env: &FactEnv<'_>,
+    store: &DatasetStore,
+) -> Option<String> {
+    let (rows, row, column) = one_value(address, field, env, call).ok()?;
+    value_markdown(address, store, &rows, (row, column), call)
+}
+
+/// The Markdown of the value at `(row, column)` of `rows`, which the source `address` names:
+/// a dataset's ([`dataset_markdown`]), or the rows its document's format gives
+/// (`Dataset::markdown_at`: a workbook cell's rich text).
+fn value_markdown(
+    address: &str,
+    store: &DatasetStore,
+    rows: &SourceRows,
+    (row, column): (usize, usize),
+    call: &CallSources<'_>,
+) -> Option<String> {
+    if address.starts_with(DATASET_PREFIX) {
+        return dataset_markdown(address, store, rows, row, column);
+    }
+    let doc = rows.doc.as_deref()?;
+    let read = rows.address.strip_prefix(doc)?.strip_prefix('/')?;
+    call.host.resolve(doc, read).ok()?.markdown_at(row, column)
 }
 
 /// A source address as a message shows it: without its document handle or format.
@@ -509,6 +571,7 @@ fn refused(given: &str, field: Option<&str>, error: &ToolError) -> SourceRefused
             .collect(),
         field: field.map(str::to_owned),
         code: error.code(),
+        details: error.details().clone(),
     }
 }
 

@@ -66,6 +66,10 @@ pub struct HostSettings {
     /// decision D1): an op of a `batch` or a `read_batch` naming one is refused with the way
     /// out "call it alone" ([`HostSettings::own_tool_refused`]).
     pub own_tools: Vec<String>,
+    /// The tools of formats the application's own host holds (Phase 3, until Phase 4), each
+    /// with its format's kind: inside a `batch` or `read_batch` an op naming one is refused
+    /// with the way out "send it as its own call or in its own batch".
+    pub format_tools: Vec<(String, String)>,
 }
 
 impl Default for HostSettings {
@@ -86,6 +90,7 @@ impl Default for HostSettings {
             read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
             numbers: NumberRules::default(),
             own_tools: Vec::new(),
+            format_tools: Vec::new(),
         }
     }
 }

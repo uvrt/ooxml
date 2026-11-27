@@ -418,6 +418,8 @@ pub struct SourceRefused {
     pub field: Option<String>,
     /// The host's code for a value refused (`not_found` unless it said another).
     pub code: ErrorCode,
+    /// What the refusal says besides (a resolver's `{"code": "no_key_column"}`).
+    pub details: Map<String, Value>,
 }
 
 /// The sources a call names, as the host resolved them: their rows, or its refusals.
@@ -457,6 +459,11 @@ impl Sources {
                             *ErrorCode::ALL.iter().find(|c| c.as_str() == code)?
                         }
                     },
+                    details: refused
+                        .get("details")
+                        .and_then(Value::as_object)
+                        .cloned()
+                        .unwrap_or_default(),
                 }),
                 None => out.rows.push(SourceRows::from_json(item)?),
             }

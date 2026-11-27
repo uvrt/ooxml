@@ -9,6 +9,7 @@
 //! Must not: carry anything but what the refusal says.
 
 use crate::doc::{Key, ModelError};
+use ooxml_chart::edit::GraphicError;
 use ooxml_opc::OpcError;
 use ooxml_store::StoreError;
 use ooxml_word_model::address::AddressError;
@@ -118,6 +119,25 @@ impl std::fmt::Display for Internal {
             Mismatch::NoElement | Mismatch::Unbuilt => write!(f, "no element at the place found in {}", self.about),
             Mismatch::NoPart => write!(f, "no part {}", self.about),
             Mismatch::OwnXml => f.write_str(&self.about),
+        }
+    }
+}
+
+/// A graphic edit's refusal (`ooxml_chart::edit`'s) as the edit core's, one to one: an
+/// argument at no field, a form not supported yet, a part the graphic names that the package
+/// lacks, a package that could not be read.
+impl From<GraphicError> for EditError {
+    #[track_caller]
+    fn from(error: GraphicError) -> EditError {
+        match error {
+            GraphicError::Argument(message) => EditError::Argument {
+                field: String::new(),
+                message,
+                options: Vec::new(),
+            },
+            GraphicError::Unsupported(what) => EditError::Unsupported(what),
+            GraphicError::NoPart(part) => EditError::no_part(part),
+            GraphicError::Package(error) => EditError::Package(error),
         }
     }
 }

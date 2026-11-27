@@ -85,7 +85,7 @@ from .scales import Scale, ScaleValue, Step
 from .prompts import SYSTEM, system_prompt
 from .registry import (ACCEPT, ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, ROLES, AliasWhen, Param, Tool,
                        ToolGroup, array, boolean, build_schema, free_object, integer, names_as,
-                       number, obj, role_set, string, tool)
+                       number, obj, offered_by, role_set, string, tool)
 from .results import (ERROR_CODES, Image, Result, ToolError, anthropic_image_tokens,
                       openai_image_tokens, page_list, page_text, truncate)
 from .schema import CallError, SubsetError, canonical, check_subset, validate_call
@@ -94,7 +94,6 @@ from .session import (DEFAULT_LOCALE, LOCALE_FIELDS, Blob, DefaultLocale, Docume
                       DocumentFormat, Output, SavedDocument, Session, SessionView,
                       StateRefused, StepOwner, doc_order,
                       fold_ref, locale_of, part_entries)
-from .owned import OwnedDocument
 from .rendercache import ContentStore, content_key
 from .savegate import compare_problems, problems_now, validation
 from .worker import (InProcess, SubprocessPool, ThreadRunner, WorkerPool, available_cpus,
@@ -106,7 +105,7 @@ __all__ = [
     "Asset", "AssetCatalogue", "Blob", "CACHE_EXTERNAL", "CACHE_STATUSES", "FolderCatalogue", "assets", "CORE", "Call", "CallContext", "CallError", "CallRecord", "DATASET_ID",
     "DATASET_PREFIX", "DEFAULT_LOCALE", "Dataset", "DatasetEntry", "DefaultLocale", "DocumentEntry", "DocumentFormat",
     "ERROR_CODES", "LOCALE_FIELDS", "NumberRules", "NumberText", "REF", "Image", "LimitError", "Limits", "Output", "Param",
-    "OwnedDocument", "Result", "Rows", "SYSTEM", "SavedDocument", "Scale", "StateRefused", "ScaleValue", "Step", "TYPE_LABELS",
+    "Result", "Rows", "SYSTEM", "SavedDocument", "Scale", "StateRefused", "ScaleValue", "Step", "TYPE_LABELS",
     "InProcess", "Session", "SessionView", "StepOwner", "StrictProblem", "SubprocessPool", "SubsetError", "ThreadRunner", "Tool", "ToolError", "ToolGroup", "Toolbox",
     "WorkerPool", "ContentStore", "available_cpus", "content_key", "default_workers",
     "render", "rendercache", "run_all",
@@ -115,6 +114,6 @@ __all__ = [
     "loose_key",
     "row_range",
     "names_as", "number", "obj", "openai_image_tokens",
-    "page_list", "page_text", "part_entries", "hints", "numbers", "scales", "shared", "textfacts", "tiles", "strict_problems", "string", "system_prompt", "tool", "truncate", "validate_call",
+    "page_list", "page_text", "part_entries", "hints", "numbers", "scales", "shared", "textfacts", "tiles", "strict_problems", "string", "system_prompt", "tool", "offered_by", "truncate", "validate_call",
     "worker_task",
 ]

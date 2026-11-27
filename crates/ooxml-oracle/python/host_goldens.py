@@ -30,8 +30,8 @@ application's own tools stay in Python, decision D1), plus the settings that dif
 defaults (``limits``, ``roles``, ``locale``, ``numbers``, ``block_edits``,
 ``allow_new_problems``, ``batch_defers``...) and the session's clock.  A ``kit`` other than
 ``docx`` names the libraries: ``docx+xlsx`` adds xlsx-agent's tools and format (a workbook the
-Python host holds beside a Word document; those streams are under ``mixed/`` and xlsx-agent's
-suite replays them).  Settings the application changes between calls are a ``settings`` event.
+Python host holds beside a Word document on the Rust host; those streams are under ``mixed/`` and
+xlsx-agent's suite replays them through the facade).  Settings the application changes between calls are a ``settings`` event.
 
 **Concurrent cases.**  A session whose calls overlapped (threads) is recorded with
 ``concurrent: true``, each call's ``span`` (the recorder's ticks at its start and end) and a
@@ -679,8 +679,7 @@ class Recorder:
         for name, why in (("adopt", "a document adopted from Python objects"),
                           ("keep_datasets", "datasets kept by the application"),
                           ("drop_dataset", "a dataset dropped by the application"),
-                          ("commit", "a commit by the application"),
-                          ("owned_history", "history read by the application")):
+                          ("commit", "a commit by the application")):
             patch_sessions(name, lambda o, why=why: self._tainting(o, why))
 
         def add_output(original):
