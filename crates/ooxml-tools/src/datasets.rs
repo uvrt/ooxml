@@ -5,7 +5,8 @@
 //! the Markdown of its rich text values, given or worked out when first asked for
 //! ([`Markdown`], [`LazyMarkdown`]) --, checked as it is made ([`DatasetError`]), made of
 //! records ([`Dataset::from_records`]), a run of its rows ([`Dataset::row_slice`]) and the
-//! rows a source hands a call ([`Dataset::source_rows`]); and a dataset's address: its id
+//! rows a source hands a call ([`Dataset::source_rows`]), the dataset as JSON both ways
+//! ([`Dataset::to_json`], [`Dataset::from_json`]); and a dataset's address: its id
 //! ([`dataset_id`], [`check_dataset_id`]) and a run of its rows (`d:x/#9:#16`:
 //! [`row_range`], [`rows_text`]).
 //!
@@ -779,6 +780,8 @@ fn labels(types: Option<Labels>, columns: &[String]) -> Result<Option<Vec<Option
     }
     Ok(Some(labels))
 }
+
+mod json;
 
 #[cfg(test)]
 mod tests;

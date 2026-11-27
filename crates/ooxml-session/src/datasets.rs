@@ -7,7 +7,7 @@
 //! ([`CallDatasets::finish`]); a dataset or a run of its rows as a source's rows
 //! ([`CallDatasets::source`], `d:x/#9:#16`); and staleness: a source's version against its
 //! head now ([`Heads`]), frozen when its document closes, said on every use
-//! ([`stale_warning`]).
+//! ([`stale_warning`]). A kept entry as JSON, for the application's own host (`json`).
 //!
 //! A dataset is session state, not document content: undo never removes one, defining one
 //! is not an undo step, and a reading call may define one. It is never refreshed: when its
@@ -26,6 +26,8 @@ use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+mod json;
 
 /// The version each open document is at now: `None` for one that is not open.
 pub trait Heads {
@@ -385,6 +387,11 @@ fn full(count: usize, limits: &DatasetLimits, known: Vec<String>) -> ToolError {
 #[derive(Debug, Clone, Default)]
 pub struct DatasetStore {
     entries: Vec<DatasetEntry>,
+    /// Each entry's serial, in step with `entries`: a number no other keeping was given,
+    /// so a copy read of an entry is known for that keeping's alone ([`DatasetStore::serial`]).
+    serials: Vec<u64>,
+    /// The serial the next entry kept is given.
+    next: u64,
     /// Its limits.
     pub limits: DatasetLimits,
 }
@@ -395,6 +402,8 @@ impl DatasetStore {
     pub fn new(limits: DatasetLimits) -> DatasetStore {
         DatasetStore {
             entries: Vec::new(),
+            serials: Vec::new(),
+            next: 1,
             limits,
         }
     }
@@ -417,9 +426,21 @@ impl DatasetStore {
         self.entries.iter().find(|e| e.id == id)
     }
 
-    /// The dataset `id` is, to change (the application's housekeeping).
+    /// The dataset `id` is, to change (the application's housekeeping): its values kept
+    /// anew, under a new serial.
     pub fn find_mut(&mut self, id: &str) -> Option<&mut DatasetEntry> {
-        self.entries.iter_mut().find(|e| e.id == id)
+        let at = self.entries.iter().position(|e| e.id == id)?;
+        *self.serials.get_mut(at)? = self.next;
+        self.next += 1;
+        self.entries.get_mut(at)
+    }
+
+    /// The serial of the dataset `id` is (no `d:`): given when it was kept, never given
+    /// again -- a dataset kept anew under its id, or dropped and kept again, has another.
+    #[must_use]
+    pub fn serial(&self, id: &str) -> Option<u64> {
+        let at = self.entries.iter().position(|e| e.id == id)?;
+        self.serials.get(at).copied()
     }
 
     /// The dataset `address` names (`d:by_region`, `d:by_region[total]`, or the bare id);
@@ -481,8 +502,10 @@ impl DatasetStore {
             for other in &mut entry.source.also {
                 fill(other, false, heads);
             }
-            self.entries.retain(|e| e.id != entry.id);
+            self.forget(&entry.id);
             self.entries.push(entry);
+            self.serials.push(self.next);
+            self.next += 1;
         }
         Ok(())
     }
@@ -507,8 +530,16 @@ impl DatasetStore {
     /// No such dataset.
     pub fn drop_dataset(&mut self, address: &str, retry: &TryCall) -> Result<(), ToolError> {
         let id = self.get(address, None, retry)?.id.clone();
-        self.entries.retain(|e| e.id != id);
+        self.forget(&id);
         Ok(())
+    }
+
+    /// The entry `id` and its serial taken out, where there is one.
+    fn forget(&mut self, id: &str) {
+        if let Some(at) = self.entries.iter().position(|e| e.id == id) {
+            self.entries.remove(at);
+            self.serials.remove(at);
+        }
     }
 
     /// What the session's `describe` says of its datasets: each one's [`DatasetEntry::

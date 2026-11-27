@@ -1016,8 +1016,7 @@ class Toolbox:
                  strict_first: Sequence[str] | None = None,
                  runner: Any = None, font_dirs: Any = None, locale: Any = None,
                  roles: str | Iterable[str] | None = None, prewarm: bool = True,
-                 numbers: Any = None, block_edits: str = "auto",
-                 _rust_host: bool | None = None) -> None:
+                 numbers: Any = None, block_edits: str = "auto") -> None:
         """``workers`` worker processes render and lay out (:class:`~.worker.WorkerPool`);
         ``None`` (the default) is what this process may use -- its CPUs and its container's
         CPU quota, at most eight (:func:`~.worker.default_workers`).  One call's views
@@ -1135,9 +1134,8 @@ class Toolbox:
         self._warning_categories = tuple(category for fmt in self.formats.values()
                                          for category in fmt.warnings)
         # Phase 3 E1: the Rust host behind this toolbox, where it runs its sessions
-        # (hosted.runs_on_host).  ``_rust_host`` is a test's seam for a toolbox with tools of
-        # its own; E1b deletes it together with the rule.
-        self._hosting = hosted.Hosting(self) if hosted.runs_on_host(self, _rust_host) else None
+        # (hosted.runs_on_host).
+        self._hosting = hosted.Hosting(self) if hosted.runs_on_host(self) else None
         for category in self._warning_categories:
             # Every occurrence reaches the collector, not only the first per location.  A
             # filter the application adds later for these categories takes precedence.
@@ -1554,6 +1552,7 @@ class Toolbox:
                 clean, found = self._sources(
                     session, tool, clean,
                     refine=self._source_refiner(session, doc_ids, tool, clean))
+            session.held_in_python(name, [*doc_ids, *found])
             reading = [doc for doc in found if doc not in doc_ids]
             # Round 45: a call that only reads works on each document's committed version
             # and never waits for an edit in flight (Session.read_lock); one that changes a

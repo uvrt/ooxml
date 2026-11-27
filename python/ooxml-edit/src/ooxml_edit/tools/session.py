@@ -1520,6 +1520,11 @@ class Session:
                 "open this one without doc_id for the next free id"
                 + (f" (open now: {', '.join([doc_id, *others])})" if others else ""))
 
+    def held_in_python(self, tool: str, doc_ids: Iterable[str]) -> None:
+        """Refuse a call of ``tool`` the Python dispatcher runs on ``doc_ids`` when this
+        session holds any of them elsewhere (a session on the Rust host: :mod:`.hosted`);
+        here every document is held in Python."""
+
     def entry(self, doc_id: str) -> DocumentEntry:
         """The open document ``doc_id``; ``not_found`` names the open ones."""
         with self._lock:
