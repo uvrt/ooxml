@@ -65,6 +65,14 @@ pub enum GraphicError {
     Package(#[from] OpcError),
 }
 
+impl GraphicError {
+    /// A part the graphic names that the package lacks.
+    #[must_use]
+    pub fn no_part(part: &str) -> GraphicError {
+        GraphicError::NoPart(part.to_owned())
+    }
+}
+
 /// An edit of the parts behind a chart, made on the version it is prepared on.
 pub trait GraphicEdit {
     /// Its outcome.

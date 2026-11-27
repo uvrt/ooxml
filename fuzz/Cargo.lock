@@ -407,9 +407,12 @@ dependencies = [
  "ooxml-drawingml",
  "ooxml-fonts",
  "ooxml-numfmt",
+ "ooxml-opc",
  "ooxml-schema",
  "ooxml-text",
  "ooxml-xml",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
