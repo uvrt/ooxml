@@ -163,7 +163,7 @@ pub fn received<E>(
     before: Option<&Arc<Element>>,
     root: &Arc<Element>,
     held: &dyn Fn(u32) -> bool,
-    draw: &mut dyn FnMut(&str, usize) -> Result<Vec<String>, E>,
+    draw: &mut blocks::Draw<'_, E>,
 ) -> Result<Option<Stamp>, E> {
     let ids = PartIds::new(story, root);
     let Some(found) = blocks::unstamped(story, part, root, &ids, true) else {

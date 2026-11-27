@@ -443,13 +443,6 @@ form = "word_inspect of Accept All's cell ends"
 cause = "Accept All's cell ends in the final view (deferred, objects O)"
 
 [[not_supported]]
-form = "replace_text in the body only while other stories match"
-cause = """a body-only replace_text that other stories match too answers with the call that \
-covers them (try_call, stories: all; python/docx-agent/tests/deferred_forms.py). docx-agent counted \
-a header's or a note's paragraph named by place as the body's: with every block named by its \
-durable id from the first read (stamp-on-open-2026-11-26) the one case that did is the form"""
-
-[[not_supported]]
 form = "* by reference"
 cause = "values and addresses by reference, $ref and {{...}} (deferred, references R)"
 

@@ -120,13 +120,17 @@ pub struct Stamp {
     pub given: Vec<String>,
 }
 
+/// What draws ids: a seed and a count give that many new values (upper-case hex), or the
+/// caller's error.
+pub type Draw<'a, E> = dyn FnMut(&str, usize) -> Result<Vec<String>, E> + 'a;
+
 impl Unstamped<'_> {
     /// The part stamped, its ids drawn by `draw` (a seed and a count: that many new values,
     /// upper-case hex): one draw per seed.
     ///
     /// # Errors
     /// What `draw` returns.
-    pub fn stamp<E>(&self, draw: &mut dyn FnMut(&str, usize) -> Result<Vec<String>, E>) -> Result<Stamp, E> {
+    pub fn stamp<E>(&self, draw: &mut Draw<'_, E>) -> Result<Stamp, E> {
         self.stamp_inheriting(&HashMap::new(), draw)
     }
 
@@ -144,7 +148,7 @@ impl Unstamped<'_> {
     pub fn stamp_inheriting<E>(
         &self,
         inherited: &HashMap<Box<[u32]>, [String; 2]>,
-        draw: &mut dyn FnMut(&str, usize) -> Result<Vec<String>, E>,
+        draw: &mut Draw<'_, E>,
     ) -> Result<Stamp, E> {
         let part = self.part;
         let prefix = &self.prefix;
@@ -197,7 +201,7 @@ impl Unstamped<'_> {
     /// prefix in scope there) and the first id. Every value drawn goes in `given`.
     fn pairs<E>(
         &self,
-        draw: &mut dyn FnMut(&str, usize) -> Result<Vec<String>, E>,
+        draw: &mut Draw<'_, E>,
         seed: &str,
         paths: &[&[u32]],
         inherited: &HashMap<Box<[u32]>, [String; 2]>,
