@@ -1,7 +1,7 @@
 # Tools for an agent
 
-`docx_agent.tools` gives a model a Word document as tool calls on the Rust session
-(`ooxml_core`, which holds the document: docx-agent 0.2.0 has no Python view), for the tool layer
+`docx_agent.tools` gives a model a Word document as tool calls on the Rust host (which holds the
+document: docx-agent 0.2.0 has no Python view), for the tool layer
 in [`ooxml-edit`](https://github.com/uvrt/ooxml-edit) (`ooxml_edit.tools`, 0.4 or later): the
 model never runs Python and never sees a path. The application opens documents from bytes,
 registers other inputs (a template, Markdown, an image) as blobs, sends the definitions to

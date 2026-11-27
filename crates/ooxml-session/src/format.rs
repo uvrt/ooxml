@@ -210,7 +210,7 @@ pub struct Finished {
     pub before: AnyVersion,
     /// The version its last edit made.
     pub last: AnyVersion,
-    /// Whether it ran in a step group (whose close makes the step).
+    /// Whether it ran in a host's batch (whose commit makes the step).
     pub batch: bool,
     /// What the format says of the call beside (a Word call's touched, validation, reflow).
     pub format: Option<Arc<dyn Any + Send + Sync>>,
@@ -312,8 +312,7 @@ pub trait FormatDoc: Send + Sync + 'static {
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError>;
 
     /// Commit a test's update of parts as `caller`, made by `tool` (section 13): the version it
-    /// leaves, whether it changed anything, how many times it was prepared, and whether it
-    /// ran in this thread's step group (whose close makes the step).
+    /// leaves, whether it changed anything, and how many times it was prepared.
     ///
     /// # Errors
     /// The update's or the store's.
@@ -322,7 +321,7 @@ pub trait FormatDoc: Send + Sync + 'static {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError>;
+    ) -> Result<(AnyVersion, bool, u32), SessionError>;
 
     /// What the format keeps for reading its versions (a Word document's readings), handed
     /// with every version read ([`Opened::readings`]).
@@ -407,17 +406,6 @@ pub trait FormatDoc: Send + Sync + 'static {
     fn hold_for_batch(&self, tools: &[&str]) -> Option<BatchHold<'_>> {
         let _ = tools;
         None
-    }
-
-    /// What a step group's revert brings back of the format's own state (a Word document's
-    /// tracking mode), taken as the group is marked; `None` by default.
-    fn group_state(&self) -> Option<Arc<dyn Any + Send + Sync>> {
-        None
-    }
-
-    /// Bring back `state` ([`FormatDoc::group_state`]) as a step group is reverted or let go.
-    fn restore_group(&self, state: &(dyn Any + Send + Sync)) {
-        let _ = state;
     }
 
     /// The format's own type, for its code to read (a downcast).

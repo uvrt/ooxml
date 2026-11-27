@@ -132,7 +132,7 @@ impl FormatDoc for FrozenDoc {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
         self.inner.update(caller, tool, update)
     }
 

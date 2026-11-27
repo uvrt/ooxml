@@ -7,8 +7,8 @@ An AI-editable Word (`.docx`) layer: a model reads a document, changes it (optio
 tracked changes), checks the pages and saves it, through tool calls. The counterpart of
 [`pptx-agent`](https://github.com/uvrt/pptx-agent) for Word.
 
-Since 0.2.0 every Word document is held by the Rust session (`ooxml_core`, built from
-this monorepo's crates): it opens, edits, lays out, checks, renders and saves the
+Since 0.2.0 every Word document is held by the Rust host (built from this monorepo's crates,
+reached through ooxml-edit's `Toolbox`): it opens, edits, lays out, checks, renders and saves the
 document. docx-agent is the tool layer on it (`docx_agent.tools`, on
 [`ooxml-edit`](https://github.com/uvrt/ooxml-edit)'s `ooxml_edit.tools`) and the live view
 (`docx_agent.liveview`). The Python `Document` API of 0.1 is gone (CHANGELOG.md, 0.2.0).

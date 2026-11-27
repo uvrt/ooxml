@@ -444,13 +444,12 @@ impl Session {
         let document = self.document(id)?;
         let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
         let update = PartUpdate::new(parts, self.context.limits, &cancel);
-        let (version, changed, attempts, batch) =
-            document.doc.update(&context.caller, None, &update).inspect_err(|e| {
-                if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
-                    self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
-                }
-            })?;
-        if changed && !batch {
+        let (version, changed, attempts) = document.doc.update(&context.caller, None, &update).inspect_err(|e| {
+            if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
+                self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
+            }
+        })?;
+        if changed {
             document.stepped(version.seq(), version.number(), None, context);
         }
         Ok(Updated {

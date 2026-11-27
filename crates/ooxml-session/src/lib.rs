@@ -37,7 +37,6 @@ pub mod elsewhere;
 mod error;
 pub mod facts;
 mod format;
-mod group;
 mod history;
 mod ids;
 mod memory;
@@ -67,12 +66,10 @@ pub use format::{
     no_source, AnyVersion, BatchHold, Deferred, Finished, Format, FormatDoc, FormatRun, Holding, LockSpent,
     NewDocument, OpenEnv, ReadTexts, ReadValues, ValueRead, WithState,
 };
-pub use group::GroupMark;
 pub use history::{Direction, NumberedStep, Numbers, Undone};
 pub use ids::{DocId, DocKind};
 pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
-pub use names::DocNames;
 pub use ooxml_store::Caller;
 pub use owners::{Owners, StepOwner};
 pub use refs::{CallRefs, RefMap, RefOwner, RefTable, RefsMark, Resolved, ScopedStep};

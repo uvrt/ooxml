@@ -501,7 +501,7 @@ impl FormatCall for ToyCall<'_> {
                             (Stored::<PackageDoc>::any(version), true)
                         }
                         None => {
-                            let (version, _, _, _) =
+                            let (version, _, _) =
                                 FormatDoc::update(&self.doc.0, &self.run.context.caller, Some(self.run.tool), &update)
                                     .map_err(failed)?;
                             (version, false)
@@ -536,7 +536,7 @@ impl FormatDoc for ToyDoc {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
         FormatDoc::update(&self.0, caller, tool, update)
     }
 

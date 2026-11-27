@@ -308,11 +308,8 @@ impl Call<'_> {
             date: self.date.clone(),
         });
         let tracking = tracking.as_ref();
-        // in this thread's batch on the document its edits run in the batch's transaction
-        let editor = CallEditor::new(word.editor())
-            .with_setup(self.setup)
-            .with_owner(word.batch_owner())
-            .in_txn(self.txn);
+        // in a host's batch its edits run in the batch's transaction
+        let editor = CallEditor::new(word.editor()).with_setup(self.setup).in_txn(self.txn);
         let (rows_written, made_by) = match self.kept {
             Some(kept) => (&kept.rows_written, &kept.made_by),
             None => (&word.rows_written, &word.made_by),

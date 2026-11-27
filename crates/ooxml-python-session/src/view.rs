@@ -1,18 +1,19 @@
-//! Owns: the live view's Python side (`Session.view`, `Session.page_svg`; an application's
-//! API, not a tool): a view as a dict, a page as `(svg, warnings)`, every Rust call made with
-//! the interpreter lock released, and the mapping of the view's errors --
+//! Owns: the live view's Python side (`HostSession.view`, `HostSession.page_svg`; an
+//! application's API, not a tool), on the host's documents: laid out by each document's own
+//! page engine, within the host's limits; a view as a dict, a page as `(svg, warnings)`, every
+//! Rust call made with the interpreter lock released, and the mapping of the view's errors --
 //! `ooxml_core.UnknownToken` (a `LookupError`), `IndexError` for a page the version does not
 //! have, `ValueError` for a text mode there is none of, `ooxml_core.ViewRefused` (args: the
 //! refusal's code, its message, its error as JSON text) for a version or a mode not drawn yet,
-//! `TimeoutError` past the call's limit on laying out.
+//! `TimeoutError` past the host's limit on laying out.
 //!
 //! Must not: do the view's work (ooxml-session does), or hold a Python object while the
 //! version is laid out or painted.
 
-use crate::context::{caller_context, PyCallContext};
-use crate::options::PyCallLayout;
-use crate::session::{doc_id, to_py};
-use ooxml_session::Session;
+use crate::errors::to_py;
+use ooxml_host::HostSession;
+use ooxml_session::{DocId, SessionError};
+use ooxml_session_word::prelude::*;
 use ooxml_session_word::{LiveView, TextMode, View, ViewError};
 use ooxml_tools::{ErrorCode, Failure};
 use pyo3::exceptions::{PyIndexError, PyLookupError, PyRuntimeError, PyTimeoutError, PyValueError};
@@ -53,19 +54,29 @@ fn raised(error: &ViewError) -> PyErr {
     }
 }
 
-/// `Session.view`: see its docs there.
+/// The Word document `doc` of `session` and the engine its pages are laid out with.
+fn engine(session: &HostSession, doc: &str) -> PyResult<(DocId, std::sync::Arc<ooxml_tools_word::EnginePages>)> {
+    let not_open = || SessionError::NotOpen {
+        id: doc.to_owned(),
+        open: session.session().documents().iter().map(ToString::to_string).collect(),
+    };
+    let id = DocId::parse(doc).ok_or_else(|| to_py(&not_open()))?;
+    let pages = session.session().pages(&id).map_err(|e| to_py(&e))?;
+    let pages =
+        pages.ok_or_else(|| PyValueError::new_err(format!("{doc} is not a Word document the host lays out")))?;
+    Ok((id, pages))
+}
+
+/// `HostSession.view`: see its docs there.
 pub(crate) fn view<'py>(
     py: Python<'py>,
-    session: &Session,
+    session: &HostSession,
     (doc, since): (&str, Option<&str>),
-    layout: &PyCallLayout,
-    context: Option<&PyCallContext>,
 ) -> PyResult<Bound<'py, PyDict>> {
-    let id = doc_id(doc, session)?;
-    let pages = layout.word_layout()?;
-    let context = caller_context(context);
+    let (id, pages) = engine(session, doc)?;
+    let context = session.application_context();
     let view = py
-        .detach(|| session.view(&id, since, &*pages, &context))
+        .detach(|| session.session().view(&id, since, &*pages, &context))
         .map_err(|e| raised(&e))?;
     view_dict(py, &view)
 }
@@ -87,20 +98,18 @@ fn view_dict<'py>(py: Python<'py>, view: &View) -> PyResult<Bound<'py, PyDict>> 
     Ok(out)
 }
 
-/// `Session.page_svg`: see its docs there.
+/// `HostSession.page_svg`: see its docs there.
 pub(crate) fn page_svg(
     py: Python<'_>,
-    session: &Session,
+    session: &HostSession,
     (doc, page, token): (&str, usize, &str),
-    (layout, text): (&PyCallLayout, &str),
-    context: Option<&PyCallContext>,
+    text: &str,
 ) -> PyResult<(String, Vec<String>)> {
     let text = TextMode::parse(text).map_err(|e| raised(&e))?;
-    let id = doc_id(doc, session)?;
-    let pages = layout.word_layout()?;
-    let context = caller_context(context);
+    let (id, pages) = engine(session, doc)?;
+    let context = session.application_context();
     let drawn = py
-        .detach(|| session.page_svg(&id, page, token, &*pages, text, &context))
+        .detach(|| session.session().page_svg(&id, page, token, &*pages, text, &context))
         .map_err(|e| raised(&e))?;
     Ok((drawn.svg, drawn.warnings))
 }

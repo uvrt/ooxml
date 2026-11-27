@@ -90,10 +90,13 @@ HOST_GOLDENS_PREFIXES = ("crates/ooxml-oracle/host/", "crates/ooxml-oracle/pytho
 #: any event (_select).
 PACKAGES: dict[str, dict] = {
     "ooxml-common": {
-        # ooxml-edit is test only (tests/test_dates.py, test_numfmt.py read it); the font
-        # bundle is pptx2svg's sub-distribution, for tests/test_fonts.py.
-        "uses": ["ooxml-common", "ooxml-edit", "pptx2svg"],
-        "siblings": ["pptx2svg/packages/pptx2svg-fonts", "ooxml-edit"],
+        # The font bundle is pptx2svg's sub-distribution, for tests/test_fonts.py.  (ooxml-edit,
+        # which needs ooxml-core since Phase 3 E2, is not installed: ooxml-edit's own
+        # tests/test_dates_common.py holds it to this package's tables.)
+        "uses": ["ooxml-common", "pptx2svg"],
+        "siblings": ["pptx2svg/packages/pptx2svg-fonts"],
+        # lxml for the tests that read with it (test_zipparts.py, test_xmlutil.py).
+        "pip_extra": ["lxml>=4.9"],
         "extras": "dev",
         "min_python": "3.10",
         "pytest": [],
@@ -105,13 +108,17 @@ PACKAGES: dict[str, dict] = {
         # Windows's font folders (fonts/office.py, rasterdb.py): a Windows leg on every
         # event (LEGS, "smoke").
         "windows_smoke": True,
-        # Its test-only sibling ooxml-edit installs lxml: lxml 7 on the free-threaded leg.
+        # lxml 7 on the free-threaded leg.
         "lxml7": True,
         "gil_imports": ["fontTools.ttLib", "lxml.etree", "lxml.html", "resvg_py"],
     },
     "ooxml-edit": {
-        "uses": ["ooxml-common", "ooxml-edit"],
-        "siblings": ["ooxml-common"],
+        # ooxml-core (built here by maturin): the Rust host behind the Toolbox, a dependency
+        # since Phase 3 E2 (ooxml_core internal, reached only through ooxml_edit.tools.hosted).
+        "uses": ["ooxml-common", "ooxml-core", "ooxml-edit"],
+        # On a pull request: the bindings, not the Rust core's other crates (main runs those).
+        "pr_uses": ["ooxml-common", BINDINGS, "ooxml-edit"],
+        "siblings": ["ooxml-common", "ooxml-core"],
         "extras": "dev",
         "min_python": "3.10",
         "pytest": [],
@@ -119,10 +126,9 @@ PACKAGES: dict[str, dict] = {
         "mypy": True,
         "mypy_siblings": ["ooxml-common"],
         "lxml7": True,
-        # The worker's pipes in binary mode (tools/subworker.py, msvcrt) and zlib-ng's
-        # deflate (opc.py): a Windows leg on every event (LEGS, "smoke").
-        "windows_smoke": True,
-        "gil_imports": ["lxml.etree", "lxml.html"],
+        # No Windows leg: ooxml-core's wheels are Linux only, and production runs Linux.
+        "windows": False,
+        "gil_imports": ["lxml.etree", "lxml.html", "ooxml_core"],
     },
     "docx2svg": {
         # A thin layer over the Rust core's layout and drawing (ooxml-core, built here by maturin).
@@ -183,8 +189,11 @@ PACKAGES: dict[str, dict] = {
         "gil_imports": ["lxml.etree", "lxml.html", "ooxml_core"],
     },
     "pptx-agent": {
-        "uses": ["ooxml-common", "ooxml-edit", "pptx2svg", "pptx-agent"],
-        "siblings": ["ooxml-common", "ooxml-edit", "pptx2svg[png]", "pptx2svg/packages/pptx2svg-fonts"],
+        # ooxml-core: ooxml-edit's dependency (Phase 3 E2), built here by maturin.
+        "uses": ["ooxml-common", "ooxml-core", "ooxml-edit", "pptx2svg", "pptx-agent"],
+        # On a pull request: the bindings, not the Rust core's other crates (main runs those).
+        "pr_uses": ["ooxml-common", BINDINGS, "ooxml-edit", "pptx2svg", "pptx-agent"],
+        "siblings": ["ooxml-common", "ooxml-core", "ooxml-edit", "pptx2svg[png]", "pptx2svg/packages/pptx2svg-fonts"],
         "extras": "dev,png",
         # pytest-xdist is installed for CI only, not in the dev extra, so a bare local
         # `pytest` stays serial.
@@ -194,7 +203,7 @@ PACKAGES: dict[str, dict] = {
         "ft_pytest": [],
         "mypy": False,
         "lxml7": True,
-        "gil_imports": ["lxml.etree", "lxml.html", "resvg_py", "PIL.Image"],
+        "gil_imports": ["lxml.etree", "lxml.html", "ooxml_core", "resvg_py", "PIL.Image"],
     },
     "xlsx-agent": {
         # HOST_GOLDENS: its suite replays the host goldens' mixed streams (a workbook beside a
@@ -729,7 +738,9 @@ def build_check(name: str) -> None:
     if spec["mypy"]:
         siblings = spec.get("mypy_siblings", [])
         if siblings:
-            _pip(*[_req(s) for s in siblings])
+            # Their sources for the type check only: never their dependencies (ooxml-edit's
+            # ooxml-core would be built here).
+            _pip("--no-deps", *[_req(s) for s in siblings])
         subprocess.run(["mypy"], cwd=cwd, check=True)
 
 

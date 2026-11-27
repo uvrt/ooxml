@@ -174,7 +174,7 @@ def page_setup(options, *, raster: Any = None) -> Any:
     """What a Rust session lays its documents out with for ``options`` (an
     ``ooxml_core.PageSetup``: the fonts as :func:`word_fonts` finds them, the engines'
     locale, decimal tab and glyph size, counted in :func:`memory_budget`) -- each document's
-    engine then the session's own (``ooxml_core.Session(pages=...)``, ``Session.set_pages``);
+    engine then the Rust host's own (``ooxml_core.Host(settings, pages=...)``);
     ``raster`` (a :func:`page_raster`) the faces a host's ``render`` draws its pages with.
 
     Raises :class:`ValueError` for options the Rust layout does not take

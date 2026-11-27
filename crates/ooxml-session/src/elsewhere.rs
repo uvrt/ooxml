@@ -270,7 +270,7 @@ impl FormatDoc for HeldElsewhere {
         _caller: &Caller,
         _tool: Option<&str>,
         _update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
         Err(self.session_error("change it"))
     }
 
@@ -365,7 +365,7 @@ impl FormatDoc for Answering {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
         self.held.update(caller, tool, update)
     }
 

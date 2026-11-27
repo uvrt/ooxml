@@ -1,6 +1,6 @@
 """The definitions docx-agent's toolbox sends against the Rust session's specs.
 
-A Word tool's definition is the Rust session's spec (``ooxml_core.tool_specs("docx")``,
+A Word tool's definition is the Rust session's spec (``ooxml_edit.tools.hosted.tool_specs("docx")``,
 ``docx_agent.tools.specs.tool_of``).  A shared tool (``check``, ``render``,
 ``save_document``...) keeps ooxml-edit's shared definition, which another library's tools
 merge with; it must stay the Rust spec byte for byte, so the two cannot drift apart.
@@ -8,19 +8,18 @@ merge with; it must stay the Rust spec byte for byte, so the two cannot drift ap
 
 from __future__ import annotations
 
-import json
 
-import ooxml_core
 import pytest
 
 from ooxml_edit.tools import Toolbox, shared
+from ooxml_edit.tools.hosted import tool_specs
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS, WORD_TOOLS
 from docx_agent.tools.format import WITHDRAWN
 from docx_agent.tools.shared import HANDLERS
 from test_rust_tool_specs import export, text
 
-SPECS = {spec["name"]: spec for spec in json.loads(ooxml_core.tool_specs("docx"))}
+SPECS = {spec["name"]: spec for spec in tool_specs("docx")}
 #: The export's keys compared apart: the aliases (functions here, their names in Rust) and
 #: ``canonical`` (a shared tool's covers every kind's fields; the Rust spec's, docx's).
 LOOSE = ("aliases", "canonical")

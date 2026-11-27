@@ -48,7 +48,7 @@ impl Session {
     pub(crate) fn call_undo(&self, arguments: Value, context: &CallContext) -> ToolResult<Value> {
         let spec = self.registry().undo_spec();
         let accepted = spec.accept(arguments).and_then(|Accepted { arguments, notes }| {
-            let (named, opened) = self.document_of(spec, &arguments, &context.names, None)?;
+            let (named, opened) = self.document_of(spec, &arguments, None)?;
             Ok((arguments, notes, named, opened))
         });
         let (arguments, notes, named, opened) = match accepted {
