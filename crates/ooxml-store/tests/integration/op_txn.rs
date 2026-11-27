@@ -44,7 +44,7 @@ fn ops(tx: &mut Txn<'static, Cells>, plan: &[(u32, Option<i64>)]) -> Result<Vec<
                 outs.push(Some(value));
             }
             Err(_) => {
-                tx.rollback(point);
+                tx.take_back(point);
                 outs.push(None);
             }
         }

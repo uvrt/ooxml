@@ -15,4 +15,5 @@ mod numbers;
 mod op_txn;
 mod predicate;
 mod rebase;
+mod refusals;
 mod serial_replay;

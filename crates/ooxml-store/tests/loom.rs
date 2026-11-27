@@ -10,7 +10,8 @@
 //! batch as Phase 3 runs it (`Store::run_txn`, each op handed the transaction erased), beside a
 //! writer and behind the gate; and a batch of positional changes beside a writer's insertion,
 //! its change sequence moved past the writer's as one (design phase 3 §4, the sequence
-//! rebase). Every run equals a serial run in commit order. Run with
+//! rebase); and a batch whose op refuses on a cell a writer then fills, its refusal a read of
+//! that cell. Every run equals a serial run in commit order. Run with
 //! `RUSTFLAGS="--cfg loom" cargo test -p ooxml-store --test loom --release`.
 // Tests may unwrap, panic and index (docs/architecture/README.md, section 2.5).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
@@ -21,7 +22,7 @@ mod common;
 #[path = "integration/items.rs"]
 mod items;
 
-use common::{still, Cells, Fail, Mix, Put};
+use common::{still, Cells, Fail, Guard, Mix, Put};
 use ooxml_store::{AttemptState, Batch, Command, InOp, OpTxn, Txn};
 use ooxml_store::{Caller, Seq, Store, StoreConfig, StoreError, TxnOwner};
 use std::sync::Arc;
@@ -458,7 +459,7 @@ fn host_batch(store: &Store<Cells>) -> (Seq, Vec<bool>) {
                 let left = lent.into_current::<Cells>().unwrap();
                 match ran {
                     Ok(_) => current = left,
-                    Err(_) => tx.rollback(point),
+                    Err(_) => tx.take_back(point),
                 }
                 outs.push(ran.is_ok());
             }
@@ -564,6 +565,59 @@ fn a_batchs_change_sequence_rebased_past_a_writers_commit_loses_no_update() {
         let names: Vec<u32> = doc.doc().0.iter().map(|i| i.0).collect();
         assert!(names.contains(&50) && names.contains(&60), "{names:?}");
         assert!(doc.doc().0.contains(&(2, 7)));
+        assert_eq!(store.steps().len(), 2);
+    });
+}
+
+/// The batch whose second op refuses while cell 1 is empty, and the writer that fills it.
+fn guarded() -> (Batch<Guard>, Put) {
+    let batch = Batch::new(vec![
+        Guard {
+            on: 0,
+            write: 2,
+            value: 5,
+        },
+        Guard {
+            on: 1,
+            write: 3,
+            value: 7,
+        },
+    ]);
+    (batch, Put(vec![(1, 10)]))
+}
+
+#[test]
+fn a_batchs_op_refused_on_what_a_writer_then_changes_equals_a_serial_order() {
+    loom::model(|| {
+        let start = Cells(Arc::new([(0, 1)].into_iter().collect()));
+        let store = Arc::new(Store::new(start.clone(), StoreConfig::default(), still()));
+        let batcher = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || {
+                let done = store.run(&Caller::anonymous(), &guarded().0).unwrap();
+                (
+                    done.version.seq(),
+                    done.out.iter().map(Result::is_ok).collect::<Vec<_>>(),
+                )
+            })
+        };
+        let writer = {
+            let store = Arc::clone(&store);
+            loom::thread::spawn(move || store.run(&Caller::anonymous(), &guarded().1).unwrap().version.seq())
+        };
+        let ((batch_at, outs), written_at) = (batcher.join().unwrap(), writer.join().unwrap());
+        let serial = Store::new(start, StoreConfig::default(), still());
+        let (batch, put) = guarded();
+        if written_at < batch_at {
+            serial.run(&Caller::anonymous(), &put).unwrap();
+            serial.run(&Caller::anonymous(), &batch).unwrap();
+        } else {
+            serial.run(&Caller::anonymous(), &batch).unwrap();
+            serial.run(&Caller::anonymous(), &put).unwrap();
+        }
+        assert_eq!(store.snapshot().doc(), serial.snapshot().doc());
+        // the second op applied exactly where the writer committed first
+        assert_eq!(outs, [true, written_at < batch_at]);
         assert_eq!(store.steps().len(), 2);
     });
 }

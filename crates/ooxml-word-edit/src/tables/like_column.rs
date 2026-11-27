@@ -85,6 +85,11 @@ impl Command<WordDoc> for LikeTheColumn {
         crate::after::after_edit(&mut sink)?;
         Ok(done)
     }
+
+    /// The table it names.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_table(tx, self.table.as_str());
+    }
 }
 
 /// Whether `node`'s run properties are bare: none, or revision records only.

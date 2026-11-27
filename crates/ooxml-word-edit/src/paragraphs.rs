@@ -281,6 +281,14 @@ impl Command<WordDoc> for InsertParagraph {
         crate::after::after_edit(&mut sink)?;
         Ok(out)
     }
+
+    /// Its text, the block it is placed by, and the styles where it names one.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_anchor(tx, &self.anchor);
+        if self.style.is_some() {
+            crate::refusal::read_styles(tx);
+        }
+    }
 }
 
 /// A text's lines: split at `\n`, `\r\n` and `\r`.

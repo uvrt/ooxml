@@ -105,10 +105,10 @@ pub(crate) struct Across {
 }
 
 /// A range as named: its first paragraph, its last when another, its offsets.
-type Range = (Found, Option<Found>, usize, usize);
+pub(crate) type Range = (Found, Option<Found>, usize, usize);
 
 /// A range as docx-agent's `parse_range` reads one.
-fn range_of(doc: &WordDoc, docx: &Docx, given: &Address, position: bool) -> Result<Range> {
+pub(crate) fn range_of(doc: &WordDoc, docx: &Docx, given: &Address, position: bool) -> Result<Range> {
     let address = given.as_str();
     if let Some(range) = given.text_range() {
         let found = find(doc, docx, &range.start_id)?;
@@ -485,6 +485,11 @@ impl Command<WordDoc> for InsertText {
         let plan = plan(sink.doc(), &docx, found, &self.text)?;
         replace_ranges(&mut sink, vec![plan], Keep::First)
     }
+
+    /// Its text, and the paragraph it names (the position within its text).
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_range(tx, &self.at, true);
+    }
 }
 
 impl Command<WordDoc> for DeleteText {
@@ -501,6 +506,11 @@ impl Command<WordDoc> for DeleteText {
         let found = range_of(sink.doc(), &docx, &self.range, false)?;
         let plan = plan(sink.doc(), &docx, found, "")?;
         replace_ranges(&mut sink, vec![plan], Keep::First)
+    }
+
+    /// The paragraph it names (the range within its text); across paragraphs, every one.
+    fn read_refusal(&self, tx: &mut Txn<'_, WordDoc>) {
+        crate::refusal::read_range(tx, &self.range, false);
     }
 }
 

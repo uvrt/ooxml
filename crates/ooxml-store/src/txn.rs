@@ -29,6 +29,10 @@ pub struct Txn<'s, D: DocModel> {
     number: u64,
     /// Whether it is prepared behind the document's gate ([`Txn::gated`]).
     gated: bool,
+    /// How many ops it ran ([`Txn::run_op`]), nested ones included.
+    ops: u64,
+    /// Whether the op that ended last refused ([`Txn::take_back`]).
+    refused: bool,
 }
 
 /// The id allocator a transaction draws from: the store's, borrowed by a run, or shared by
@@ -48,14 +52,17 @@ impl Ids<'_> {
 }
 
 /// A point in a transaction to return to (a batch's failed op returns to the one taken
-/// before it). Reads and reads by condition recorded after it are kept, and so are the ids
-/// drawn after it: a conflict on them only redoes the work, and an id is never given twice.
+/// before it). Reads and reads by condition recorded after it are kept -- a refused op's
+/// outcome depends on them as an applied one's does -- and so are the ids drawn after it: a
+/// conflict on them only redoes the work, and an id is never given twice.
 pub struct Savepoint<D: DocModel> {
     work: D,
     writes: KeySet<D::Key>,
     merges: KeySet<D::Key>,
     created: KeySet<D::Key>,
     changes: usize,
+    /// How many ops the transaction had run at this point.
+    ops: u64,
 }
 
 impl<D: DocModel> Clone for Savepoint<D> {
@@ -66,6 +73,7 @@ impl<D: DocModel> Clone for Savepoint<D> {
             merges: self.merges.clone(),
             created: self.created.clone(),
             changes: self.changes,
+            ops: self.ops,
         }
     }
 }
@@ -94,6 +102,8 @@ impl<'s, D: DocModel> Txn<'s, D> {
             ids,
             number: 0,
             gated: false,
+            ops: 0,
+            refused: false,
         }
     }
 
@@ -218,16 +228,52 @@ impl<'s, D: DocModel> Txn<'s, D> {
             merges: self.merges.clone(),
             created: self.created.clone(),
             changes: self.changes.len(),
+            ops: self.ops,
         }
     }
 
-    /// Return to `point`: the changes after it are dropped.
+    /// Return to `point`: the changes after it are dropped (what was read after it is kept).
     pub fn rollback(&mut self, point: Savepoint<D>) {
         self.work = point.work;
         self.writes = point.writes;
         self.merges = point.merges;
         self.created = point.created;
         self.changes.truncate(point.changes);
+    }
+
+    /// Run `command` as one op of several in this transaction (a batch's op, an edit a
+    /// command runs within its own): validated on the working version, then prepared. Where
+    /// it refuses, its changes are taken back and the transaction goes on depending on the
+    /// refusal -- on what the command read before it refused (kept) and on what its refusal
+    /// rests on ([`Command::read_refusal`]) -- so that a commit meanwhile that would have let
+    /// it apply is a conflict (design phase 3 §4: everything an op's outcome depends on,
+    /// applied or refused, is in the transaction's read set).
+    ///
+    /// # Errors
+    /// The command's refusal, its changes taken back.
+    pub fn run_op<C: crate::Command<D>>(&mut self, command: &C) -> Result<C::Out, C::Error> {
+        let point = self.savepoint();
+        self.ops += 1;
+        let ran = command.validate(self.doc()).and_then(|()| command.prepare(self));
+        self.refused = ran.is_err();
+        if ran.is_err() {
+            self.rollback(point);
+            command.read_refusal(self);
+        }
+        ran
+    }
+
+    /// Take back an op of a host's batch that failed since `point`, the transaction going on:
+    /// its failure is part of what the transaction commits. Where the op ended in a command's
+    /// refusal ([`Txn::run_op`]), that refusal read what it rests on; any other failure rests
+    /// on what the op's code read outside the transaction, so the transaction depends on the
+    /// whole document.
+    pub fn take_back(&mut self, point: Savepoint<D>) {
+        let read = self.refused && self.ops > point.ops;
+        self.rollback(point);
+        if !read {
+            self.read_everything();
+        }
     }
 
     pub(crate) fn into_parts(self) -> TxnParts<D> {
