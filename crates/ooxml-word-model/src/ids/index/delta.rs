@@ -2,23 +2,21 @@
 //! container children the later version does not share with the earlier one are found by
 //! identity (`ooxml_xml::changed_runs`), and only their blocks are keyed and compared -- by
 //! key, then by content (the same allocation, equal, or equal but for the ids stamping
-//! writes) -- the rest of the story being the same blocks under the same keys. Where either
-//! version's keys do not follow from content alone (a block without a paraId of its own, a
-//! repeat, a short spelling: an unstamped version), every block is compared, since a key
-//! there names a place: the blocks of the children both versions share are then paired by
-//! place first.
+//! writes) -- the rest of the story being the same blocks under the same keys: every block
+//! has a paraId of its own from the document's open, so a key follows from content.
 //!
-//! Renames pair blocks both versions hold under other keys: by place (above), a table with
-//! the table sharing one of its rows (its first row changed), and a gone block with a came
-//! one of the same content but stamps, aligned in order (stamping gave it a paraId, an undo
-//! of stamping took it away, a copy under new ids replaced it).
+//! Renames pair blocks both versions hold under other keys: a table with the table sharing
+//! one of its rows (its first row changed), and a gone block with a came one of the same
+//! content but stamps, aligned in order (a copy under new ids replaced it). The same
+//! alignment pairs a part another writer put without ids with the version before's
+//! ([`PartIds::aligned`]).
 //!
 //! Must not: key identity by an element's address (a pointer only says content is the same,
 //! ADR-008), or name a block by text.
 
 use super::build::{container, container_children};
 use super::segment::Kind;
-use super::{Count, Located, PartIds};
+use super::{Count, Located, PartIds, Path};
 use crate::ids::delta::{BlockDelta, Moved, StoryDelta};
 use crate::ids::key::{BlockKey, StoryIx};
 use crate::ids::{W, W14, WP14};
@@ -90,7 +88,61 @@ impl<'a> Side<'a> {
     }
 }
 
+/// One side's blocks as the alignment of blocks equal but for stamps reads them: each
+/// block's kind and element in document order, and per container child its blocks.
+struct Blocks<'a> {
+    items: Vec<(Kind, &'a Arc<Element>)>,
+    by_seg: HashMap<usize, Range<usize>>,
+}
+
+impl<'a> Blocks<'a> {
+    /// A delta side's blocks.
+    fn of(side: &Side<'a>) -> Blocks<'a> {
+        Blocks {
+            items: side.items.iter().map(|i| (i.kind, i.element)).collect(),
+            by_seg: side.by_seg.clone(),
+        }
+    }
+
+    /// Every block of `ids`' part, keyed or not, and each one's place.
+    fn every(ids: &'a PartIds) -> (Blocks<'a>, Vec<Path>) {
+        let mut out = Blocks {
+            items: Vec::new(),
+            by_seg: HashMap::new(),
+        };
+        let mut places = Vec::new();
+        let inner = ids.container.len() + 1;
+        for at in ids.located() {
+            let first = out.items.len();
+            for block in at.body.blocks.iter() {
+                out.items.push((block.kind, &block.element));
+                places.push(PartIds::path_of(&at, block));
+            }
+            if let Some(seg) = (at.base.len() == inner).then(|| at.base.last()).flatten() {
+                out.by_seg.insert(*seg as usize, first..out.items.len());
+            }
+        }
+        (out, places)
+    }
+}
+
 impl PartIds {
+    /// The blocks of this index's part and `new`'s (another version of it, whose blocks may
+    /// lack ids: a part another writer put) that are the same but for stamps, as pairs of
+    /// places (old, new): aligned in order as a delta pairs a renamed block, the container
+    /// children first, then the blocks.
+    #[must_use]
+    pub fn aligned(&self, new: &PartIds) -> Vec<(Path, Path)> {
+        let ((old_blocks, old_places), (new_blocks, new_places)) = (Blocks::every(self), Blocks::every(new));
+        let mut pair: Vec<Option<usize>> = vec![None; new_blocks.items.len()];
+        let mut taken: Vec<bool> = vec![false; old_blocks.items.len()];
+        rename_stamped(&old_blocks, &new_blocks, &mut pair, &mut taken);
+        pair.iter()
+            .enumerate()
+            .filter_map(|(j, i)| Some((old_places.get((*i)?)?.clone(), new_places.get(j)?.clone())))
+            .collect()
+    }
+
     /// What differs between this index's part (whose root is `old_root`) and `new`'s, a later
     /// (or any other) version of the same story's part whose root is `new_root`; its blocks
     /// keyed in the story `story`.
@@ -118,32 +170,21 @@ impl PartIds {
             .into_iter()
             .map(|r| (r.old, r.new))
             .collect();
-        let by_content = self.keys_by_content() && new.keys_by_content();
-        let (old, new_side) = if by_content {
-            let mut sides = (
+        let mut sides = (
+            self.side_of(story, &runs, |r| &r.0, new),
+            new.side_of(story, &runs, |r| &r.1, self),
+        );
+        // a block moved past blocks both versions share: the runs between its two places
+        // are compared as one, so its order is judged among the blocks it passed
+        if let Some(merged) = across(&sides.0, &sides.1, &runs) {
+            runs = merged;
+            sides = (
                 self.side_of(story, &runs, |r| &r.0, new),
                 new.side_of(story, &runs, |r| &r.1, self),
             );
-            // a block moved past blocks both versions share: the runs between its two places
-            // are compared as one, so its order is judged among the blocks it passed
-            if let Some(merged) = across(&sides.0, &sides.1, &runs) {
-                runs = merged;
-                sides = (
-                    self.side_of(story, &runs, |r| &r.0, new),
-                    new.side_of(story, &runs, |r| &r.1, self),
-                );
-            }
-            sides
-        } else {
-            (self.side_whole(story), new.side_whole(story))
-        };
-        // where keys name places, the blocks the two versions share are paired by place first
-        let shared = if by_content {
-            Vec::new()
-        } else {
-            self.shared_blocks(new, (&old, &new_side), &runs)
-        };
-        let mut delta = compare(&old, &new_side, &shared);
+        }
+        let (old, new_side) = sides;
+        let mut delta = compare(&old, &new_side);
         delta.wrapped = wrapped(&old, &new_side, &runs, (old_c, new_c), &delta);
         delta.outside = outside(&runs, (old_c, new_c));
         StoryDelta::Blocks(delta)
@@ -183,64 +224,6 @@ impl PartIds {
             side.before_run
                 .insert(last, self.key_before_segment(story, self.segments.len()));
             side.add(self, story, &self.outer_after(), last, None);
-        }
-        side
-    }
-
-    /// The blocks both sides hold in the container children (and outer blocks) the two
-    /// versions share, as pairs of items (old, new): each such child's blocks in order.
-    fn shared_blocks(
-        &self,
-        new: &PartIds,
-        (old_side, new_side): (&Side<'_>, &Side<'_>),
-        runs: &[(Range<usize>, Range<usize>)],
-    ) -> Vec<(usize, usize)> {
-        let mut out = Vec::new();
-        let mut zip = |a: Range<usize>, b: Range<usize>| {
-            if a.len() == b.len() {
-                out.extend(a.zip(b));
-            }
-        };
-        let (old_n, new_n) = (old_side.items.len(), new_side.items.len());
-        if same_blocks(&self.before, &new.before) {
-            let n = self.before.blocks.len();
-            zip(0..n.min(old_n), 0..n.min(new_n));
-        }
-        if same_blocks(&self.after, &new.after) {
-            let n = self.after.blocks.len();
-            zip(old_n.saturating_sub(n)..old_n, new_n.saturating_sub(n)..new_n);
-        }
-        // the children between runs: the same allocations, shifted by the runs before them
-        let mut from = 0;
-        let mut shift: isize = 0;
-        let mut stretches: Vec<(Range<usize>, isize)> = Vec::new();
-        for (a, b) in runs {
-            stretches.push((from..a.start, shift));
-            shift = b.end as isize - a.end as isize;
-            from = a.end;
-        }
-        stretches.push((from..self.segments.len(), shift));
-        for (stretch, shift) in stretches {
-            for k in stretch {
-                let Some(n) = k.checked_add_signed(shift) else { continue };
-                if let (Some(a), Some(b)) = (old_side.by_seg.get(&k), new_side.by_seg.get(&n)) {
-                    zip(a.clone(), b.clone());
-                }
-            }
-        }
-        out
-    }
-
-    /// Every block of the part, as one stretch.
-    fn side_whole(&self, story: StoryIx) -> Side<'_> {
-        let mut side = Side::new();
-        side.before_run.insert(0, None);
-        let inner = self.container.len() + 1;
-        for at in self.located() {
-            let seg = (at.base.len() == inner)
-                .then(|| at.base.last().map(|k| *k as usize))
-                .flatten();
-            side.add(self, story, &at, 0, seg);
         }
         side
     }
@@ -319,8 +302,8 @@ fn content(a: &Arc<Element>, b: &Arc<Element>) -> Content {
 }
 
 /// The blocks of `old` and `new` compared: pairs by key, then renames.
-fn compare(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> BlockDelta {
-    let (pair, taken) = paired(old, new, shared);
+fn compare(old: &Side<'_>, new: &Side<'_>) -> BlockDelta {
+    let (pair, taken) = paired(old, new);
     let renamed: Vec<(usize, usize)> = pair
         .iter()
         .enumerate()
@@ -476,14 +459,11 @@ fn moved(
         .collect()
 }
 
-/// The old item each new item is paired with -- by place where given, then by key, then as a
-/// renamed table or a stamped block -- and which old items are paired.
-fn paired(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> (Vec<Option<usize>>, Vec<bool>) {
+/// The old item each new item is paired with -- by key, then as a renamed table or a
+/// stamped block -- and which old items are paired.
+fn paired(old: &Side<'_>, new: &Side<'_>) -> (Vec<Option<usize>>, Vec<bool>) {
     let mut pair: Vec<Option<usize>> = vec![None; new.items.len()];
     let mut taken: Vec<bool> = vec![false; old.items.len()];
-    for (i, j) in shared {
-        link(&mut pair, &mut taken, *i, *j);
-    }
     for (j, item) in new.items.iter().enumerate() {
         let Some(&i) = old.by_key.get(&item.key) else { continue };
         if pair.get(j).copied().flatten().is_none() && !taken.get(i).copied().unwrap_or(true) {
@@ -491,7 +471,7 @@ fn paired(old: &Side<'_>, new: &Side<'_>, shared: &[(usize, usize)]) -> (Vec<Opt
         }
     }
     rename_tables(old, new, &mut pair, &mut taken);
-    rename_stamped(old, new, &mut pair, &mut taken);
+    rename_stamped(&Blocks::of(old), &Blocks::of(new), &mut pair, &mut taken);
     (pair, taken)
 }
 
@@ -522,14 +502,14 @@ fn rename_tables(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], tak
 /// (stamping gave it a paraId, an undo of stamping took it away, a block was replaced by a
 /// copy of itself under new ids): the two sides' unpaired blocks aligned in order by a
 /// sequence diff, as `touched` has always found such blocks unchanged.
-fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool]) {
+fn rename_stamped(old: &Blocks<'_>, new: &Blocks<'_>, pair: &mut [Option<usize>], taken: &mut [bool]) {
     let mut memo: HashMap<*const Element, u64> = HashMap::new();
     // the container children first, whose blocks are all unpaired, by their blocks' digests
     // (difflib over the body's blocks, as `touched` judged them): a moved section is a
     // removal and an insertion there, not a stretch of its many nested blocks kept
     let old_free = |i: usize| !taken.get(i).copied().unwrap_or(true);
     let new_free = |j: usize, pair: &[Option<usize>]| pair.get(j).copied().flatten().is_none();
-    let children = |side: &Side<'_>, free: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
+    let children = |side: &Blocks<'_>, free: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
         let mut segs: Vec<(usize, Range<usize>)> = side
             .by_seg
             .iter()
@@ -541,8 +521,8 @@ fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], ta
             .iter()
             .map(|(_, r)| {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
-                for item in side.items.get(r.clone()).unwrap_or_default() {
-                    (kind_tag(item.kind), stampless_hash(item.element, memo)).hash(&mut h);
+                for (kind, element) in side.items.get(r.clone()).unwrap_or_default() {
+                    (kind_tag(*kind), stampless_hash(element, memo)).hash(&mut h);
                 }
                 h.finish()
             })
@@ -565,14 +545,15 @@ fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], ta
         }
     }
     // then the blocks still unpaired, each side in order, by kind and content without stamps
-    let digests = |items: &[Item<'_>], keep: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
-        items
-            .iter()
-            .enumerate()
-            .filter(|(n, _)| keep(*n))
-            .map(|(n, item)| (n, (kind_tag(item.kind), stampless_hash(item.element, memo))))
-            .unzip::<usize, (u8, u64), Vec<usize>, Vec<(u8, u64)>>()
-    };
+    let digests =
+        |items: &[(Kind, &Arc<Element>)], keep: &dyn Fn(usize) -> bool, memo: &mut HashMap<*const Element, u64>| {
+            items
+                .iter()
+                .enumerate()
+                .filter(|(n, _)| keep(*n))
+                .map(|(n, (kind, element))| (n, (kind_tag(*kind), stampless_hash(element, memo))))
+                .unzip::<usize, (u8, u64), Vec<usize>, Vec<(u8, u64)>>()
+        };
     let (olds, a) = digests(&old.items, &|i| !taken.get(i).copied().unwrap_or(true), &mut memo);
     let (news, b) = digests(&new.items, &|j| pair.get(j).copied().flatten().is_none(), &mut memo);
     for op in opcodes(&a, &b).into_iter().filter(|op| op.tag == Tag::Equal) {
@@ -585,12 +566,12 @@ fn rename_stamped(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], ta
 }
 
 /// `i` and `j` paired where their blocks are the same but for stamps.
-fn link_alike(old: &Side<'_>, new: &Side<'_>, pair: &mut [Option<usize>], taken: &mut [bool], i: usize, j: usize) {
+fn link_alike(old: &Blocks<'_>, new: &Blocks<'_>, pair: &mut [Option<usize>], taken: &mut [bool], i: usize, j: usize) {
     let alike = old
         .items
         .get(i)
         .zip(new.items.get(j))
-        .is_some_and(|(o, n)| o.kind == n.kind && stampless_eq(o.element, n.element));
+        .is_some_and(|((ok, oe), (nk, ne))| ok == nk && stampless_eq(oe, ne));
     if alike {
         link(pair, taken, i, j);
     }

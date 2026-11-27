@@ -79,7 +79,7 @@ fn run(args: &WordFollowSample, editing: &Editing<'_>, again: &TryCall) -> Resul
     let (mine, sample) = (Side::new(&docx), Side::new(&theirs));
     let mut copies = Vec::new();
     for copy in &followed.copies {
-        let found = compare(&mine, std::slice::from_ref(&copy.id), &followed.sample_now, &sample)
+        let found = compare(&mine, std::slice::from_ref(&copy.id), &followed.sample, &sample)
             .map_err(|e| address_refused(e, again.clone()))?;
         let left: Vec<Value> = match found.get("differences") {
             Some(Value::Array(all)) => all.iter().filter_map(|d| textless(&docx, d)).collect(),
@@ -222,7 +222,7 @@ fn reply(
         changed: !changed.is_empty(),
         created: Vec::new(),
         removed: Vec::new(),
-        renamed: ooxml_word_model::ids::renames_text(&followed.renamed),
+        renamed: Vec::new(),
         warnings: followed.warnings.clone(),
     };
     let mut result = outcome(&[edit], summary, Some(Value::Object(data)));

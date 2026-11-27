@@ -257,9 +257,6 @@ fn label(record: &ParagraphRecord) -> String {
     if !record.joins.is_empty() {
         words.push(format!("joins {}", record.joins.join(" ")));
     }
-    if record.volatile {
-        words.push("volatile".to_owned());
-    }
     if record.unknown_style {
         if let Some(name) = record.style_name.as_deref().filter(|n| !n.is_empty()) {
             words.push(format!("style: {}", comment_text(name)));
@@ -526,9 +523,6 @@ fn start(record: &ParagraphRecord) -> i64 {
 
 fn table(reader: &mut Reader<'_>, t: &TableRecord) -> Vec<Block> {
     let mut words = vec![t.id.clone()];
-    if t.volatile {
-        words.push("volatile".to_owned());
-    }
     if let Some(name) = t.style_name.as_deref().filter(|n| !n.is_empty()) {
         words.push(format!("table style: {}", comment_text(name)));
     }

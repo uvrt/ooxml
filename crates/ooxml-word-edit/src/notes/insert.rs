@@ -17,7 +17,7 @@ use crate::review::space::Space;
 use crate::review::xml::make;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::text::write::{check_text, make_run};
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -88,7 +88,6 @@ impl InsertNote {
             // is a conflict
             sink.read(Key::Annotations);
         }
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let (text_style, reference_style) = self.kind.styles();
         let text_id = crate::builtin::ensure(&mut *sink, text_style, "paragraph")?;
         let reference_id = crate::builtin::ensure(&mut *sink, reference_style, "character")?;
@@ -128,8 +127,7 @@ impl InsertNote {
             at: Vec::new(),
             attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
         });
-        let id = crate::ranges::renamed_id(&renamed, &paragraph.id);
-        let keys = vec![block_key(&main, &id), Key::Annotations];
+        let keys = vec![block_key(&main, &paragraph.id), Key::Annotations];
         sink.replace_drawing(&main, &paragraph.path, new, keys, draws)?;
         if dated {
             for part in [main.as_str(), notes.as_str()] {
@@ -146,7 +144,6 @@ impl InsertNote {
             id: Some(note_id),
             created,
             removed: Vec::new(),
-            renamed,
         })
     }
 }

@@ -1,7 +1,7 @@
 //! Owns: the invariant every version a command makes keeps ([`Stamped`]): no paragraph,
 //! row or drawing of any story without a valid and unique id, however the command wrote it
 //! -- every block it wrote without one stamped through the sink, by docx-agent's stamping
-//! rules (word-model's [`ooxml_word_model::stamp::blocks`]), and the renames recorded. A
+//! rules (word-model's [`ooxml_word_model::stamp::blocks`]). A
 //! document is stamped in memory when it is opened ([`ooxml_word_model::WordPackage`]), and so
 //! is a part another writer puts in place (`Change::Received`): what is left to stamp here is
 //! what a command writes without ids.
@@ -15,8 +15,6 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::docx::{Docx, StoryPart};
-use ooxml_word_model::ids::Renames;
 use ooxml_word_model::stamp::{prefix_at, unstamped};
 
 pub(crate) use ooxml_word_model::stamp::with_attribute;
@@ -45,8 +43,7 @@ impl<C: Command<WordDoc, Error = EditError>> Command<WordDoc> for Stamped<'_, C>
         let out = self.0.prepare(tx)?;
         if !tx.changes().is_empty() {
             let mut sink = EditSink::new(tx, RevisionPolicy::Untracked);
-            let docx = sink.docx()?;
-            stamp_document(&mut sink, &docx)?;
+            stamp_written(&mut sink)?;
         }
         Ok(out)
     }
@@ -63,43 +60,26 @@ fn every_block_stamped(doc: &WordDoc) -> bool {
         .is_ok_and(|docx| docx.parts.iter().all(|p| p.ids.fully_stamped()))
 }
 
-/// Stamp every block of every story that needs an id; the renames, in the order made.
+/// Stamp every block of every story the command wrote without an id, each part's ids drawn
+/// through the sink (one draw per seed). A block written without an id was never named:
+/// nothing is renamed.
 ///
 /// # Errors
 /// When a part is not XML.
-pub(crate) fn stamp_document(sink: &mut EditSink<'_, '_>, docx: &Docx) -> Result<Renames> {
-    // where the document is stamped, for the blocks found after it (WordDoc::id_written)
-    sink.doc().note_stamped();
-    let mut renames = Renames::new();
+fn stamp_written(sink: &mut EditSink<'_, '_>) -> Result<()> {
+    let docx = sink.docx()?;
     for story in &docx.parts {
-        let made = stamp_part(sink, story)?;
-        if made.is_empty() {
+        let part = story.part.as_str();
+        // drawings are looked for only in a part whose memoised facts say it has one to stamp
+        let drawings = crate::validate::unstamped_drawings(sink.doc(), part)?;
+        let Some(found) = unstamped(part, story.root(), &story.ids, drawings) else {
             continue;
-        }
-        let known = sink.doc().ids().aliases().clone();
-        let fresh: Renames = made
-            .iter()
-            .filter(|(k, _)| !known.contains_key(k.as_str()))
-            .cloned()
-            .collect();
-        sink.rename(fresh)?;
-        renames.extend(made);
+        };
+        sink.read(Key::part(part));
+        let stamp = found.stamp(&mut |seed, count| sink.draw(seed, count))?;
+        sink.put(part, story.tree.with_root(stamp.root))?;
     }
-    Ok(renames)
-}
-
-/// Stamp one story part, its ids drawn through the sink (one draw per seed); its renames.
-fn stamp_part(sink: &mut EditSink<'_, '_>, story: &StoryPart) -> Result<Renames> {
-    let part = story.part.as_str();
-    // drawings are looked for only in a part whose memoised facts say it has one to stamp
-    let drawings = crate::validate::unstamped_drawings(sink.doc(), part)?;
-    let Some(found) = unstamped(&story.story, part, story.root(), &story.ids, drawings) else {
-        return Ok(Vec::new());
-    };
-    sink.read(Key::part(part));
-    let stamp = found.stamp(&mut |seed, count| sink.draw(seed, count))?;
-    sink.put(part, story.tree.with_root(stamp.root))?;
-    Ok(stamp.renames)
+    Ok(())
 }
 
 /// The prefix the paragraph at `path` of `root` writes `w14` attributes with.

@@ -41,8 +41,6 @@ pub struct NoteEdited {
     pub created: Vec<String>,
     /// Ids it removed.
     pub removed: Vec<String>,
-    /// Ids renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
 }
 
 /// A footnote or an endnote.

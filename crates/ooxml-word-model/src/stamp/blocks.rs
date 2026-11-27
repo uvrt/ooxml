@@ -3,8 +3,7 @@
 //! unique `w14:paraId` gets a paraId and a textId, every drawing without a valid anchorId
 //! and editId gets them, each kind drawn from its own seed in one draw (the part's name for
 //! paragraphs, `part\0row`, `part\0drawing`) in document order; `w14` (and `wp14`) then
-//! declared at the root ([`Unstamped::stamp`]); and the renames that names the blocks had
-//! before.
+//! declared at the root ([`Unstamped::stamp`]).
 //!
 //! Must not: draw a value itself (the caller's draw does: a pool at open, an edit's sink
 //! after a command), or stamp a block with a valid and unique id.
@@ -12,7 +11,7 @@
 use super::declared::ensured_head;
 use super::namespaces::cleaned;
 use crate::docx::live_paths;
-use crate::ids::{valid_long_hex, BlockId, IdState, PartIds, Renames, TableId, W14, WP, WP14};
+use crate::ids::{valid_long_hex, IdState, PartIds, W14, WP, WP14};
 use ooxml_xml::{Attribute, Children, Element, Head, Name, Node, QName};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,31 +31,19 @@ const DRAWING_IDS: Names = (WP14, "wp14", ["anchorId", "editId"]);
 #[derive(Debug)]
 pub struct Unstamped<'p> {
     part: &'p str,
-    prefix: String,
     root: &'p Arc<Element>,
-    /// Each paragraph's place and the id it goes by.
-    paragraphs: Vec<(Box<[u32]>, String)>,
-    /// Each row's place, the id it goes by, and its table's id where it is the first row.
-    rows: Vec<(Box<[u32]>, String, Option<String>)>,
+    /// Each paragraph's place.
+    paragraphs: Vec<Box<[u32]>>,
+    /// Each row's place.
+    rows: Vec<Box<[u32]>>,
     drawings: Vec<Box<[u32]>>,
 }
 
-/// The blocks of the part `part` of the story `story` (its root `root`, its index `ids`)
-/// without a durable id; `None` when it has none. Drawings are looked for only where
-/// `drawings` says the part may have one without its ids (a caller's memo).
+/// The blocks of the part `part` (its root `root`, its index `ids`) without a durable id;
+/// `None` when it has none. Drawings are looked for only where `drawings` says the part may
+/// have one without its ids (a caller's memo).
 #[must_use]
-pub fn unstamped<'p>(
-    story: &str,
-    part: &'p str,
-    root: &'p Arc<Element>,
-    ids: &PartIds,
-    drawings: bool,
-) -> Option<Unstamped<'p>> {
-    let prefix = if story == "body" {
-        String::new()
-    } else {
-        format!("{story}/")
-    };
+pub fn unstamped<'p>(part: &'p str, root: &'p Arc<Element>, ids: &PartIds, drawings: bool) -> Option<Unstamped<'p>> {
     // the index counts what lacks an id: a stamped part is not walked
     let (paragraphs, rows) = if ids.fully_stamped() {
         (Vec::new(), Vec::new())
@@ -65,9 +52,9 @@ pub fn unstamped<'p>(
             .paragraphs()
             .iter()
             .filter(|p| p.state != IdState::Ok)
-            .map(|p| (p.path, p.id))
+            .map(|p| p.path)
             .collect();
-        (paragraphs, unstamped_rows(ids, &prefix))
+        (paragraphs, ids.unstamped_rows())
     };
     let drawings: Vec<Box<[u32]>> = if drawings {
         live_paths(root, &[], &|e| {
@@ -83,7 +70,6 @@ pub fn unstamped<'p>(
     };
     (!(paragraphs.is_empty() && rows.is_empty() && drawings.is_empty())).then_some(Unstamped {
         part,
-        prefix,
         root,
         paragraphs,
         rows,
@@ -91,31 +77,11 @@ pub fn unstamped<'p>(
     })
 }
 
-/// The rows of `ids`' tables without a durable id, in document order: each one's place,
-/// its id, and its table's id where it is the table's first row.
-fn unstamped_rows(ids: &PartIds, prefix: &str) -> Vec<(Box<[u32]>, String, Option<String>)> {
-    let stamped = format!("{prefix}tr:");
-    ids.tables()
-        .iter()
-        .flat_map(|table: TableId| {
-            let TableId { id, rows, .. } = table;
-            rows.into_iter()
-                .enumerate()
-                .filter(|(_, (_, row))| !row.starts_with(&stamped))
-                .map(|(k, (path, row))| (path, row, (k == 0).then(|| id.clone())))
-                .collect::<Vec<_>>()
-        })
-        .collect()
-}
-
-/// What stamping made of a part: its root, and the renames (each block's id before, and
-/// its durable id), paragraphs and rows in document order, then the tables.
+/// What stamping made of a part.
 #[derive(Debug, Clone)]
 pub struct Stamp {
     /// The part's root, every block stamped.
     pub root: Arc<Element>,
-    /// The renames.
-    pub renames: Renames,
     /// Every value drawn, in the order given: what the part's stamps are known by.
     pub given: Vec<String>,
 }
@@ -136,8 +102,8 @@ impl Unstamped<'_> {
 
     /// The places of the paragraphs and rows to stamp, in document order.
     pub fn blocks(&self) -> impl Iterator<Item = &[u32]> + '_ {
-        let paragraphs = self.paragraphs.iter().map(|(path, _)| &**path);
-        paragraphs.chain(self.rows.iter().map(|(path, _, _)| &**path))
+        let paragraphs = self.paragraphs.iter().map(|path| &**path);
+        paragraphs.chain(self.rows.iter().map(|path| &**path))
     }
 
     /// [`Unstamped::stamp`], a paragraph or row whose place `inherited` holds given those
@@ -151,27 +117,18 @@ impl Unstamped<'_> {
         draw: &mut Draw<'_, E>,
     ) -> Result<Stamp, E> {
         let part = self.part;
-        let prefix = &self.prefix;
         let mut sets: Vec<(Box<[u32]>, Attrs)> = Vec::new();
-        let mut renames = Renames::new();
         let mut given = Vec::new();
-        let paths: Vec<&[u32]> = self.paragraphs.iter().map(|(path, _)| &**path).collect();
+        let paths: Vec<&[u32]> = self.paragraphs.iter().map(|path| &**path).collect();
         let drawn = self.pairs(draw, part, &paths, inherited, BLOCK_IDS, &mut given)?;
-        for ((path, id), (attrs, para)) in self.paragraphs.iter().zip(drawn) {
+        for (path, (attrs, _)) in self.paragraphs.iter().zip(drawn) {
             sets.push((path.clone(), attrs));
-            renames.push((BlockId::from(id), BlockId::from(format!("{prefix}p:{para}"))));
         }
-        let paths: Vec<&[u32]> = self.rows.iter().map(|(path, _, _)| &**path).collect();
+        let paths: Vec<&[u32]> = self.rows.iter().map(|path| &**path).collect();
         let drawn = self.pairs(draw, &format!("{part}\0row"), &paths, inherited, BLOCK_IDS, &mut given)?;
-        let mut tables = Vec::new();
-        for ((path, row, table), (attrs, para)) in self.rows.iter().zip(drawn) {
+        for (path, (attrs, _)) in self.rows.iter().zip(drawn) {
             sets.push((path.clone(), attrs));
-            renames.push((BlockId::from(row), BlockId::from(format!("{prefix}tr:{para}"))));
-            if let Some(table) = table {
-                tables.push((BlockId::from(table), BlockId::from(format!("{prefix}t:{para}"))));
-            }
         }
-        renames.extend(tables);
         let paths: Vec<&[u32]> = self.drawings.iter().map(|path| &**path).collect();
         let none = HashMap::new();
         let drawn = self.pairs(
@@ -192,7 +149,7 @@ impl Unstamped<'_> {
             root = ensured(&root, false);
         }
         root = ensured(&root, !self.drawings.is_empty());
-        Ok(Stamp { root, renames, given })
+        Ok(Stamp { root, given })
     }
 
     /// Two ids for each element of `paths`, in order: those `inherited` holds for its place,

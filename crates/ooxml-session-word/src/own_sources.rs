@@ -11,7 +11,7 @@ use ooxml_word_edit::WordDoc;
 
 /// What `address` names in `doc` that gives no rows; `None` when it names none of its blocks.
 pub(crate) fn own_source(doc: &WordDoc, address: &str) -> Option<String> {
-    if !["t:", "p:", "p@", "cc:", "cc@"].iter().any(|p| address.starts_with(p)) {
+    if !["t:", "p:", "cc:", "cc@"].iter().any(|p| address.starts_with(p)) {
         return None;
     }
     let base = address.split_once('/').map(|(b, _)| b);

@@ -362,10 +362,10 @@ fn touched(after: &After, done: &Done<Value>, targets: &[&str]) -> Vec<String> {
         if !seen.insert(name.clone()) {
             continue;
         }
-        let name = if name.contains('@') && !name.contains("..") {
-            name.split('@').next().unwrap_or_default().to_owned()
-        } else {
-            name
+        // a position or a range in one paragraph names its paragraph
+        let name = match ooxml_word_model::address::parse_range(&name) {
+            Some(range) if !name.contains("..") => range.start_id,
+            _ => name,
         };
         out.extend(paragraphs_of(after, &name));
     }

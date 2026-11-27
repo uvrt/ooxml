@@ -280,7 +280,6 @@ impl Count {
             paragraphs: seg.body.paragraphs.len(),
             tables: seg.body.tables.len(),
             unstamped: seg.body.unstamped as usize,
-            short: seg.body.short as usize,
             names: std::array::from_fn(|k| u32::from(seg.body.top_name() == Some(k))),
             last: seg.label,
         }

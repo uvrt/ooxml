@@ -30,7 +30,7 @@ impl From<TableEdit> for Outcome {
             changed: edit.changed,
             created: Vec::new(),
             removed: Vec::new(),
-            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
+            renamed: Vec::new(),
             warnings: edit.warnings,
         }
     }

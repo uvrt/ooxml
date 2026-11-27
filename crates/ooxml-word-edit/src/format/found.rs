@@ -81,7 +81,7 @@ pub fn occurrences(
 /// only an id with a story path before its first `@` is another story's).
 fn body_ok(id: &str) -> bool {
     let head = id.split('@').next().unwrap_or_default();
-    !head.contains('/') || id.starts_with("p@body/")
+    !head.contains('/')
 }
 
 /// The text the range `address` names (a range, a paragraph, a cell...).

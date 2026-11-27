@@ -138,7 +138,7 @@ fn reply(args: &WordComments, items: &[CommentItem], out: Vec<ItemMade>, list: &
             id: Some(out.id.clone()),
             changed: true,
             created: vec![out.id],
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             ..Outcome::default()
         });
         if let Some(resolved) = out.resolved {

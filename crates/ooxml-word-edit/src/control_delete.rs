@@ -20,7 +20,6 @@ use crate::doc::Key;
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::table_delete::{own_rows, track_delete_rows};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -131,14 +130,12 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
     let planned = plan(sink.doc(), &docx, target)?;
     let part = planned.part.clone();
     let path_error = || EditError::no_element(&part);
-    let renamed = stamp_document(sink, &docx)?;
-    let stamped = sink.docx()?;
     let tree = sink.doc().tree(&part)?.ok_or_else(|| EditError::no_part(&part))?;
     let element = at_path(tree.root(), &planned.path).ok_or_else(path_error)?;
     let paths = paths_around(tree.root(), element, &planned.path);
     let (mut work, parent, range, found) = editable(tree.root(), &paths, &[&planned.path]).ok_or_else(path_error)?;
     let &sdt = found.first().ok_or_else(path_error)?;
-    let mut keys = stretch_keys(&stamped, &part, &parent, range);
+    let mut keys = stretch_keys(&docx, &part, &parent, range);
     let count = (range.1 - range.0) as usize + 1;
     let RevisionPolicy::Tracked(tracking) = sink.policy().clone() else {
         let beside: Vec<Id> = [work.previous(sdt), work.next(sdt)].into_iter().flatten().collect();
@@ -153,7 +150,7 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
         removed.extend(planned.nested.into_iter().filter(|id| id != target));
         return Ok(BlockDeleted {
             id: None,
-            renamed,
+            renamed: Vec::new(),
             removed,
             part: part.into(),
             warnings: Vec::new(),
@@ -200,7 +197,7 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
     sink.release(&part, &wrote.released)?;
     Ok(BlockDeleted {
         id: None,
-        renamed,
+        renamed: Vec::new(),
         removed: vec![target.to_owned()],
         part: part.into(),
         warnings: vec![UNTRACKED.to_owned()],

@@ -175,3 +175,30 @@ fn twenty_thousand_paragraphs_are_stamped_at_open_with_one_draw_per_seed() {
     // generous (a debug build under load)
     assert!(took < Duration::from_secs(60), "stamping took {took:?}");
 }
+
+#[test]
+fn one_value_written_two_ways_is_a_repeat_and_the_second_gets_an_id_of_its_own() {
+    // repeats are compared by value, whatever the spelling (`1A`, `0000001A`): the first
+    // keeps its id, the second is stamped at open, as Word keeps the first of a repeat
+    let w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+    let w14 = "http://schemas.microsoft.com/office/word/2010/wordml";
+    let xml = format!(
+        r#"<w:document xmlns:w="{w}" xmlns:w14="{w14}"><w:body><w:p w14:paraId="1A" w14:textId="1B"/><w:p w14:paraId="0000001A" w14:textId="1C"/></w:body></w:document>"#
+    );
+    let tree = ooxml_xml::parse(xml.as_bytes(), &ooxml_xml::Limits::default()).unwrap();
+    let ids = PartIds::new("body", tree.root());
+    let states: Vec<IdState> = ids.paragraphs().iter().map(|p| p.state).collect();
+    assert_eq!(states, [IdState::Ok, IdState::Repeat]);
+    assert!(!ids.fully_stamped());
+    assert_eq!(ids.get("p:1A"), Some(ooxml_word_model::ids::Entry::Paragraph(0)));
+    assert_eq!(ids.get("p:0000001A"), None, "the repeat is no block's id");
+    let found = ooxml_word_model::stamp::unstamped("word/document.xml", tree.root(), &ids, false).unwrap();
+    let mut pool = ooxml_word_model::ids::IdPool::of(ooxml_word_model::ids::used_long_hex(&[&**tree.root()]));
+    let mut draw = |seed: &str, count: usize| Ok::<_, std::convert::Infallible>(pool.generate(seed, count));
+    let Ok(stamp) = found.stamp(&mut draw);
+    let after = PartIds::new("body", &stamp.root);
+    assert!(after.fully_stamped());
+    let named: Vec<String> = after.paragraphs().iter().map(|p| p.id).collect();
+    assert_eq!(named[0], "p:1A");
+    assert_ne!(named[1], "p:0000001A");
+}

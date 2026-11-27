@@ -20,7 +20,7 @@ use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::review::xml::{insert_in_order, make};
 use crate::sink::EditSink;
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -174,8 +174,6 @@ impl InsertSectionBreak {
         sink.read_everything();
         let docx = sink.docx()?;
         let anchor_path = self.anchor(sink.doc(), &docx)?;
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let docx = sink.docx()?;
         let main = docx.main.clone();
         let tree = sink
             .doc()
@@ -242,7 +240,6 @@ impl InsertSectionBreak {
             id: Some(id),
             changed: true,
             created: made,
-            renamed,
             removed: Vec::new(),
             warnings: Vec::new(),
         })

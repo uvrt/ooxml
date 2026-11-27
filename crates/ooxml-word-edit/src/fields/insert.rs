@@ -20,10 +20,9 @@ use crate::links::new_w;
 use crate::marks::insert_in_order;
 use crate::names::{W, W14, W16DU, XML};
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink, Numbered};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::text::atoms;
 use crate::text::write::spell;
 use crate::text_range::{range, range_id, Span};
@@ -226,7 +225,6 @@ pub(crate) fn put_back(
     work: &Work,
     (place, renew): (&Place, bool),
     tracked: Option<(Numbered, bool)>,
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<()> {
     let part = place.part.clone();
     let tree = sink
@@ -244,8 +242,7 @@ pub(crate) fn put_back(
             attribute: Arc::new(QName::new(Some(&prefix), "textId", Some(W14))),
         });
     }
-    let id = renamed_id(renamed, &place.id);
-    sink.replace_drawing(&part, &place.path, new, vec![block_key(&part, &id)], draws)?;
+    sink.replace_drawing(&part, &place.path, new, vec![block_key(&part, &place.id)], draws)?;
     if let (RevisionPolicy::Tracked(tracking), Some((numbered, dated))) = (sink.policy().clone(), tracked) {
         sink.people(
             (numbered.to > numbered.from).then_some(tracking.author.as_str()),
@@ -306,18 +303,10 @@ impl InsertField<'_> {
             policy: self.policy.clone(),
         }
         .edit(&mut *sink)?;
-        let mut renamed = inserted.renamed;
-        for (old, new) in link.renamed {
-            match renamed.iter_mut().find(|(o, _)| *o == old) {
-                Some(found) => found.1 = new,
-                None => renamed.push((old, new)),
-            }
-        }
         Ok(FieldEdited {
             id: link.id,
             changed: true,
             created: link.created,
-            renamed,
             ..FieldEdited::default()
         })
     }
@@ -339,7 +328,6 @@ impl InsertField<'_> {
         if self.result.is_none() {
             sink.read_everything(); // its result counts or reads the rest of the document
         }
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let tree = sink
             .doc()
             .tree(&here.part)?
@@ -370,7 +358,7 @@ impl InsertField<'_> {
         let below = begin
             .and_then(|b| green_path(&work, b))
             .ok_or_else(|| EditError::no_element(here.part.clone()))?;
-        put_back(&mut *sink, &work, (&here, true), tracked, &renamed)?;
+        put_back(&mut *sink, &work, (&here, true), tracked)?;
         let mut path = here.path.clone();
         path.extend(below);
         let docx = sink.docx()?;
@@ -397,7 +385,6 @@ impl InsertField<'_> {
             id: Some(id.clone()),
             changed: true,
             created: vec![id],
-            renamed,
             unknown,
             ..FieldEdited::default()
         })
@@ -492,7 +479,6 @@ impl InsertCrossReference<'_> {
         sink.read_everything(); // the bookmark it shows, wherever it is
         let (text, unknown) = self.result(sink, &docx, &name)?;
         let instruction = format!(" {} {name} \\h ", if self.page { "PAGEREF" } else { "REF" });
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let tree = sink
             .doc()
             .tree(&here.part)?
@@ -525,12 +511,10 @@ impl InsertCrossReference<'_> {
             runs.push(run);
         }
         let tracked = track(&mut *sink, &mut work, &runs, false)?;
-        put_back(&mut *sink, &work, (&here, true), tracked, &renamed)?;
-        let id = renamed_id(&renamed, &here.id);
+        put_back(&mut *sink, &work, (&here, true), tracked)?;
         Ok(FieldEdited {
-            id: Some(id),
+            id: Some(here.id.clone()),
             changed: true,
-            renamed,
             unknown: if unknown {
                 vec![format!("PAGEREF {name}")]
             } else {

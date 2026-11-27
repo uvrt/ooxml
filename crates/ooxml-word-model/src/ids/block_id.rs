@@ -1,7 +1,11 @@
 //! Owns: [`BlockId`], a block's id as written (`p:1A2B3C4D`, `t:00000001`, `tr:0A0B0C0D`,
-//! `header1/p:1A2B3C4D`, `p@body/3`, `p:1A2B3C4D#1`, `t:00000001/r2`), read into its story
+//! `header1/p:1A2B3C4D`; a table without rows `t@body/2`), read into its story
 //! ([`StoryName`]), kind ([`BlockKind`]) and name ([`BlockName`]); and [`Renames`], the ids
 //! an edit renamed, old to new.
+//!
+//! Every paragraph and row has a paraId of its own from the document's open (stamp on open):
+//! the names by place the index gave before (`p@body/3`, `p:1A#1`, `t:1A/r2`) are no block
+//! ids (the address resolver refuses them with guidance).
 //!
 //! An id keeps its text exactly as the index or an edit wrote it: [`BlockId`]'s `Display`
 //! gives that text back, and two ids are equal (and hash alike) when their texts are, so a
@@ -105,42 +109,29 @@ impl std::fmt::Debug for StoryName {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum BlockKind {
-    /// A paragraph (`p:`, `p@`).
+    /// A paragraph (`p:`).
     Paragraph,
-    /// A table (`t:`, `t@`).
+    /// A table (`t:`, `t@` without rows).
     Table,
-    /// A table row (`tr:`, `<table>/r<k>`).
+    /// A table row (`tr:`).
     Row,
 }
 
 /// How a block is named within its story.
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum BlockName {
     /// By a valid paraId (`p:1A2B3C4D`; a table by its first row's, `t:`; a row by its own,
     /// `tr:`): durable, kept across edits and saves.
     Durable(ParaId),
-    /// The `k`-th repeat (from 1) of a paragraph's paraId (`p:1A2B3C4D#1`), `None` where the
-    /// repeated value is not a valid paraId: volatile, only in a version not yet stamped.
-    Repeat(Option<ParaId>, u32),
-    /// By a paraId out of range or not hex (`p:ZZ`), kept as written in the id's text.
-    Invalid,
-    /// By its ordinal among the story's paragraphs or tables (`p@body/3`, `t@header1/0`):
-    /// volatile, only where the block has no durable id.
-    Ordinal(u32),
-    /// The `row`-th row (from 0) of `table`, a row without a durable id of its own
-    /// (`t:1A2B3C4D/r2`, `t@body/0/r1`).
-    RowAt {
-        /// Its table's name.
-        table: Box<BlockName>,
-        /// Its place among the table's own rows, from 0.
-        row: u32,
-    },
+    /// A table without rows, by its ordinal among the story's tables (`t@body/2`): no row
+    /// gives it a paraId, and Word drops such a table on save (decision 7).
+    Rowless(u32),
 }
 
 impl BlockName {
     /// Whether the name stays the block's across edits (a paraId of its own).
     #[must_use]
-    pub fn durable(&self) -> bool {
+    pub fn durable(self) -> bool {
         matches!(self, BlockName::Durable(_))
     }
 }
@@ -196,11 +187,10 @@ impl BlockId {
     }
 
     /// The id of the block named `name` of kind `kind` in `story`, written as the index
-    /// writes it, a paraId as eight upper-case hex digits; `None` for a name that is not
-    /// written from its parts alone (an invalid paraId's, a repeat of one) or does not fit
-    /// the kind.
+    /// writes it, a paraId as eight upper-case hex digits; `None` for a name that does not
+    /// fit the kind.
     #[must_use]
-    pub fn of(story: &StoryName, kind: BlockKind, name: &BlockName) -> Option<BlockId> {
+    pub fn of(story: &StoryName, kind: BlockKind, name: BlockName) -> Option<BlockId> {
         let prefix = if story.is_body() {
             String::new()
         } else {
@@ -208,15 +198,9 @@ impl BlockId {
         };
         let text = match (kind, name) {
             (BlockKind::Paragraph, BlockName::Durable(id)) => format!("{prefix}p:{id}"),
-            (BlockKind::Paragraph, BlockName::Repeat(Some(id), k)) if *k > 0 => format!("{prefix}p:{id}#{k}"),
-            (BlockKind::Paragraph, BlockName::Ordinal(n)) => format!("p@{story}/{n}"),
             (BlockKind::Table, BlockName::Durable(id)) => format!("{prefix}t:{id}"),
-            (BlockKind::Table, BlockName::Ordinal(n)) => format!("t@{story}/{n}"),
+            (BlockKind::Table, BlockName::Rowless(n)) => format!("t@{story}/{n}"),
             (BlockKind::Row, BlockName::Durable(id)) => format!("{prefix}tr:{id}"),
-            (BlockKind::Row, BlockName::RowAt { table, row }) => {
-                let table = BlockId::of(story, BlockKind::Table, table)?;
-                format!("{table}/r{row}")
-            }
             _ => return None,
         };
         Some(BlockId::new(text))
@@ -250,51 +234,30 @@ impl BlockId {
 
     /// How the id names its block within its story; `None` for text that is not a block id.
     #[must_use]
-    pub fn name(&self) -> Option<&BlockName> {
-        self.form.as_ref().map(|f| &f.name)
+    pub fn name(&self) -> Option<BlockName> {
+        self.form.as_ref().map(|f| f.name)
     }
 
     /// The paraId a durable id names its block by (a table's: its first row's); `None` for a
-    /// volatile or invalid name, or text that is not a block id.
+    /// rowless table's, or text that is not a block id.
     #[must_use]
     pub fn para_id(&self) -> Option<ParaId> {
         match self.name()? {
-            BlockName::Durable(id) => Some(*id),
-            _ => None,
+            BlockName::Durable(id) => Some(id),
+            BlockName::Rowless(_) => None,
         }
     }
 }
 
 /// `text` read as a block id.
 fn read(text: &str) -> Option<Form> {
-    if let Some(rest) = text.strip_prefix("p@") {
+    if let Some(rest) = text.strip_prefix("t@") {
         let (story, n) = rest.split_once('/')?;
         return Some(Form {
             story: story_of(story)?,
-            kind: BlockKind::Paragraph,
-            name: BlockName::Ordinal(number(n)?),
+            kind: BlockKind::Table,
+            name: BlockName::Rowless(number(n)?),
         });
-    }
-    if let Some(rest) = text.strip_prefix("t@") {
-        let mut parts = rest.split('/');
-        let story = story_of(parts.next()?)?;
-        let table = BlockName::Ordinal(number(parts.next()?)?);
-        return match (parts.next(), parts.next()) {
-            (None, _) => Some(Form {
-                story,
-                kind: BlockKind::Table,
-                name: table,
-            }),
-            (Some(row), None) => Some(Form {
-                story,
-                kind: BlockKind::Row,
-                name: BlockName::RowAt {
-                    table: Box::new(table),
-                    row: number(row.strip_prefix('r')?)?,
-                },
-            }),
-            _ => None,
-        };
     }
     let (head, value) = text.split_once(':')?;
     let (story, tag) = match head.split_once('/') {
@@ -302,47 +265,17 @@ fn read(text: &str) -> Option<Form> {
         Some(_) => return None,
         None => (StoryName::body(), head),
     };
-    match tag {
-        "p" => {
-            let name = match value.rsplit_once('#') {
-                Some((raw, k)) if number(k).is_some_and(|k| k > 0) => BlockName::Repeat(ParaId::parse(raw), number(k)?),
-                _ => ParaId::parse(value).map_or(BlockName::Invalid, BlockName::Durable),
-            };
-            Some(Form {
-                story,
-                kind: BlockKind::Paragraph,
-                name,
-            })
-        }
-        "tr" => Some(Form {
-            story,
-            kind: BlockKind::Row,
-            name: BlockName::Durable(ParaId::parse(value)?),
-        }),
-        "t" => {
-            let (raw, row) = match value.split_once('/') {
-                Some((raw, row)) => (raw, Some(number(row.strip_prefix('r')?)?)),
-                None => (value, None),
-            };
-            let table = BlockName::Durable(ParaId::parse(raw)?);
-            Some(match row {
-                None => Form {
-                    story,
-                    kind: BlockKind::Table,
-                    name: table,
-                },
-                Some(row) => Form {
-                    story,
-                    kind: BlockKind::Row,
-                    name: BlockName::RowAt {
-                        table: Box::new(table),
-                        row,
-                    },
-                },
-            })
-        }
-        _ => None,
-    }
+    let kind = match tag {
+        "p" => BlockKind::Paragraph,
+        "t" => BlockKind::Table,
+        "tr" => BlockKind::Row,
+        _ => return None,
+    };
+    Some(Form {
+        story,
+        kind,
+        name: BlockName::Durable(ParaId::parse(value)?),
+    })
 }
 
 fn story_of(name: &str) -> Option<StoryName> {
@@ -504,10 +437,6 @@ mod tests {
         let id = |t: &str| BlockId::parse(t).unwrap();
         let p = ParaId::new(0x1A2B_3C4D).unwrap();
         let short = ParaId::new(0x1A).unwrap();
-        let row_of = |table: BlockName, row: u32| BlockName::RowAt {
-            table: Box::new(table),
-            row,
-        };
         let cases: Vec<(&str, &str, BlockKind, BlockName)> = vec![
             ("p:1A2B3C4D", "body", BlockKind::Paragraph, BlockName::Durable(p)),
             ("p:1a2b3c4d", "body", BlockKind::Paragraph, BlockName::Durable(p)),
@@ -518,49 +447,21 @@ mod tests {
                 BlockKind::Paragraph,
                 BlockName::Durable(p),
             ),
-            (
-                "p:1A2B3C4D#2",
-                "body",
-                BlockKind::Paragraph,
-                BlockName::Repeat(Some(p), 2),
-            ),
-            ("p:ZZ#1", "body", BlockKind::Paragraph, BlockName::Repeat(None, 1)),
-            ("p:ZZ", "body", BlockKind::Paragraph, BlockName::Invalid),
-            ("p:80000000", "body", BlockKind::Paragraph, BlockName::Invalid),
-            ("p:", "body", BlockKind::Paragraph, BlockName::Invalid),
-            ("p:1A#01", "body", BlockKind::Paragraph, BlockName::Invalid),
-            (
-                "p@footnotes/12",
-                "footnotes",
-                BlockKind::Paragraph,
-                BlockName::Ordinal(12),
-            ),
             ("t:1A2B3C4D", "body", BlockKind::Table, BlockName::Durable(p)),
-            ("t@body/0", "body", BlockKind::Table, BlockName::Ordinal(0)),
+            ("t@body/0", "body", BlockKind::Table, BlockName::Rowless(0)),
+            ("t@header1/3", "header1", BlockKind::Table, BlockName::Rowless(3)),
             ("tr:1A2B3C4D", "body", BlockKind::Row, BlockName::Durable(p)),
-            (
-                "comments/t:1A2B3C4D/r2",
-                "comments",
-                BlockKind::Row,
-                row_of(BlockName::Durable(p), 2),
-            ),
-            (
-                "t@header1/3/r0",
-                "header1",
-                BlockKind::Row,
-                row_of(BlockName::Ordinal(3), 0),
-            ),
         ];
         for (text, story, kind, name) in &cases {
             let parsed = id(text);
             assert_eq!(parsed.to_string(), *text);
             assert_eq!(parsed.story().map(StoryName::as_str), Some(*story), "{text}");
             assert_eq!(parsed.kind(), Some(*kind), "{text}");
-            assert_eq!(parsed.name(), Some(name), "{text}");
+            assert_eq!(parsed.name(), Some(*name), "{text}");
             assert_eq!(parsed, BlockId::new(*text), "{text}");
         }
         assert_eq!(id("t:1A2B3C4D").para_id(), Some(p));
-        assert_eq!(id("p:1A2B3C4D#1").para_id(), None);
+        assert_eq!(id("t@body/0").para_id(), None);
         // the parts written back: the index's spelling (eight upper-case digits)
         let lower = id("header2/p:1a2b3c4d");
         let made = BlockId::of(lower.story().unwrap(), BlockKind::Paragraph, lower.name().unwrap()).unwrap();
@@ -580,15 +481,18 @@ mod tests {
             "tr:ZZ",
             "tr:1A#1",
             "t:ZZ",
-            "t:1A/r",
-            "t:1A/r01",
-            "t:1A/x2",
-            "p@body",
-            "p@body/01",
-            "p@body/-1",
-            "p@/1",
-            "t@body/1/r1/r2",
-            "t@body/1/2",
+            "p:ZZ",
+            "p:80000000",
+            "p:",
+            // names by place, which the index no longer gives
+            "p@body/3",
+            "p@footnotes/12",
+            "p:1A2B3C4D#2",
+            "t:1A2B3C4D/r2",
+            "t@body/1/r1",
+            "t@body",
+            "t@body/01",
+            "t@/1",
             "q:1A2B3C4D",
         ] {
             assert!(BlockId::parse(text).is_err(), "{text}");

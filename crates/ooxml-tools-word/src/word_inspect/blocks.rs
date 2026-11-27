@@ -171,9 +171,6 @@ impl<'d> Writer<'d> {
         let mut out = Map::new();
         out.insert("type".into(), Value::from("paragraph"));
         out.insert("id".into(), Value::from(record.id.as_str()));
-        if record.volatile {
-            out.insert("volatile".into(), Value::Bool(true));
-        }
         if !record.joins.is_empty() {
             out.insert("joins".into(), json!(record.joins));
         }
@@ -322,9 +319,6 @@ impl<'d> Writer<'d> {
         let mut out = Map::new();
         out.insert("type".into(), Value::from("table"));
         out.insert("id".into(), Value::from(record.id.as_str()));
-        if record.volatile {
-            out.insert("volatile".into(), Value::Bool(true));
-        }
         if !record.joins.is_empty() {
             out.insert("joins".into(), json!(record.joins));
         }

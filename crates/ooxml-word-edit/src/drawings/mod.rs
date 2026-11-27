@@ -64,8 +64,6 @@ pub struct DrawingEdited {
     pub changed: bool,
     /// What it made: the drawing, a text box's paragraphs.
     pub created: Vec<String>,
-    /// Ids the stamping gave.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What the edit says (applied untracked, already as asked).
     pub warnings: Vec<String>,
 }

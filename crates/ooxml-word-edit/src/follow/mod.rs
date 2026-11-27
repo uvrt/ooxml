@@ -99,12 +99,8 @@ impl CopyFollowed {
 pub struct Followed {
     /// The sample's id as located.
     pub sample: String,
-    /// Its id now (after stamping, where it is in this document).
-    pub sample_now: String,
     /// Each copy, in the order asked.
     pub copies: Vec<CopyFollowed>,
-    /// Ids stamping renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The notes and warnings.
     pub warnings: Vec<String>,
 }
@@ -219,10 +215,16 @@ fn locate(
     notes: &mut Vec<String>,
 ) -> Result<Located> {
     let mut address = identifier.trim().to_owned();
-    let in_table = address
-        .split_once('/')
-        .filter(|(t, r)| t.starts_with("t:") && (r.starts_with('c') || r.starts_with('r')))
-        .map(|(t, _)| t.to_owned());
+    // a name by place is refused with guidance, as everywhere (decision 4)
+    if let Some(refused) = ooxml_word_model::address::positional(&address) {
+        return Err(EditError::Address(refused));
+    }
+    // a row or a cell (`tr:`, `t:X/c1,2`): its table follows
+    let in_table = ooxml_word_model::address::in_table(docx, &address)
+        .ok()
+        .flatten()
+        .and_then(|found| found.part.ids.tables().head(found.table))
+        .map(|table| table.id);
     if let Some(table) = in_table {
         notes.push(format!("{address} is in table {table}: the table follows"));
         address = table;

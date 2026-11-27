@@ -35,11 +35,41 @@ pub type Block<'d> = (&'d StoryPart, Entry);
 /// A paragraph's place in its part's index.
 pub type Paragraphs<'d> = (&'d StoryPart, Vec<usize>);
 
+/// The refusal of a name by place this library gave before every block had an id of its own
+/// (stamp on open, decision 4): a paragraph's `p@<story>/<n>`, a table's `t@<story>/<n>`
+/// (but a table without rows', which resolves), a row's `<table>/r<k>`, a repeated paraId's
+/// `p:<paraId>#<k>`, a section's `s@<story>/<n>`. `None` for any other address. Called
+/// where an address names nothing.
+#[must_use]
+pub fn positional(address: &str) -> Option<AddressError> {
+    let place = |rest: &str| {
+        rest.split_once('/')
+            .is_some_and(|(story, n)| !story.is_empty() && !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    let by_place = ["p@", "t@", "s@"]
+        .iter()
+        .any(|prefix| address.strip_prefix(prefix).is_some_and(place))
+        || matches!(inside_table(address), Some((_, Inside::Row(_))))
+        || address.rsplit_once('#').is_some_and(|(id, k)| {
+            (id.starts_with("p:") || id.contains("/p:")) && !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit())
+        });
+    by_place.then(|| {
+        AddressError::invalid(
+            format!(
+                "{address} names a block by its place, which this library no longer gives: every paragraph, \
+                 table and row has a durable id (p:<paraId>, t:<paraId>, tr:<paraId>); read the ids first \
+                 (word_inspect or word_read) and pass one of those"
+            ),
+            Vec::new(),
+        )
+    })
+}
+
 /// The block `id` names as written (docx-agent's `_direct`): the story its form says, then
 /// the id there.
 #[must_use]
 pub fn direct<'d>(docx: &'d Docx, id: &str) -> Option<Block<'d>> {
-    let story = if let Some(rest) = id.strip_prefix("p@").or_else(|| id.strip_prefix("t@")) {
+    let story = if let Some(rest) = id.strip_prefix("t@") {
         rest.rsplit_once('/').map_or("", |(s, _)| s)
     } else if let Some((s, _)) = id.split_once('/') {
         s
@@ -89,6 +119,9 @@ pub fn unknown(docx: &Docx, id: &str) -> AddressError {
             ),
             Vec::new(),
         );
+    }
+    if let Some(error) = positional(id) {
+        return error;
     }
     match span_ends(id) {
         Err(error) => return error,
@@ -161,11 +194,12 @@ pub struct InTable<'d> {
     pub column: Option<usize>,
 }
 
-/// The row (`tr:`, `t:X/r1`) or cell (`t:X/c1,1`) `address` names; `Ok(None)` when it is
-/// neither form.
+/// The row (`tr:`) or cell (`t:X/c1,1`) `address` names; `Ok(None)` when it is neither
+/// form.
 ///
 /// # Errors
-/// `not_found` for a row or table the document lacks.
+/// `not_found` for a row or table the document lacks; a row by its place (`t:X/r1`) is
+/// refused with guidance ([`positional`]).
 pub fn in_table<'d>(docx: &'d Docx, address: &str) -> Result<Option<InTable<'d>>, AddressError> {
     if address.starts_with("tr:") || address.contains("/tr:") {
         for part in &docx.parts {
@@ -191,7 +225,7 @@ pub fn in_table<'d>(docx: &'d Docx, address: &str) -> Result<Option<InTable<'d>>
     let (part, entry) = resolve(docx, table)?;
     let Entry::Table(t) = entry else { return Ok(None) };
     let (row, column) = match inside {
-        Inside::Row(r) => (r, None),
+        Inside::Row(_) => return Err(positional(address).unwrap_or_else(|| unknown(docx, address))),
         Inside::Cell(r, c) => (r, Some(c)),
     };
     Ok(Some(InTable {
@@ -278,6 +312,9 @@ pub fn section(docx: &Docx, address: &str) -> Result<String, AddressError> {
     };
     if let Some(section) = found.iter().find(|s| s.id == address || Some(&s.id) == wanted.as_ref()) {
         return Ok(section.id.clone());
+    }
+    if let Some(error) = positional(address) {
+        return Err(error);
     }
     let options = found.iter().map(|s| s.id.clone()).collect();
     if number.is_some() {
@@ -661,3 +698,47 @@ fn span_paragraphs<'d>(
 #[cfg(test)]
 #[path = "reference.rs"]
 pub(crate) mod reference;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic)]
+    use super::positional;
+
+    #[test]
+    fn a_name_by_place_is_refused_with_guidance_and_nothing_else_is() {
+        for by_place in [
+            "p@body/3",
+            "p@footnotes/12",
+            "t@body/0",
+            "t@header1/2",
+            "s@body/3",
+            "t:1A2B3C4D/r2",
+            "t@body/0/r1",
+            "p:1A2B3C4D#1",
+            "header1/p:1A2B3C4D#2",
+        ] {
+            let refused = positional(by_place).unwrap_or_else(|| panic!("{by_place}"));
+            assert_eq!(refused.code, "invalid_arguments");
+            assert!(refused.message.starts_with(by_place), "{}", refused.message);
+            assert!(
+                refused.message.contains("word_inspect or word_read"),
+                "{}",
+                refused.message
+            );
+        }
+        for other in [
+            "p:1A2B3C4D",
+            "t:1A2B3C4D",
+            "tr:1A2B3C4D",
+            "t:1A2B3C4D/c1,2",
+            "p:1A2B3C4D@3:5",
+            "s:2",
+            "cc@body/0",
+            "bm:x",
+            "p@body",
+            "#1",
+        ] {
+            assert!(positional(other).is_none(), "{other}");
+        }
+    }
+}

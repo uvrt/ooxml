@@ -95,17 +95,6 @@ impl Editing<'_> {
     }
 }
 
-/// `renamed` merged into `into` as a dict update: a key kept in its place, its value the
-/// latest.
-pub(crate) fn merge_renamed(into: &mut Vec<(String, String)>, renamed: &[(String, String)]) {
-    for (old, new) in renamed {
-        match into.iter_mut().find(|(k, _)| k == old) {
-            Some(entry) => entry.1.clone_from(new),
-            None => into.push((old.clone(), new.clone())),
-        }
-    }
-}
-
 /// Registers the group's tools, in the order a model is shown them (the crate's
 /// [`crate::register`]).
 pub(crate) fn register(r: &mut impl ooxml_tools::Registrar<crate::Word>) {

@@ -159,7 +159,6 @@ fn step(editor: &Editor, rng: &mut Rng, writer: u64) -> bool {
             let command = SetCells {
                 table: Address::from(table),
                 writes: vec![CellWrite::at(rng.below(2), rng.below(2), text())],
-                stamping: rng.below(2) == 0,
                 policy,
                 accepted: None,
             };
@@ -185,15 +184,13 @@ fn compare_step(before: &Snapshot<WordDoc>, after: &Snapshot<WordDoc>, stories: 
     if *delta != fresh {
         differences.push(format!("delta {delta:?} != from scratch {fresh:?}"));
     }
-    // where every key follows from content, the keys name the same blocks in both
-    let by_content = |docx: &Docx| docx.parts.iter().all(|p| p.ids.keys_by_content());
-    if by_content(&fresh_old) && by_content(&fresh_new) {
-        let interned: Vec<StoryIx> = delta.stories.iter().map(|s| s.story).collect();
-        let scratch = from_scratch(&fresh_old, &fresh_new, stories);
-        let derived = of_delta(&delta, &interned);
-        if scratch != derived {
-            differences.push(format!("keys {derived:?} != from scratch {scratch:?}"));
-        }
+    // every key follows from content (every block stamped): the keys name the same blocks
+    // in both
+    let interned: Vec<StoryIx> = delta.stories.iter().map(|s| s.story).collect();
+    let scratch = from_scratch(&fresh_old, &fresh_new, stories);
+    let derived = of_delta(&delta, &interned);
+    if scratch != derived {
+        differences.push(format!("keys {derived:?} != from scratch {scratch:?}"));
     }
     // derived from the delta without failing (main 7db5b7b5's frozen reference agreed with
     // them over 35,349 edit runs before it was retired, ph3-lk2c)

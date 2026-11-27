@@ -17,15 +17,14 @@ use crate::doc::Key;
 use crate::names::{W, WP, WP14};
 use crate::paragraphs::insert_paragraph;
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
 use ooxml_opc::name::rels_for;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::resolve::refuse_inside_table;
+use ooxml_word_model::address::Shape;
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_xml::Tree;
 use std::sync::Arc;
@@ -174,8 +173,7 @@ impl<P: ChartParts> InsertChart<P> {
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<ChartInserted> {
         check_size(self.size)?;
         let mut created = Vec::new();
-        let mut renamed = Vec::new();
-        let at = if self.at.as_str().contains('@') {
+        let at = if self.at.has(Shape::Text) {
             self.at.clone()
         } else {
             let docx = sink.docx()?;
@@ -183,16 +181,11 @@ impl<P: ChartParts> InsertChart<P> {
             let style = continued_style(sink.doc(), &docx, self.at.as_str());
             let inserted = insert_paragraph(sink, self.at.as_str(), (true, "", style))?;
             created.push(inserted.id.to_string());
-            renamed.extend(inserted.renamed);
             ooxml_word_model::address::Address::from(format!("{}@0", inserted.id))
         };
         let docx = sink.docx()?;
         let place = crate::fields::place(sink.doc(), &docx, &at, true)?;
-        let stamped = stamp_document(sink, &docx)?;
-        let docx = sink.docx()?;
-        let id = renamed_id(&stamped, &place.id);
-        renamed.extend(stamped);
-        let found = crate::set_text::find(sink.doc(), &docx, &id)?;
+        let found = crate::set_text::find(sink.doc(), &docx, &place.id)?;
         let part = found.part.clone();
         let (chart, rid) = self.add_parts(sink, &part)?;
         let number = sink.draw_drawings(1)?.first().copied().unwrap_or(1);
@@ -242,7 +235,6 @@ impl<P: ChartParts> InsertChart<P> {
                 id: drawing,
                 changed: true,
                 created,
-                renamed,
                 warnings: Vec::new(),
             },
             part: chart.into(),
@@ -315,7 +307,7 @@ impl<P: ChartParts> Command<WordDoc> for InsertChart<P> {
 
     fn validate(&self, doc: &WordDoc) -> Result<()> {
         check_size(self.size)?;
-        if self.at.as_str().contains('@') {
+        if self.at.has(Shape::Text) {
             let docx = doc.docx()?;
             crate::fields::place(doc, &docx, &self.at, true).map(|_| ())
         } else {

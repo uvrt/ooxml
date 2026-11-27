@@ -270,12 +270,12 @@ def comment_write_cases(document) -> list[dict]:
                             {"target": f"{third}@0:1", "text": "B", "ref": "two"}])]
     tables = [b["id"] for b in document.blocks() if b["id"] and b["id"].startswith("t:")]
     for table in tables[:2]:
-        out += [call("word_comments", action="add", items=[{"target": table, "text": "On the table"}]),
-                call("word_comments", action="add", items=[{"target": f"{table}/r1", "text": "On a row"}])]
-        rows = document.get(table).rows
+        out.append(call("word_comments", action="add", items=[{"target": table, "text": "On the table"}]))
+        # rows by their tr: ids (a row by its place is refused since stamp on open)
+        rows = [row for _, row in document._resolve(table)[1].rows if row.startswith("tr:")]
         if len(rows) > 1:
-            out.append(call("word_comments", action="add", items=[{"target": f"{table}/r{len(rows) - 1}",
-                                                                   "text": "On the last row"}]))
+            out += [call("word_comments", action="add", items=[{"target": rows[1], "text": "On a row"}]),
+                    call("word_comments", action="add", items=[{"target": rows[-1], "text": "On the last row"}])]
     for thread in document.comments(replies=False)[:3]:
         out += [call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Agreed"}]),
                 call("word_comments", action="reply", items=[{"comment": thread.id, "text": "Done\nThanks",

@@ -17,10 +17,8 @@ use crate::merge::merge_runs;
 use crate::names::{W, W16DU};
 use crate::paragraph_style::write_style;
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::set_text::{block_key, paragraph_has_annotations};
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::text::runs;
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
@@ -61,37 +59,20 @@ impl RangeOp<'_> {
 pub(crate) struct Run<'s, 't, 'x> {
     pub(crate) sink: &'s mut EditSink<'t, 'x>,
     pub(crate) colours: ThemeColours,
-    stamped: bool,
 }
 
 impl<'s, 't, 'x> Run<'s, 't, 'x> {
     pub(crate) fn new(sink: &'s mut EditSink<'t, 'x>, colours: ThemeColours) -> Self {
-        Run {
-            sink,
-            colours,
-            stamped: false,
-        }
+        Run { sink, colours }
     }
 
-    /// Stamp the document if no edit did yet; the renames.
-    pub(crate) fn stamp(&mut self) -> Result<ooxml_word_model::ids::Renames> {
-        if self.stamped {
-            return Ok(Vec::new());
-        }
-        self.stamped = true;
-        let docx = self.sink.docx()?;
-        stamp_document(self.sink, &docx)
-    }
-
-    /// Edit the paragraph `index` of `part` by `change` in a work; the step (its id after
-    /// the edit, the renames its stamping made).
+    /// Edit the paragraph `index` of `part` by `change` in a work; the step (its id).
     pub(crate) fn edit(
         &mut self,
         part: &str,
         index: usize,
         change: impl FnOnce(&mut Work, Id, &Orders, &ThemeColours) -> Result<()>,
     ) -> Result<FormatStep> {
-        let renamed = self.stamp()?;
         let docx = self.sink.docx()?;
         let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
         let paragraph = story
@@ -132,9 +113,8 @@ impl<'s, 't, 'x> Run<'s, 't, 'x> {
                 .people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
         }
         Ok(FormatStep {
-            id: renamed_id(&renamed, &paragraph.id).into(),
+            id: paragraph.id.clone().into(),
             changed: true,
-            renamed,
             ..FormatStep::default()
         })
     }

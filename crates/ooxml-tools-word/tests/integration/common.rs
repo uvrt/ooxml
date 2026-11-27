@@ -91,7 +91,7 @@ pub fn read(package: &ooxml_opc::Package) -> ooxml_word_model::WordPackage {
     ooxml_word_model::WordPackage::open(package.clone()).0
 }
 
-/// Each block id a reading of `package` without stamping gives (positional `p@body/3`,
+/// Each block id a reading of `package` by place gave ([`by_place`]) (positional `p@body/3`,
 /// `t@body/0`, a repeat) that the document opened -- every block stamped in memory -- names
 /// otherwise, the longest first.
 pub fn stamped_ids(package: &ooxml_opc::Package) -> Vec<(String, String)> {
@@ -114,7 +114,7 @@ pub fn stamped_ids(package: &ooxml_opc::Package) -> Vec<(String, String)> {
         let (Ok(Some(old)), Ok(Some(new))) = (package.tree(&part), word.tree(&part)) else {
             continue;
         };
-        let pairs = names(PartIds::new(&story, old.root()))
+        let pairs = by_place(&story, old.root())
             .into_iter()
             .zip(names(PartIds::new(&story, new.root())));
         renamed.extend(pairs.filter(|(a, b)| a != b));
@@ -160,6 +160,69 @@ fn named(text: &str, renamed: &[(String, String)]) -> String {
         let mut chars = rest.chars();
         out.extend(chars.next());
         rest = chars.as_str();
+    }
+    out
+}
+
+/// The names a reading of the part `root` (story `story`) gave its blocks by place before
+/// every block had an id of its own (stamp on open; the index no longer gives them): what
+/// this suite's data was written with. In [`ooxml_word_model::ids::PartIds`]' order: the
+/// paragraphs, then each table and its rows.
+fn by_place(story: &str, root: &ooxml_xml::Element) -> Vec<String> {
+    use ooxml_word_model::ids::{valid_long_hex, PartIds};
+    use std::collections::HashMap;
+    let ids = PartIds::new(story, root);
+    let prefix = if story == "body" {
+        String::new()
+    } else {
+        format!("{story}/")
+    };
+    let raw_of = |name: &str| {
+        name.rsplit_once(':')
+            .map(|(_, raw)| raw.to_owned())
+            .filter(|r| !r.is_empty())
+    };
+    // repeats were counted by spelling, paragraphs and rows together in document order
+    let mut blocks: Vec<(Box<[u32]>, Option<String>)> = ids.paragraphs().iter().map(|p| (p.path, p.raw)).collect();
+    for table in ids.tables().iter() {
+        blocks.extend(table.rows.iter().map(|(path, name)| (path.clone(), raw_of(name))));
+    }
+    blocks.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let repeat: HashMap<Box<[u32]>, usize> = blocks
+        .into_iter()
+        .map(|(path, raw)| {
+            let k = raw.map_or(0, |r| {
+                let n = seen.entry(r.to_uppercase()).or_insert(0);
+                *n += 1;
+                *n - 1
+            });
+            (path, k)
+        })
+        .collect();
+    let at = |path: &[u32]| repeat.get(path).copied().unwrap_or(0);
+    let mut out: Vec<String> = ids
+        .paragraphs()
+        .iter()
+        .map(|p| match (&p.raw, at(&p.path)) {
+            (None, _) => format!("p@{story}/{}", p.index),
+            (Some(raw), 0) => format!("{prefix}p:{raw}"),
+            (Some(raw), k) => format!("{prefix}p:{raw}#{k}"),
+        })
+        .collect();
+    for (n, table) in ids.tables().iter().enumerate() {
+        let good = |path: &[u32], name: &str| raw_of(name).filter(|r| valid_long_hex(r) && at(path) == 0);
+        let id = match table.rows.first().and_then(|(path, name)| good(path, name)) {
+            Some(raw) => format!("{prefix}t:{raw}"),
+            None => format!("t@{story}/{n}"),
+        };
+        out.push(id.clone());
+        for (k, (path, name)) in table.rows.iter().enumerate() {
+            out.push(match good(path, name) {
+                Some(raw) => format!("{prefix}tr:{raw}"),
+                None => format!("{id}/r{k}"),
+            });
+        }
     }
     out
 }

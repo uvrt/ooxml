@@ -396,7 +396,6 @@ impl<'a> Reader<'a> {
             part: part.to_owned(),
             story,
             elements: Vec::new(),
-            volatile: named.is_some_and(|e| e.state.volatile()),
             style_name: self.style_name(style_id.as_deref()),
             style_id,
             kind: Kind::Paragraph,

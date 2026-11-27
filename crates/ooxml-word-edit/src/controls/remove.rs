@@ -13,7 +13,6 @@ use crate::delete::{editable, stretch_keys};
 use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -62,8 +61,6 @@ impl RemoveControl {
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<ControlEdited> {
         let docx = sink.docx()?;
         self.check(&docx)?;
-        let renamed = stamp_document(sink, &docx)?;
-        let docx = sink.docx()?;
         let found = located(&docx, &self.control)?;
         let part = found.part.clone();
         if let Some(at) = InParagraph::above(&docx, &part, &found.path) {
@@ -88,7 +85,6 @@ impl RemoveControl {
             id: None,
             created: Vec::new(),
             removed: vec![self.control.clone()],
-            renamed,
             warnings,
         })
     }

@@ -23,7 +23,7 @@ use crate::names::{W, W14, W16DU};
 use crate::paragraphs::insert_paragraph;
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -93,24 +93,14 @@ impl InsertToc<'_> {
 
     /// The paragraph that holds the field: a new empty one (its properties gone), or the
     /// paragraph it goes before.
-    fn holder(
-        &self,
-        sink: &mut EditSink<'_, '_>,
-        anchor: &crate::paragraphs::Anchor,
-    ) -> Result<(Holder, ooxml_word_model::ids::Renames)> {
-        let docx = sink.docx()?;
+    fn holder(&self, sink: &mut EditSink<'_, '_>, anchor: &crate::paragraphs::Anchor) -> Result<Holder> {
         let own = !(self.before.is_some() && anchor.paragraph);
         if !own {
-            let renamed = stamp_document(&mut *sink, &docx)?;
-            let id = crate::ranges::renamed_id(&renamed, &anchor.id);
-            return Ok((
-                Holder {
-                    path: anchor.path.to_vec(),
-                    id,
-                    own,
-                },
-                renamed,
-            ));
+            return Ok(Holder {
+                path: anchor.path.to_vec(),
+                id: anchor.id.clone(),
+                own,
+            });
         }
         let target = self.after.as_ref().or(self.before.as_ref()).map_or("", |a| a.as_str());
         let after = self.after.is_some();
@@ -128,20 +118,17 @@ impl InsertToc<'_> {
             .find(|p| p.id == made.id)
             .map(|p| p.path.to_vec())
             .ok_or_else(|| EditError::no_element(docx.main.clone()))?;
-        Ok((
-            Holder {
-                path,
-                id: made.id.to_string(),
-                own,
-            },
-            made.renamed,
-        ))
+        Ok(Holder {
+            path,
+            id: made.id.to_string(),
+            own,
+        })
     }
 
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<FieldEdited> {
         let anchor = self.check(sink.doc())?;
         sink.read_everything(); // the headings it lists, wherever they are
-        let (holder, renamed) = self.holder(sink, &anchor)?;
+        let holder = self.holder(sink, &anchor)?;
         let main = sink.docx()?.main.clone();
         let instruction = self.instruction();
         let begin = put_field(sink, &main, &holder, &instruction)?;
@@ -186,7 +173,6 @@ impl InsertToc<'_> {
             id: Some(id.clone()),
             changed: true,
             created,
-            renamed,
             unknown,
             warnings: empty_tocs(sink.doc(), &docx, Some(std::slice::from_ref(&id))),
             ..FieldEdited::default()

@@ -11,7 +11,7 @@
 //! (`not_supported`): a deck's slides, an empty find, styled text in `replace`, and a
 //! body-only call while other stories match too.
 
-use super::{by_reference, merge_renamed, not_supported, text_unported, Unported};
+use super::{by_reference, not_supported, text_unported, Unported};
 use crate::find_text::{match_context, story_ok};
 use crate::planned::Planned;
 use crate::refusal::address_refusal;
@@ -259,21 +259,9 @@ fn replied(out: &RangesEdited, matches: &[Match]) -> ToolResult<Value> {
         }
     }
     let mut reply = Done::new(format!("Replaced {count} occurrence(s)"));
-    merge_renamed(&mut reply.renamed, &ooxml_word_model::ids::renames_text(&out.renamed));
-    // the paragraphs by the ids they have now (a match's paragraph may have been stamped)
-    let now: Vec<String> = paragraphs
-        .iter()
-        .map(|p| {
-            reply
-                .renamed
-                .iter()
-                .find(|(old, _)| old == p)
-                .map_or_else(|| p.clone(), |(_, new)| new.clone())
-        })
-        .collect();
-    let listed: Vec<&String> = now.iter().take(LISTED).collect();
+    let listed: Vec<&String> = paragraphs.iter().take(LISTED).collect();
     reply.data = Some(json!({"count": count, "paragraphs": listed}));
-    reply.changed = now;
+    reply.changed = paragraphs;
     ToolResult::done(reply)
 }
 

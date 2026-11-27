@@ -211,7 +211,7 @@ pub(crate) fn match_context(text: &[char], start: usize, end: usize) -> String {
 /// Whether a match's address is in the body (docx-agent's `_story_ok` for `stories=body`).
 pub(crate) fn story_ok(address: &str) -> bool {
     let block = address.split('@').next().unwrap_or(address);
-    !(block.contains('/') && !address.starts_with("p@body/"))
+    !block.contains('/')
 }
 
 /// `find_text` called with `args`.

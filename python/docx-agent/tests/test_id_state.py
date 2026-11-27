@@ -180,6 +180,29 @@ def test_a_deleted_drawing_number_is_not_given_again_after_the_reopen(box):
 # -- refusals ------------------------------------------------------------------------------------
 
 
+#: What a name by place is refused with: the durable forms, and where to read them (decision 4).
+POSITIONAL = ("names a block by its place", "word_inspect or word_read")
+
+
+def test_a_positional_id_held_from_before_stamp_on_open_is_refused_with_guidance(box):
+    # A file whose paragraphs have no paraId: every block has a durable id from the first read,
+    # and a name by place (what this library gave such a file before) is refused, saying what to do.
+    data = word_docs.with_body(word_docs.paragraph("One.") + word_docs.paragraph("Two.")
+                               + word_docs.paragraph("Three."))
+    session, doc = _opened(box, data)
+    listed = [block for block, _ in word_docs.blocks(box, session, doc)]
+    assert all(block.startswith("p:") for block in listed), listed
+    for tool, arguments in [("word_read", {"range": "p@body/2"}),
+                            ("word_set_text", {"target": "p@body/2", "text": "Changed."}),
+                            ("word_read", {"range": "s@body/2"})]:
+        result = box.dispatch(session, tool, {"doc": doc, **arguments})
+        assert not result.ok, result.to_json()
+        assert result.error.code == "invalid_arguments", result.to_json()
+        assert all(said in result.error.message for said in POSITIONAL), result.to_json()
+    assert "Three." in ok(box, session, "word_read", doc=doc, range=listed[2]).data
+
+
+
 def test_a_state_of_other_bytes_is_refused_with_the_way_out(box):
     session, doc, _ = _deleted_at_the_end(box)
     state = session.save(doc).state

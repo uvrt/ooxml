@@ -28,8 +28,8 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
-use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{scope_paragraphs, span_ends, AddressError};
+use ooxml_word_model::address::{Address, Shape};
 use ooxml_word_model::docx::changes::{changes, LogicalChange};
 use ooxml_word_model::docx::revisions::records;
 use ooxml_word_model::docx::Docx;
@@ -162,8 +162,7 @@ pub fn place_of(docx: &Docx, within: &str) -> Result<Place> {
 }
 
 /// The ids of the records a `within` holds (`_revisions_within`): a story's every record;
-/// a table's by its volatile id (`t@...`) every record in it; text (an address with `@`:
-/// a range, a position, a paragraph's or cell's text) the records in it, by their
+/// text (a range or position, a control by its place `cc@`) the records in it, by their
 /// paragraph and characters; a block's (paragraph or table) every record in it; else
 /// every record in the paragraphs the address covers.
 ///
@@ -177,8 +176,8 @@ pub fn records_within(docx: &Docx, within: &str) -> Result<BTreeSet<String>> {
             .map(|r| r.id)
             .collect());
     }
-    let volatile_table = within.starts_with("t@") && ooxml_word_model::address::direct(docx, within).is_some();
-    if within.contains('@') && !volatile_table {
+    let address = Address::parse(within);
+    if address.has(Shape::Text) || within.starts_with("cc@") {
         return within::records_in_text(docx, records(docx), within);
     }
     if matches!(span_ends(within), Ok(Some(_))) {

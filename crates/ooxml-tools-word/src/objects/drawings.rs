@@ -31,7 +31,7 @@ impl From<DrawingEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: Vec::new(),
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             warnings: out.warnings,
         }
     }

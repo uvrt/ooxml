@@ -68,19 +68,13 @@ impl EditNote {
         if items.get(start).is_some_and(|a| a.ch == ' ') {
             start += 1;
         }
-        let mut renamed: ooxml_word_model::ids::Renames = Vec::new();
         let mut created = Vec::new();
         let mut removed = Vec::new();
-        let current = |renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)], id: &str| {
-            crate::ranges::renamed_id(renamed, id)
-        };
         for entry in entries.iter().skip(1) {
-            let target = current(&renamed, &entry.id);
-            let done = crate::delete_write::delete(&mut *sink, &target)?;
-            removed.extend(done.removed.clone());
-            merge(&mut renamed, &done.renamed);
+            let done = crate::delete_write::delete(&mut *sink, &entry.id)?;
+            removed.extend(done.removed);
         }
-        let first_id = current(&renamed, &first.id);
+        let first_id = first.id.clone();
         let length = {
             let docx = sink.docx()?;
             let found = crate::set_text::find(sink.doc(), &docx, &first_id)?;
@@ -88,33 +82,17 @@ impl EditNote {
             atoms(&work, work.root()).len()
         };
         let address = format!("{first_id}@{start}:{length}");
-        let done = crate::ranges::replace_range(&mut *sink, &address, lines.first().copied().unwrap_or(""))?;
-        merge(&mut renamed, &done.renamed);
-        let mut previous = current(&renamed, &first_id);
+        crate::ranges::replace_range(&mut *sink, &address, lines.first().copied().unwrap_or(""))?;
+        let mut previous = first_id;
         for line in lines.iter().skip(1) {
             let done = crate::paragraphs::insert_paragraph(&mut *sink, &previous, (true, line, None))?;
             created.push(done.id.to_string());
-            merge(&mut renamed, &done.renamed);
             previous = done.id.to_string();
         }
         Ok(NoteEdited {
             id: Some(self.note.clone()),
             created,
             removed,
-            renamed,
         })
-    }
-}
-
-/// `renamed` updated by `more` as a dict update: a key already there keeps its place.
-fn merge(
-    renamed: &mut ooxml_word_model::ids::Renames,
-    more: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
-) {
-    for (old, new) in more {
-        match renamed.iter_mut().find(|(o, _)| o == old) {
-            Some(found) => found.1.clone_from(new),
-            None => renamed.push((old.clone(), new.clone())),
-        }
     }
 }

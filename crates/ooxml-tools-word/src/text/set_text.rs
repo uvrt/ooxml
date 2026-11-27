@@ -276,7 +276,7 @@ fn reply(paragraphs: usize, items: Vec<StyledTextSet>) -> ToolResult<Value> {
             changed: e.changed,
             created: e.created,
             removed: e.removed,
-            renamed: ooxml_word_model::ids::renames_text(&e.renamed),
+            renamed: Vec::new(),
             warnings: Vec::new(),
         }));
         styled.extend(item.styled);

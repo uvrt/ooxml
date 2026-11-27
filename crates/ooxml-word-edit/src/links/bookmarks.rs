@@ -14,7 +14,6 @@ use crate::delete::{editable, stretch_keys};
 use crate::doc::Key;
 use crate::names::W;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::text::atoms;
 use crate::text_range::{range, range_id, Span};
 use crate::work::{Id, Work};
@@ -178,7 +177,6 @@ impl AddBookmark {
             )));
         }
         let (part, first_path, last_path) = (span.part.clone(), first.path.to_vec(), last.path.to_vec());
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let (value, offset) = sink.marker_id()?;
         let docx = sink.docx()?;
         let tree = sink
@@ -219,7 +217,6 @@ impl AddBookmark {
             id: Some(id.clone()),
             changed: true,
             created: vec![id],
-            renamed,
             ..LinkEdited::default()
         })
     }

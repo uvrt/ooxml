@@ -93,7 +93,6 @@ fn the_first_edit_writes_every_story_part_renames_nothing_and_reopens_with_the_s
             .run(&Caller::anonymous(), &set_text(&target, "Written."))
             .unwrap();
         assert!(done.changed, "{name}");
-        assert!(done.out.renamed.is_empty(), "{name}: {:?}", done.out.renamed);
         assert!(done.version.doc().ids().aliases().is_empty(), "{name}");
         let doc = done.version.doc();
         assert!(doc.package().unwritten().is_empty(), "{name}: every part written");
@@ -230,4 +229,36 @@ fn an_id_given_at_open_counts_as_fresh_at_its_blocks_first_write() {
     assert_eq!(text_id(first.version.doc(), &target), given, "the first write keeps it");
     let second = shared.run(&Caller::anonymous(), &set_text(&target, "Again.")).unwrap();
     assert_ne!(text_id(second.version.doc(), &target), given, "a later write renews it");
+}
+
+#[test]
+fn an_id_never_written_stays_fresh_for_the_whole_transaction_that_first_writes_its_part() {
+    // main's ruling (ST2, Q1): a textId renews against the version last written; one given at
+    // open and never written stays whole through every write of the first transaction -- a
+    // batch whose second op edits the block the first wrote keeps it -- and the next
+    // transaction renews it
+    let bytes = fixture("samplelib/sample-long.docx");
+    let shared = editor(&bytes);
+    let opened = shared.store().snapshot();
+    let target = paragraphs(opened.doc())[1].clone();
+    let given = text_id(opened.doc(), &target);
+    let batch = ooxml_store::Batch::new(vec![
+        set_text(&target, "Written once."),
+        set_text(&target, "Written twice."),
+    ]);
+    let done = shared.run(&Caller::anonymous(), &batch).unwrap();
+    assert!(done.changed);
+    assert!(
+        done.version.doc().package().unwritten().is_empty(),
+        "every part written"
+    );
+    assert_eq!(text_id(done.version.doc(), &target), given, "kept through the batch");
+    let next = shared
+        .run(&Caller::anonymous(), &set_text(&target, "Written again."))
+        .unwrap();
+    assert_ne!(
+        text_id(next.version.doc(), &target),
+        given,
+        "renewed by the next transaction"
+    );
 }

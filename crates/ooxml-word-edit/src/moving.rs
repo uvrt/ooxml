@@ -19,7 +19,6 @@ use crate::names::W;
 use crate::policy::RevisionPolicy;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -560,20 +559,21 @@ impl MoveBlocks {
             });
         };
         let (tracked, warnings) = self.tracked_blocks(&docx, &part, &blocks)?;
-        let renamed = stamp_document(sink, &docx)?;
-        let warnings = named_warnings(warnings, &ids, &renamed);
+        let warnings: Vec<String> = warnings
+            .into_iter()
+            .map(|(k, said)| format!("{} {said}", ids.get(k).cloned().unwrap_or_default()))
+            .collect();
         if let (RevisionPolicy::Tracked(tracking), true) = (&self.policy, tracked.contains(&true)) {
-            let stamped: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
             let story = docx.part(&part).map_or_else(|| "body".to_owned(), |s| s.story.clone());
             let plan = crate::moving_tracked::Planned {
                 part: &part,
                 story: &story,
                 blocks: &blocks,
-                ids: &stamped,
+                ids: &ids,
                 tracked: &tracked,
                 anchor: &anchor,
             };
-            let done = self.move_tracked(sink, tracking, &plan, renamed)?;
+            let done = self.move_tracked(sink, tracking, &plan)?;
             return Ok(BlocksMoved {
                 id: done.moved.first().cloned(),
                 changed: true,
@@ -583,18 +583,7 @@ impl MoveBlocks {
                 warnings,
             });
         }
-        let docx = sink.docx()?;
-        let tree = sink
-            .doc()
-            .tree(&part)?
-            .ok_or_else(|| EditError::no_part(part.clone()))?;
-        // arranged again only where the stamping changed the part (its tree is another)
-        let (work, parent, stretch) = if Arc::ptr_eq(tree.root(), before.root()) {
-            arranged
-        } else {
-            self.arrange(tree.root(), &part, (&blocks, &ids, &anchor))?
-                .ok_or_else(|| EditError::no_element(part.clone()))?
-        };
+        let (work, parent, stretch) = arranged;
         let built = work
             .build_content(work.root())
             .ok_or_else(|| EditError::no_element(part.clone()))?;
@@ -607,35 +596,13 @@ impl MoveBlocks {
             &[],
             Vec::new(),
         )?;
-        let moved: Vec<String> = ids.iter().map(|id| crate::ranges::renamed_id(&renamed, id)).collect();
         Ok(BlocksMoved {
-            id: moved.first().cloned(),
+            id: ids.first().cloned(),
             changed: true,
-            moved,
+            moved: ids,
             created: Vec::new(),
-            renamed,
+            renamed: Vec::new(),
             warnings,
         })
     }
-}
-
-/// Each block's warning, named by the block's id: docx-agent moves the blocks one by one,
-/// the first stamping the document, so a later block's warning names it by its stamped id.
-fn named_warnings(
-    warnings: Vec<(usize, String)>,
-    ids: &[String],
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
-) -> Vec<String> {
-    warnings
-        .into_iter()
-        .map(|(k, said)| {
-            let id = ids.get(k).cloned().unwrap_or_default();
-            let id = if k == 0 {
-                id
-            } else {
-                crate::ranges::renamed_id(renamed, &id)
-            };
-            format!("{id} {said}")
-        })
-        .collect()
 }

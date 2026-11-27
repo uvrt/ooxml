@@ -1186,8 +1186,8 @@
 {"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"p:7C000001@1..p:7C000003@2","text":"Across"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:49d63f7f74fe5157","mode":"structure"}
 {"case":{"arguments":{"action":"add","author":"Reviewer B","doc":"d1","items":[{"ref":"one","target":"p:7C000001","text":"A"},{"ref":"two","target":"p:7C000003@0:1","text":"B"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:18cc5fb7cff6f794","mode":"structure"}
 {"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010","text":"On the table"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:832a1d3f75400be2","mode":"structure"}
-{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010/r1","text":"On a row"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:332597c41e6ebdca","mode":"structure"}
-{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010/r2","text":"On the last row"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:2d344ac0c56ecd73","mode":"structure"}
+{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"tr:7C000013","text":"On a row"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:c7ac1862fe54407e","mode":"structure"}
+{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"tr:7C000016","text":"On the last row"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:603334567c06cffc","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:1A2B3C4D","text":"Agreed"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:9f75048680a67cd7","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:1A2B3C4D","ref":"r","resolve":true,"text":"Done\nThanks"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:7af7d32fde6abf6f","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:2B3C4D5E","text":"To a reply"}]},"op":"structure","tool":"word_comments","tracked":null},"id":"structure:97ce0b1a9a67aca0","mode":"structure"}
@@ -1218,8 +1218,8 @@
 {"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"p:7C000001@1..p:7C000003@2","text":"Across"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:0856e6a6f189b4fa","mode":"structure"}
 {"case":{"arguments":{"action":"add","author":"Reviewer B","doc":"d1","items":[{"ref":"one","target":"p:7C000001","text":"A"},{"ref":"two","target":"p:7C000003@0:1","text":"B"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:e48678edf5e2635b","mode":"structure"}
 {"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010","text":"On the table"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:bc6cea7043d7a667","mode":"structure"}
-{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010/r1","text":"On a row"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:b428181de1fa1435","mode":"structure"}
-{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"t:7C000010/r2","text":"On the last row"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:601c1e6767092aa9","mode":"structure"}
+{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"tr:7C000013","text":"On a row"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:a91a498ae65a0c92","mode":"structure"}
+{"case":{"arguments":{"action":"add","doc":"d1","items":[{"target":"tr:7C000016","text":"On the last row"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:69b3e5fb9669557f","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:1A2B3C4D","text":"Agreed"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:f166d331942e54ce","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:1A2B3C4D","ref":"r","resolve":true,"text":"Done\nThanks"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:a58c1b00d2b4493b","mode":"structure"}
 {"case":{"arguments":{"action":"reply","doc":"d1","items":[{"comment":"c:2B3C4D5E","text":"To a reply"}]},"op":"structure","tool":"word_comments","tracked":{"author":"Writer A","date":"2026-11-17T10:00:00Z"}},"id":"structure:56986e571b9dd9e4","mode":"structure"}
@@ -2214,7 +2214,7 @@
 {"case":{"arguments":{"doc":"d1","target":"t:7C000010.."},"case":"inspect t:7C000010..","tool":"word_inspect"},"id":"inspect:0b9ce154569beb86","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7C000010"},"case":"inspect t:7C000010","tool":"word_inspect"},"id":"inspect:476291b158464718","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7C000010/c0,0"},"case":"inspect t:7C000010/c0,0","tool":"word_inspect"},"id":"inspect:c76a15dfdb2447b4","mode":"inspect"}
-{"case":{"arguments":{"doc":"d1","target":"t:7C000010/r0"},"case":"inspect t:7C000010/r0","tool":"word_inspect"},"id":"inspect:64398d37c853c2f9","mode":"inspect"}
+{"case":{"arguments":{"doc":"d1","target":"tr:7C000010"},"case":"inspect t:7C000010/r0","tool":"word_inspect"},"id":"inspect:103a4bd2e636a073","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7C000010/c3,0"},"case":"inspect t:7C000010/c3,0","tool":"word_inspect"},"id":"inspect:f27494aad9cda6af","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"h:p:7C000001"},"case":"inspect h:p:7C000001","tool":"word_inspect"},"id":"inspect:a2d70b7b77eaf21c","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"s:1"},"case":"inspect s:1","tool":"word_inspect"},"id":"inspect:682a66c585c51d4d","mode":"inspect"}
@@ -2227,7 +2227,7 @@
 {"case":{"arguments":{"doc":"d1","range":"t:7C000010.."},"case":"read t:7C000010..","tool":"word_read"},"id":"ranges:51c5ea167b7baba9","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7C000010"},"case":"read t:7C000010","tool":"word_read"},"id":"ranges:c442fb0a22de8077","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7C000010/c0,0"},"case":"read t:7C000010/c0,0","tool":"word_read"},"id":"ranges:5c68f9a1dd9f4664","mode":"ranges"}
-{"case":{"arguments":{"doc":"d1","range":"t:7C000010/r0"},"case":"read t:7C000010/r0","tool":"word_read"},"id":"ranges:1a229422fea4738f","mode":"ranges"}
+{"case":{"arguments":{"doc":"d1","range":"tr:7C000010"},"case":"read t:7C000010/r0","tool":"word_read"},"id":"ranges:a6106c7fb5f701ef","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7C000010/c3,0"},"case":"read t:7C000010/c3,0","tool":"word_read"},"id":"ranges:29353d71da51bbae","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"h:p:7C000001"},"case":"read h:p:7C000001","tool":"word_read"},"id":"ranges:7a75f4c220798050","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"s:1"},"case":"read s:1","tool":"word_read"},"id":"ranges:836223382f3ca698","mode":"ranges"}

@@ -78,7 +78,7 @@ impl From<NoteEdited> for Outcome {
             id: out.id,
             created: out.created,
             removed: out.removed,
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             warnings: Vec::new(),
         }
     }

@@ -5,11 +5,10 @@
 //! ([`Keyer`]), a block taken from a memo only where its keys are its own wherever it
 //! stands.
 //!
-//! A key read from the index is the block's own where the part's keys follow from content
-//! ([`PartIds::keys_by_content`]: every paragraph and row stamped with a paraId of its own,
-//! written one way): such a key is kept with the block it was read with. Any other key (an
-//! ordinal, a repeat, a rowless table's) names a block by its place: a block holding one is
-//! read again where it is taken.
+//! A key read from the index is the block's own wherever it stands (every paragraph and row
+//! has a paraId of its own from the document's open): it is kept with the block it was read
+//! with. A table without rows is keyed by its place among the story's tables: a block
+//! holding one is read again where it is taken.
 //!
 //! The reader keys each block as it reads it, by its place ([`KeyOf`]); a block it reads
 //! where no index keys it is named by its path.
@@ -76,26 +75,20 @@ impl Names {
 pub(super) struct Keyer<'a> {
     part: &'a StoryPart,
     story: StoryIx,
-    /// The part's keys follow from content: a durable key read before is the block's.
-    by_content: bool,
 }
 
 impl<'a> Keyer<'a> {
     /// The keyer of `part`, the story `story`'s.
     pub(super) fn new(story: StoryIx, part: &'a StoryPart) -> Keyer<'a> {
-        Keyer {
-            part,
-            story,
-            by_content: part.ids.keys_by_content(),
-        }
+        Keyer { part, story }
     }
 
     /// Whether `blocks`, read before (a memo's), are this part's wherever they stand now:
-    /// every key in them durable and the part's keys following content. Any other key (an
-    /// ordinal, a repeat, a rowless table's, a path where none) names a block by its place,
-    /// and the blocks are read again (ADR-008: memos are keyed by content).
+    /// every key in them durable and of this story. A rowless table's key, or a path where
+    /// none, names a block by its place, and the blocks are read again (ADR-008: memos are
+    /// keyed by content).
     pub(super) fn reusable(&self, blocks: &[Block]) -> bool {
-        self.by_content && blocks.iter().all(|b| durable(b, self.story))
+        blocks.iter().all(|b| durable(b, self.story))
     }
 }
 

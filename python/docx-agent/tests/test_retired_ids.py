@@ -438,3 +438,44 @@ def test_a_rebuilt_table_of_contents_keeps_its_lines_ids_and_retires_the_lines_i
     ok(box, session, "word_fields", doc=doc, action="update")
     now = _toc_lines(session, doc)
     assert now[:-1] == kept and now[-1] not in lines and added not in lines
+
+
+#: What a name by place is refused with: the durable forms, and where to read them (decision 4).
+POSITIONAL = ("names a block by its place", "word_inspect or word_read")
+
+
+def _refused_by_place(box, session, tool: str, /, **arguments):
+    error = refused(box, session, tool, **arguments)
+    assert error.code == "invalid_arguments", error
+    assert all(said in error.message for said in POSITIONAL), error.message
+    return error
+
+
+def test_a_repeated_paraid_s_name_by_place_is_refused_with_guidance(box):
+    """Two paragraphs written with one paraId: the second gets an id of its own at open, and
+    ``p:<paraId>#1`` (the name this library gave the repeat before) is refused."""
+    twice = ('<w:p w14:paraId="2B000001" w14:textId="77777777"><w:r><w:t>First.</w:t></w:r></w:p>'
+             '<w:p w14:paraId="2B000001" w14:textId="77777777"><w:r><w:t>Second.</w:t></w:r></w:p>')
+    session, doc = _opened(box, word_docs.with_body(twice))
+    listed = [block for block, _ in word_docs.blocks(box, session, doc)]
+    assert listed[0] == "p:2B000001" and listed[1] != listed[0] and listed[1].startswith("p:"), listed
+    _refused_by_place(box, session, "word_read", doc=doc, range="p:2B000001#1")
+    _refused_by_place(box, session, "word_set_text", doc=doc, target="p:2B000001#1", text="Changed.")
+    assert "Second." in ok(box, session, "word_read", doc=doc, range=listed[1]).data
+
+
+def test_a_positional_table_or_row_in_a_cell_or_row_address_is_refused_with_guidance(box):
+    """A file without paraIds: its table and rows have durable ids from the first read, and the
+    names by place this library gave them before (``t@body/0``, ``t:X/r1``) are refused --
+    alone, in a cell address, and as a row."""
+    table = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/>'
+             '<w:gridCol w:w="3000"/></w:tblGrid>'
+             + "".join("<w:tr>" + "".join(f"<w:tc><w:p><w:r><w:t>r{r}c{c}</w:t></w:r></w:p></w:tc>" for c in range(2))
+                       + "</w:tr>" for r in range(2)) + "</w:tbl>")
+    session, doc = _opened(box, word_docs.with_body(word_docs.paragraph("Before.") + table))
+    held = next(block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t"))
+    assert held.startswith("t:"), held
+    _refused_by_place(box, session, "word_inspect", doc=doc, target="t@body/0")
+    _refused_by_place(box, session, "word_format", doc=doc, targets=["t@body/0/c1,0"], bold=True)
+    _refused_by_place(box, session, "word_inspect", doc=doc, target=f"{held}/r1")
+    ok(box, session, "word_format", doc=doc, targets=[f"{held}/c1,0"], bold=True)

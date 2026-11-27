@@ -60,7 +60,6 @@ fn fill(table: &str) -> SetCells {
             column: CellAxis::At(0),
             text: "Written".to_owned(),
         }],
-        stamping: false,
         policy: RevisionPolicy::Untracked,
         accepted: None,
     }

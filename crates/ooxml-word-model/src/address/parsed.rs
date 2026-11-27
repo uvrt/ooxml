@@ -61,7 +61,7 @@ pub enum Form {
         /// The row or cell.
         inside: Inside,
     },
-    /// Anything else: a block's id (`p:A`, `t:B`, `p@body/7`, `header1/p:...`), or a name
+    /// Anything else: a block's id (`p:A`, `t:B`, `header1/p:...`), or a name
     /// that names nothing.
     Block,
 }

@@ -11,9 +11,7 @@ use crate::delete::{declare, draws_of, editable, stretch_keys, BlockDeleted, Edi
 use crate::doc::Key;
 use crate::names::W;
 use crate::policy::Tracking;
-use crate::ranges::renamed_id;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::table_delete::{drop_separator, own_rows, track_delete_rows, track_delete_table};
 use crate::work::Id;
 use crate::{EditError, Result};
@@ -34,15 +32,13 @@ pub(crate) fn tracked_table(
     let block = &planned.block;
     let part = block.part.clone();
     let path_error = || EditError::no_element(part.clone());
-    let mut renamed = stamp_document(sink, docx)?;
-    let stamped = sink.docx()?;
     let tree = sink
         .doc()
         .tree(&part)?
         .ok_or_else(|| EditError::no_part(part.clone()))?;
     let path = block.path.to_vec();
     let ((mut work, parent, range, found), names) = stretch_of(
-        &stamped,
+        docx,
         tree.root(),
         (&part, &path),
         separator.as_ref().map(|(p, _)| p.as_slice()),
@@ -70,21 +66,20 @@ pub(crate) fn tracked_table(
             }
         }
     }
-    splice_back(sink, &stamped, (&part, &parent, range), &work, &wrote, tracking)?;
+    splice_back(sink, docx, (&part, &parent, range), &work, &wrote, tracking)?;
     if table_gone {
-        renamed.retain(|(old, _)| !removed_ids.iter().any(|r| r == old));
         return Ok(BlockDeleted {
             id: None,
-            renamed,
+            renamed: Vec::new(),
             removed: removed_ids,
             part: part.into(),
             warnings: Vec::new(),
         });
     }
-    let current = if gone.is_empty() {
-        renamed_id(&renamed, &block.id)
+    let (current, renamed) = if gone.is_empty() {
+        (block.id.clone(), Vec::new())
     } else {
-        named_after_first_row(sink, (&part, &path), &block.id, &mut renamed)?
+        named_after_first_row(sink, (&part, &path), &block.id)?
     };
     Ok(BlockDeleted {
         id: Some(current),
@@ -109,13 +104,13 @@ pub(crate) fn tracked_row_across(
     tracking: &Tracking,
 ) -> Result<bool> {
     let path_error = || EditError::no_element(part.to_owned());
-    let stamped = sink.docx()?;
+    let docx = sink.docx()?;
     let tree = sink
         .doc()
         .tree(part)?
         .ok_or_else(|| EditError::no_part(part.to_owned()))?;
     let ((mut work, parent, range, found), _) =
-        stretch_of(&stamped, tree.root(), (part, path), None).ok_or_else(path_error)?;
+        stretch_of(&docx, tree.root(), (part, path), None).ok_or_else(path_error)?;
     let &table = found.first().ok_or_else(path_error)?;
     let row = *own_rows(&work, table).get(index).ok_or_else(path_error)?;
     let mut gone = false;
@@ -124,7 +119,7 @@ pub(crate) fn tracked_row_across(
         gone = !rows.is_empty();
         released
     })?;
-    splice_back(sink, &stamped, (part, &parent, range), &work, &wrote, tracking)?;
+    splice_back(sink, &docx, (part, &parent, range), &work, &wrote, tracking)?;
     Ok(gone)
 }
 
@@ -153,33 +148,24 @@ fn splice_back(
 }
 
 /// A table whose first row went is named after its new first row (docx-agent's
-/// `_rename({old: now, current: now})`): the table's id now.
+/// `_rename({old: now})`): the table's id now, and the rename where it changed.
 fn named_after_first_row(
     sink: &mut EditSink<'_, '_>,
     (part, path): (&str, &[u32]),
     old: &str,
-    renamed: &mut ooxml_word_model::ids::Renames,
-) -> Result<String> {
-    let current = renamed_id(renamed, old);
+) -> Result<(String, ooxml_word_model::ids::Renames)> {
     let now = sink
         .docx()?
         .part(part)
         .and_then(|s| s.ids.table_at(path))
         .map(|t| t.id)
         .ok_or_else(|| EditError::no_element(part.to_owned()))?;
-    if now == current {
-        return Ok(current);
+    if now == old {
+        return Ok((now, Vec::new()));
     }
-    let mut renames: ooxml_word_model::ids::Renames = vec![(old.into(), now.as_str().into())];
-    if current != old {
-        renames.push((current.into(), now.as_str().into()));
-    }
-    sink.rename(renames)?;
-    match renamed.iter_mut().find(|(o, _)| o == old) {
-        Some(slot) => slot.1 = now.as_str().into(),
-        None => renamed.push((old.into(), now.as_str().into())),
-    }
-    Ok(now)
+    let renames: ooxml_word_model::ids::Renames = vec![(old.into(), now.as_str().into())];
+    sink.rename(renames.clone())?;
+    Ok((now, renames))
 }
 
 /// The stretch around the table at `path` made editable: the table's neighbours and its
