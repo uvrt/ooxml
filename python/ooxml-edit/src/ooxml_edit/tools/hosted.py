@@ -220,6 +220,8 @@ class Hosting:
         the Rust host's documents a Rust call; a ``batch`` of both is refused (decision D2)."""
         if not self.own and not self.kinds:
             return "rust"                       # (every tool the host's: an unknown one too)
+        if type(name) is str and name in self.own:
+            return "python"                     # (an application's own tool: D1)
         if name in self.one_doc and type(arguments) is dict:
             doc = arguments.get("doc")          # (the common call: a host tool naming its one document)
             if isinstance(doc, str):
@@ -303,7 +305,8 @@ class Hosting:
             try:
                 return self.toolbox._dispatch(session, name, arguments, roles=roles, context=context)
             finally:
-                base.sync_held()
+                if base._held:
+                    base.sync_held()
         if isinstance(where, ToolError):
             return self._refused(base, name, arguments, where, found, caller)
         return self.call(base, name, arguments, found, caller)
@@ -701,10 +704,14 @@ class HostedSession(Session):
                 self.rust.held_moved(doc, version)
                 self._told[doc] = version
 
+    def lock(self, doc_ids: Iterable[str]) -> Any:
+        """:meth:`Session.lock`; in a session holding documents of the Python host, what the
+        application or a call changed under it told the Rust session as the locks go
+        (:meth:`sync_held`)."""
+        return self._lock_telling(doc_ids) if self._held else super().lock(doc_ids)
+
     @contextmanager
-    def lock(self, doc_ids: Iterable[str]) -> Iterator[list[Any]]:
-        """:meth:`Session.lock` of documents the Python host holds: what the application or a
-        call changed under it told the Rust session as the locks go (:meth:`sync_held`)."""
+    def _lock_telling(self, doc_ids: Iterable[str]) -> Iterator[list[Any]]:
         try:
             with super().lock(doc_ids) as entries:
                 yield entries
@@ -713,6 +720,8 @@ class HostedSession(Session):
 
     def commit(self, doc_id: str) -> int:
         """:meth:`Session.commit`, the version told the Rust session (:meth:`sync_held`)."""
+        if not self._held:
+            return super().commit(doc_id)
         try:
             return super().commit(doc_id)
         finally:
