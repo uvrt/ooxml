@@ -39,7 +39,7 @@ def toolbox():
 def _session(toolbox, markdown: str, **options):
     session = toolbox.session(clock=CLOCK, **options)
     session.open(word_docs.blank(), "report.docx")                       # d1
-    session.adopt(Grid({"checks": (COLUMNS, ROWS)}), "grid", "book.grid")        # d2
+    session.adopt(Grid({"checks": (COLUMNS, ROWS)}), "xlsx", "book.xlsx")        # d2
     ok(call(toolbox, session, "word_insert_markdown", doc="d1", at="end", markdown=markdown))
     return session
 

@@ -82,7 +82,7 @@ def _merge(addresses):
     return [f"{s}!{c}{a}" if a == b else f"{s}!{c}{a}:{c}{b}" for s, c, a, b in out]
 
 
-GRID = DocumentFormat(kind="grid", open=lambda data: Grid({}), detect=lambda data, name: False,
+GRID = DocumentFormat(kind="xlsx", open=lambda data: Grid({}), detect=lambda data, name: False,
                       datasets={"t:": _grid_table}, merge_sources=_merge)
 
 
@@ -130,7 +130,7 @@ def _new_document() -> bytes:
 def _session(toolbox, **options):
     session = toolbox.session(clock=CLOCK, **options)
     session.open(_new_document(), "report.docx")                                 # d1
-    session.adopt(Grid({"checks": (COLUMNS, ROWS)}), "grid", "book.grid")        # d2
+    session.adopt(Grid({"checks": (COLUMNS, ROWS)}), "xlsx", "book.xlsx")        # d2
     return session
 
 

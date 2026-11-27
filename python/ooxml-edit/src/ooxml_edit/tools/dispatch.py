@@ -1552,7 +1552,10 @@ class Toolbox:
                 clean, found = self._sources(
                     session, tool, clean,
                     refine=self._source_refiner(session, doc_ids, tool, clean))
-            session.held_in_python(name, [*doc_ids, *found])
+            if tool.composite:
+                doc_ids = session.held_here(doc_ids)
+            else:
+                session.held_in_python(tool, [*doc_ids, *found])
             reading = [doc for doc in found if doc not in doc_ids]
             # Round 45: a call that only reads works on each document's committed version
             # and never waits for an edit in flight (Session.read_lock); one that changes a
@@ -3324,6 +3327,12 @@ class Toolbox:
                  roles: Sequence[str], caller: Mapping[str, Any]) -> tuple[Result, bool]:
         """One op of a ``read_batch``: its result, or its error as a failed one; and
         whether its tool takes a ``cursor`` (the next page's call is its own)."""
+        if self._hosting is not None and isinstance(session, hosted.HostedSession):
+            # Phase 3 E1b: an op of a document the Rust host holds is a Rust call (Phase 4
+            # deletes this, with the Python host).
+            ran = self._hosting.read_op(session, op, roles, caller)
+            if ran is not None:
+                return ran
         notes: list[str] = []
         primary: DocumentEntry | None = None
         tool: Tool | None = None

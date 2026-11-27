@@ -1482,13 +1482,13 @@ class Session:
                 self._free_id(doc_id)
                 self._given_ids.add(doc_id)
             made = DocumentEntry if handle is None else OwnedEntry
-            self.documents[doc_id] = made(
+            self._entries()[doc_id] = made(
                 doc_id=doc_id, kind=kind, name=name, source=source, held=document,
                 size=size, baseline_problems=baseline, font_dirs=self.font_dirs,
                 locale=self.locale,
                 render_cache=LRU(self.limits.render_cache_size),
                 check_cache=LRU(self.limits.check_cache_size))
-            entry = self.documents[doc_id]
+            entry = self._entries()[doc_id]
             if isinstance(entry, OwnedEntry):
                 entry.own(fmt.owner, handle)
             entry.ref_states[entry.version] = {}
@@ -1520,10 +1520,20 @@ class Session:
                 "open this one without doc_id for the next free id"
                 + (f" (open now: {', '.join([doc_id, *others])})" if others else ""))
 
-    def held_in_python(self, tool: str, doc_ids: Iterable[str]) -> None:
-        """Refuse a call of ``tool`` the Python dispatcher runs on ``doc_ids`` when this
-        session holds any of them elsewhere (a session on the Rust host: :mod:`.hosted`);
-        here every document is held in Python."""
+    def _entries(self) -> dict[str, DocumentEntry]:
+        """The entries of the documents held here, by id: every open one (a session on the
+        Rust host holds only some: :mod:`.hosted`)."""
+        return self.documents
+
+    def held_in_python(self, tool: Any, doc_ids: Iterable[str]) -> None:
+        """Refuse a call of ``tool`` (a :class:`~.registry.Tool`) the Python dispatcher runs on
+        ``doc_ids`` when this session holds any of them elsewhere (a session on the Rust
+        host: :mod:`.hosted`); here every document is held in Python."""
+
+    def held_here(self, doc_ids: Iterable[str]) -> list[str]:
+        """Of ``doc_ids``, those held here, in order (a batch's: the others' ops run where
+        their documents are held); here every one."""
+        return list(doc_ids)
 
     def entry(self, doc_id: str) -> DocumentEntry:
         """The open document ``doc_id``; ``not_found`` names the open ones."""
@@ -1578,7 +1588,7 @@ class Session:
         entry = self.entry(doc_id)
         with entry.lock:
             with self._lock:
-                self.documents.pop(doc_id, None)
+                self._entries().pop(doc_id, None)
                 kept = []
                 for dataset in self.datasets.values():
                     if dataset.doc == doc_id and not dataset.closed:

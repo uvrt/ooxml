@@ -1,6 +1,7 @@
 """The host goldens' mixed streams (crates/ooxml-oracle/host/mixed): a workbook xlsx-agent holds
-beside a Word document -- datasets, sources and facts across them -- replayed through today's
-Python host with no unlisted difference.  The oracle's own tests replay the docx streams; these
+beside a Word document -- datasets, sources and facts across them -- replayed through the Toolbox's
+facade (Phase 3 E1b-2: the Word document on the Rust host, the workbook on the Python host, its rows
+read through the values channel) with no unlisted difference.  The oracle's own tests replay the docx streams; these
 need xlsx-agent, which only this suite installs (crates/ooxml-oracle/python/host_goldens.py)."""
 
 from __future__ import annotations

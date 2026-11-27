@@ -85,7 +85,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ooxml_edit.tools import CORE, DocumentFormat, ToolGroup, shared as _shared
+from ooxml_edit.tools import CORE, DocumentFormat, ToolGroup, offered_by, shared as _shared
 
 from .docformat import (ERRORS, KIND, PROMPT, QUERY_CODES, REGION_CODES, STRICT_FIRST, FORMAT,
                         declare, detect, narrow, policy, tool_error, workbook_format)
@@ -112,9 +112,9 @@ GROUPS = [*_shared.GROUPS,
                     "per row by key, as a dataset traced to the cells judged.")]
 
 #: Every tool a workbook has, the shared ones included, in the order they are offered.
-TOOLS = [*SHARED_TOOLS, *READ_TOOLS, *QUERY_TOOLS, *DERIVE_TOOLS, *COMPARE_TOOLS,
-         *VALIDATE_TOOLS, *EDIT_TOOLS, *SHEET_TOOLS, *FORMATTING_TOOLS, *TRACE_TOOLS,
-         *RECORD_TOOLS]
+TOOLS = offered_by(KIND, [*SHARED_TOOLS, *READ_TOOLS, *QUERY_TOOLS, *DERIVE_TOOLS, *COMPARE_TOOLS,
+                         *VALIDATE_TOOLS, *EDIT_TOOLS, *SHEET_TOOLS, *FORMATTING_TOOLS, *TRACE_TOOLS,
+                         *RECORD_TOOLS])
 
 CORE_TOOLS = [t.name for t in TOOLS if t.group == CORE]
 

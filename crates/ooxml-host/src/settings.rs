@@ -65,20 +65,23 @@ impl HostSettings {
         Ok(())
     }
 
-    /// The refusal of an op of `within` (`batch`, `read_batch`) naming `tool`, one of the
-    /// application's own tools ([`HostSettings::own_tools`]), with the op alone as the way
-    /// out; `None` for any other tool.
+    /// The refusal of an op of `within` (`batch`, `read_batch`) naming `tool`: one of the
+    /// application's own tools ([`HostSettings::own_tools`], decision D1), or of a format the
+    /// application's own host holds ([`HostSettings::format_tools`]), with the op alone as the
+    /// way out; `None` for any other tool.
     #[must_use]
     pub fn own_tool_refused(&self, tool: &str, within: &str, retry: &TryCall) -> Option<ToolError> {
-        let own = self.own_tools.iter().any(|t| t == tool);
-        own.then(|| {
-            ToolError::refusal(
-                Refusal::InvalidArguments,
-                format!("{tool} is the application's own tool, which cannot run inside a {within}: call it alone"),
-                WayOut::call(retry.clone()),
+        let message = if self.own_tools.iter().any(|t| t == tool) {
+            format!("{tool} is the application's own tool, which cannot run inside a {within}: call it alone")
+        } else if let Some((_, kind)) = self.format_tools.iter().find(|(t, _)| t == tool) {
+            format!(
+                "{tool} is a tool of {kind} documents, which another host runs, so it cannot run inside this \
+                 {within}: send it as its own call or in its own {within}"
             )
-            .at("tool")
-        })
+        } else {
+            return None;
+        };
+        Some(ToolError::refusal(Refusal::InvalidArguments, message, WayOut::call(retry.clone())).at("tool"))
     }
 
     /// One `Limits` field: whether the host reads it.

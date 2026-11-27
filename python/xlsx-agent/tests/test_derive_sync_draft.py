@@ -1,6 +1,9 @@
 """A batch that derives a dataset from a workbook, then syncs a Word table from it, gives the
 same answers, report, workbook and datasets whether the toolbox prepares batches on drafts
-(``block_edits="always"``) or not (round 51; ooxml-edit 0.108.0).
+(``block_edits="always"``) or not (round 51; ooxml-edit 0.108.0).  Since Phase 3 E1b-2 the report
+is the Rust host's and the workbook the Python host's: one batch changing both is refused with the
+way out, two batches -- the derive, then the sync and the note -- which is what runs here
+(decision D2).
 
 One session holds a made-up report (docx-agent, a test-only dependency) with three tables and a
 made-up workbook of sales and products.  Each batch derives with a join and a group
@@ -92,6 +95,13 @@ def batch(k: int, c: int, tables: list[str], notes: list[str]) -> dict:
     ]}
 
 
+def two(given: dict) -> list[dict]:
+    """A batch of :func:`batch` as decision D2's way out sends it: the derive (the workbook's),
+    then the sync and the note (the report's)."""
+    rest = {key: value for key, value in given.items() if key != "ops"}
+    return [{**rest, "ops": given["ops"][:1]}, {**rest, "ops": given["ops"][1:]}]
+
+
 def normal(result) -> dict:
     out = copy.deepcopy(result.to_json())
     for op in (out.get("data") or {}).get("ops") or []:
@@ -123,16 +133,21 @@ def test_a_derive_then_sync_batch_is_the_same_with_drafts_or_without(made):
     for mode in ("off", "always"):
         with _box(mode) as box:
             session, tables, notes = _session(box, *made)
-            results = [box.dispatch(session, "batch", batch(0, 0, tables, notes)),
+            refused = box.dispatch(session, "batch", batch(0, 0, tables, notes))
+            assert refused.error.code == "refused" and "send them as two batches" in refused.error.message
+            assert refused.error.details == {"batches": [[0], [1, 2]]}
+            assert refused.error.try_call["arguments"]["ops"] == batch(0, 0, tables, notes)["ops"][:1]
+            results = [*(box.dispatch(session, "batch", b) for b in two(batch(0, 0, tables, notes))),
                        box.dispatch(session, "xlsx_set_cells", {"doc": "d2", "cells": [
                            {"address": "Sales!D3", "number": 500}]}),
-                       box.dispatch(session, "batch", batch(1, 1, tables, notes)),
-                       box.dispatch(session, "batch", {**batch(0, 2, tables, notes), "atomic": True})]
+                       *(box.dispatch(session, "batch", b) for b in two(batch(1, 1, tables, notes))),
+                       *(box.dispatch(session, "batch", b)
+                         for b in two({**batch(0, 2, tables, notes), "atomic": True}))]
             assert all(r.ok for r in results), [r.to_json() for r in results if not r.ok]
             out[mode] = ([normal(r) for r in results], digest(box, session, "d1"), digest(box, session, "d2"),
                          datasets(session))
             blocks = [r.block for r in results]
     assert out["off"] == out["always"]
-    assert blocks == [None] * 4, blocks                         # no draft holds the Rust session's report
-    assert out["always"][0][0]["doc"] == "d2"                   # names its first document, as before
+    assert blocks == [None] * 7, blocks                         # no draft holds the Rust session's report
+    assert out["always"][0][0]["doc"] == "d2"                   # the derive's batch names the workbook
 

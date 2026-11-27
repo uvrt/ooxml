@@ -2,8 +2,8 @@
 ``Result`` with today's signatures, docx-agent's documents held and its calls run by the Rust
 host (``ooxml_core.Host``, one per toolbox; ``HostSession``, one per session).
 
-- Which toolbox runs on the host: every format the host's (a Python-held format keeps the Python
-  host until E1b-2), the application's own tools beside it.
+- Which toolbox runs on the host: a format the host's, any other of a kind the Rust session names
+  while the Python host holds it (E1b-2), the application's own tools beside it.
 - The application's tools keep their datasets, outputs and images in the Rust session (E1b,
   decision D3): read back as kept, a dataset kept again read fresh.
 - The session clock reaches the host as a value: a new document's created date is the clock's.
@@ -71,11 +71,14 @@ def test_a_toolbox_with_tools_of_its_own_runs_on_the_host():
         assert isinstance(toolbox.session(), HostedSession)
 
 
-def test_until_e1b_2_a_toolbox_with_a_python_format_runs_on_the_python_host():
+def test_a_toolbox_with_a_python_format_of_a_kind_the_rust_session_names_runs_on_the_host():
     import dataclasses
 
-    python_format = dataclasses.replace(FORMAT, kind="grid", host=None, owner=None)
-    with Toolbox(TOOLS, formats=[FORMAT, python_format], groups=GROUPS, workers=0) as toolbox:
+    held = dataclasses.replace(FORMAT, kind="xlsx", host=None, owner=None)
+    with Toolbox(TOOLS, formats=[FORMAT, held], groups=GROUPS, workers=0) as toolbox:
+        assert isinstance(toolbox.session(), HostedSession)
+    other = dataclasses.replace(FORMAT, kind="grid", host=None, owner=None)
+    with Toolbox(TOOLS, formats=[FORMAT, other], groups=GROUPS, workers=0) as toolbox:
         assert type(toolbox.session()) is Session
 
 

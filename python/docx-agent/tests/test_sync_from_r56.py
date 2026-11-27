@@ -165,10 +165,13 @@ def test_a_reference_to_the_own_table_is_told_what_a_reference_names(toolbox):
     assert "{{<source>/#<row>/<column>}}" in error.message and "call" not in error.details
 
 
-def test_own_source_names_the_blocks(toolbox):
-    session, table = _report(toolbox)
-    subject = session.entry("d1").subject
-    first = word_docs.paragraphs(session, "d1")[0][0]
+@pytest.mark.python_host     # (the Python host's mirror of the document: its format's own_source, until E2)
+def test_own_source_names_the_blocks():
+    # (a toolbox of its own: the module's runs on the Rust host)
+    with Toolbox([*TOOLS, rows_put], formats=[FORMAT, GRID], groups=GROUPS, workers=0) as toolbox:
+        session, table = _report(toolbox)
+        subject = session.entry("d1").subject
+        first = word_docs.paragraphs(session, "d1")[0][0]
     assert own_source(subject, first) == "a paragraph"
     assert own_source(subject, table) == "a table" and own_source(subject, f"{table}/#2") == "part of a table"
     assert own_source(subject, "t:00000000") is None and own_source(subject, "d:counts") is None

@@ -201,7 +201,7 @@ impl HostSession {
             None => return Err(self.no_reading(doc, retry)),
         };
         let locale = self.session.config().locale.clone().unwrap_or_default();
-        let data = self.with_facts(retry, |fact| {
+        let data = self.with_facts(retry, &context.values, |fact| {
             let env = Env {
                 locale: &locale,
                 doc,
@@ -243,7 +243,7 @@ impl HostSession {
     /// `doc` at the version the call reads: pinned in `context`, else its head.
     pub(crate) fn read_of(&self, doc: &str, context: &CallContext) -> Option<Read> {
         let id = DocId::parse(doc)?;
-        let format = self.session.format_doc(&id).ok()?;
+        let format = ooxml_session::elsewhere::answering(self.session.format_doc(&id).ok()?, doc, &context.values);
         let at = match context.at.iter().find(|o| *o.id() == id) {
             Some(pinned) => pinned.any().clone(),
             None => self.session.snapshot(&id).ok()?.any().clone(),
@@ -269,7 +269,7 @@ impl HostSession {
         let narrower: Vec<&str> = SCOPE.to_vec();
         let rules = self.number_rules();
         let locale = self.session.config().locale.clone().unwrap_or_default();
-        let data = self.with_facts(retry, |fact| {
+        let data = self.with_facts(retry, &context.values, |fact| {
             let env = Env {
                 locale: &locale,
                 doc,
