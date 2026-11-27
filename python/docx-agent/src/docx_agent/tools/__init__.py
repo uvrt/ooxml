@@ -1,4 +1,4 @@
-"""Word tools for an agent tool layer (``ooxml_edit.tools``): definitions and handlers.
+"""Word tools for an agent tool layer (``ooxml_edit.tools``): definitions.
 
 An application puts these in a :class:`ooxml_edit.tools.Toolbox` with the docx
 :data:`FORMAT` (and, beside them, another library's tools for its documents)::
@@ -13,13 +13,12 @@ An application puts these in a :class:`ooxml_edit.tools.Toolbox` with the docx
     openai_tools = toolbox.definitions("openai-responses")   # or "openai-chat"
     result = toolbox.dispatch(session, "describe", {"doc": d1})
 
-Every Word tool is the Rust session's (``ooxml_core``): its definition is the session's spec
-(``ooxml_core.tool_specs``, :func:`docx_agent.rust.session.tool_of`) with what only the tool
-layer holds of it (the roles of its actions, the calls of it that only read), and its handler
-hands the call to the session (:mod:`.handlers`), a reading tool with the arguments the host
-adapts first.  The shared tools (``open_document``, ``save_document``, ``find_text``,
-``render``...) are one definition for every format (``ooxml_edit.tools.shared``, the session's
-specs byte for byte); this package gives their Word handlers (:mod:`.shared`).
+Every call of a Word tool runs on the Rust host (:mod:`ooxml_edit.tools.hosted`, the format's
+:attr:`~ooxml_edit.tools.DocumentFormat.host`).  A Word tool's definition is the host's spec
+(:func:`.specs.tool_of`) with what only the tool layer holds of it (the roles of its actions,
+the calls of it that only read).  The shared tools (``open_document``, ``save_document``,
+``find_text``, ``render``...) are one definition for every format (``ooxml_edit.tools.shared``,
+the host's specs byte for byte); this package offers them for docx (:mod:`.shared`).
 
 Everything is in memory: documents and inputs are bytes under handles, saved files go to
 the application.  Lengths are points.  Every mutating call is one undo step, written as
@@ -39,10 +38,11 @@ from typing import Any
 
 from ooxml_edit.tools import CORE, DocumentFormat, ToolGroup, shared as _shared
 
-from ..rust.session import tool_of
-from ._base import block_of, blocks_between
+from .blocks import block_of, blocks_between
 from .format import FORMAT, KIND, PROMPT
-from . import handlers, objects, read, review, structure, style
+from .hosting import TemplateOpened
+from .specs import tool_of
+from . import objects, review, structure, style
 from . import shared
 
 GROUPS = [
@@ -67,16 +67,12 @@ WORD_ORDER = (
     "word_follow_sample",
 )
 
-#: The Word tools' own handlers (the rest: :func:`.handlers.edit` for a changing tool,
-#: :func:`.handlers.read` for a reading one).
-HANDLERS = {**read.HANDLERS, **style.HANDLERS}
-
 #: What the tool layer holds of a Word tool beside its Rust definition.
 HOST: dict[str, dict[str, Any]] = {**review.HOST, **structure.HOST, **objects.HOST, **style.HOST}
 
 
 def _word_tools() -> list[Any]:
-    """The Word tools from the Rust session's specs, in :data:`WORD_ORDER`."""
+    """The Word tools from the Rust host's specs, in :data:`WORD_ORDER`."""
     import ooxml_core
 
     specs = {spec["name"]: spec for spec in json.loads(ooxml_core.tool_specs(KIND))}
@@ -86,9 +82,7 @@ def _word_tools() -> list[Any]:
                            "docx-agent was built with")
     out = []
     for name in WORD_ORDER:
-        tool = tool_of(specs[name], KIND)
-        handler = HANDLERS.get(name) or (handlers.edit if tool.mutates else handlers.read)
-        out.append(dataclasses.replace(tool, handlers={KIND: handler}, **HOST.get(name, {})))
+        out.append(dataclasses.replace(tool_of(specs[name], KIND), **HOST.get(name, {})))
     return out
 
 
@@ -132,8 +126,8 @@ def docx_format(*, min_text_size: "float | dict[str, float] | None" = None, asse
                 typography: bool = True) -> DocumentFormat:
     """:data:`FORMAT` with the application's own settings (round 17, P6) -- never tool
     arguments, so the definitions the model is sent stay the same; ``deck_format``'s
-    counterpart.  The settings go to the Rust session that owns the format's documents
-    (:class:`docx_agent.rust.owner.RustOwner`), which every call of them reads:
+    counterpart.  The settings go to the Rust host that holds the format's documents
+    (:class:`.hosting.WordHosting`), which every call of them reads:
 
     ``min_text_size`` (points): ``check`` reports ``small_text``, the text drawn smaller
     (its layout facts, as ``min_size`` does), and the tools that write content
@@ -157,17 +151,14 @@ def docx_format(*, min_text_size: "float | dict[str, float] | None" = None, asse
 
         toolbox = Toolbox(TOOLS, formats=[docx_format(typography=False)], groups=GROUPS)
     """
-    from ..rust.owner import RustOwner
-
     if assets is not None:
         raise ValueError("an asset catalogue is not supported yet: give word_drawings a picture as an image blob")
     from .hosting import WordHosting
 
     minimums = _minimums(min_text_size)
-    owner = RustOwner(min_text_size=minimums, typography=bool(typography))
     host = WordHosting(min_text_size=minimums, typography=bool(typography))
-    return dataclasses.replace(FORMAT, owner=owner, host=host)
+    return dataclasses.replace(FORMAT, host=host)
 
 
-__all__ = ["CORE_TOOLS", "FORMAT", "GROUPS", "PROMPT", "TOOLS", "WORD_TOOLS", "block_of", "blocks_between",
-           "docx_format"]
+__all__ = ["CORE_TOOLS", "FORMAT", "GROUPS", "PROMPT", "TOOLS", "TemplateOpened", "WORD_TOOLS", "block_of",
+           "blocks_between", "docx_format"]

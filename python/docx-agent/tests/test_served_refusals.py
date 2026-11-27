@@ -10,15 +10,11 @@ import pickle
 
 import pytest
 
-from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox, ToolError
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 GONE = "p:0BADF00D"
@@ -88,11 +84,9 @@ def test_refusals_are_the_sessions_answer(toolbox, report):
     code and message."""
     session, doc = _open(toolbox, report)
     for tool, arguments in _refusing(_ids(toolbox, session, doc)):
-        before = edits.served().get(tool, 0)
         result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
         assert not result.ok, (tool, arguments)
         assert result.error.code and result.error.message, (tool, arguments, result.to_json())
-        assert edits.served().get(tool, 0) == before + 1, (tool, arguments)
 
 
 def test_a_refusal_carries_its_way_out(toolbox, report):
@@ -117,10 +111,8 @@ def test_a_deleted_id_names_the_change(toolbox, report):
 def test_a_read_refusal_is_the_sessions_answer(toolbox, report):
     """A read the session serves answers its refusal too."""
     session, doc = _open(toolbox, report)
-    before = reads.served().get("find_text", 0)
     result = toolbox.dispatch(session, "find_text", {"doc": doc, "text": "meadow", "range": GONE})
     assert not result.ok and result.error.code == "not_found", result.to_json()
-    assert reads.served().get("find_text", 0) == before + 1
 
 
 def test_try_call_pickles_and_serialises():

@@ -49,12 +49,6 @@ def clock() -> tuple[float, float]:
     return counts.waited, held
 
 
-def count_wait(seconds: float) -> None:
-    """Count ``seconds`` this thread waited for a document (its gate, :mod:`.gate`) as
-    waiting for its lock."""
-    _COUNTS.waited += seconds
-
-
 class TimedLock:
     """A re-entrant lock (:class:`threading.RLock`'s protocol, ``_is_owned`` included) that
     counts the taking thread's wait and hold (the module's notes)."""

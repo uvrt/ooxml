@@ -53,7 +53,7 @@ def _rules(session: Any) -> dict:
 
 def _dataset(data: Any) -> dict:
     """A dataset's rows as the Rust host reads them (values as JSON, dates ISO)."""
-    from docx_agent.rust.served import _value
+    from ooxml_edit.tools.hosted_data import cell_json as _value
 
     return {"columns": [str(c) for c in data.columns],
             "rows": [[_value(v) for v in row] for row in data.rows],

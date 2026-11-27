@@ -85,13 +85,25 @@ def runs_on_host(toolbox: "Toolbox") -> bool:
     outputs and images the Rust session's; so do the Python host's documents (D3).
 
     A toolbox with no format the Rust host holds (the format libraries held in Python alone)
-    keeps the plain :class:`~.session.Session` and its stores until Phase 4 deletes them.
+    keeps the plain :class:`~.session.Session` and its stores until Phase 4 deletes them.  One
+    holding a format the Rust host holds beside a Python-held format of a kind the Rust session
+    cannot name is refused (``ArgumentError``, a ``ValueError``): the Rust host's documents have
+    no other host to run on (Phase 3 E2).
     """
     formats = list(toolbox.formats.values())
-    if not any(fmt.host is not None for fmt in formats):
+    hosted = [fmt.kind for fmt in formats if fmt.host is not None]
+    if not hosted:
         return False
-    named = set(_hosting(toolbox).held_kinds())
-    return all(fmt.host is not None or fmt.kind in named for fmt in formats)
+    named = tuple(_hosting(toolbox).held_kinds())
+    unnamed = [fmt.kind for fmt in formats if fmt.host is None and fmt.kind not in named]
+    if unnamed:
+        held = (f"it names {', '.join(repr(kind) for kind in named)} documents" if named
+                else "it names no other kind")
+        raise ArgumentError(
+            f"{', '.join(hosted)} documents run on the Rust host, whose session cannot name a "
+            f"{unnamed[0]!r} document ({held}): give the {unnamed[0]!r} format a toolbox of its own, "
+            f"or use a format of a kind the Rust session names")
+    return True
 
 
 def held_kinds(toolbox: "Toolbox") -> list[str]:

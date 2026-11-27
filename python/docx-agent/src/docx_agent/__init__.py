@@ -1,6 +1,6 @@
-"""docx-agent: Word documents for a model, as tool calls on the Rust session.
+"""docx-agent: Word documents for a model, as tool calls on the Rust host.
 
-Every Word document is held by the Rust session (``ooxml_core``): it opens, edits, lays out,
+Every Word document is held by the Rust host (``ooxml_edit.tools.hosted``): it opens, edits, lays out,
 checks, renders and saves it. docx-agent is the tool layer on it, for ``ooxml_edit.tools``::
 
     from ooxml_edit.tools import Toolbox

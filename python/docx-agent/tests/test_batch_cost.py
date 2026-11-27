@@ -1,7 +1,7 @@
 """What a batch of Word ops costs does not grow with the document (round 28, W8), and its
 results are the ones each op gives alone.
 
-The Rust session serves every op of a batch: ``keep_together``'s warning (a table taller than
+The Rust host runs every op of a batch: ``keep_together``'s warning (a table taller than
 a page) is read from one layout after the batch's last op, not one per op, and
 ``word_edit_table``'s table as Markdown counts the list items before it.
 
@@ -18,16 +18,9 @@ import pytest
 
 from ooxml_edit.tools import Limits, Toolbox
 
-from docx_agent.rust import edits as _edits
-from docx_agent.rust import reads as _reads
-from docx_agent.rust.engines import session_pages
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 import word_docs
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 CLOCK = lambda: dt.datetime(2026, 11, 3, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -99,8 +92,9 @@ def _plain(result) -> dict:
 
 
 def _laid(session, doc) -> int:
-    """The versions the document's page engine laid out so far, whole or again in part."""
-    stats = dict(session_pages(_reads.owned(session.entry(doc))).stats())
+    """The versions the document's page engine (the Rust host's) laid out so far, whole or again
+    in part."""
+    stats = dict(session.rust.pages(doc).stats())
     return int(stats["full"] + stats["relaid"])
 
 
@@ -131,19 +125,13 @@ def test_a_mixed_batch_gives_the_results_each_op_gives_and_lays_out_once(box):
 
     @contextlib.contextmanager
     def counting(session, doc):
-        """What the batch costs: the editing calls the session answered and the versions the
-        page engine laid out."""
-        served, laid = _edits.served(), _laid(session, doc)
+        """What the batch costs: the versions the page engine laid out."""
+        laid = _laid(session, doc)
         yield
-        cost["served"] = {k: v - served.get(k, 0) for k, v in _edits.served().items()}
         cost["laid"] = _laid(session, doc) - laid
 
     fast = _run(box, data, counting)
-    probe = box.session(clock=CLOCK)
-    tables = sum(op["tool"] == "word_edit_table" for op in mixed(box, probe, probe.open(data, "report.docx")))
-    # Every word_edit_table op is the session's, which reads its table in Rust; the document
-    # is laid out once, after the last op.
-    assert cost["served"]["word_edit_table"] == tables, cost
+    # The document is laid out once, after the last op.
     assert cost["laid"] == 1, cost
     batch = fast["batch"]["result"]
     warnings = batch["warnings"]

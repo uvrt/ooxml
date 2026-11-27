@@ -16,14 +16,9 @@ if not hasattr(ooxml_core, "Version"):          # an ooxml-core before 0.10.0
 
 from ooxml_edit.tools import Toolbox  # noqa: E402
 
-from docx_agent.rust import reads  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
 import word_docs  # noqa: E402
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 
 @pytest.fixture(scope="module")
@@ -32,11 +27,8 @@ def toolbox():
 
 
 def _answer(toolbox, session, tool, arguments) -> dict:
-    """``tool``'s answer through the toolbox, counted served."""
-    served = reads.served().get(tool, 0)
-    answer = json.loads(json.dumps(toolbox.dispatch(session, tool, arguments).to_json()))
-    assert reads.served().get(tool, 0) == served + 1, tool
-    return answer
+    """``tool``'s answer through the toolbox."""
+    return json.loads(json.dumps(toolbox.dispatch(session, tool, arguments).to_json()))
 
 
 def _first(session, doc) -> str:
@@ -60,7 +52,6 @@ def test_a_new_version_is_handed_over_as_the_parts_that_changed(toolbox):
         assert before != _answer(toolbox, session, "word_read", {"doc": doc})
         found = _answer(toolbox, session, "find_text", {"doc": doc, "text": "Changed"})
         assert found["data"], found
-        assert session.save(doc).version in reads.owned(session.entry(doc)).handle.versions
     finally:
         session.close(doc)
 
@@ -73,7 +64,7 @@ def test_an_id_a_served_edit_deleted_is_refused_naming_it(toolbox):
         first = _first(session, doc)
         deleted = toolbox.dispatch(session, "word_delete", {"doc": doc, "target": first, "force": True})
         assert deleted.ok, deleted.to_json()
-        # an id a served edit deleted: refused by the session, worded as the view worded it (lane P2e1)
+        # an id an edit deleted: refused naming the edit (lane P2e1)
         gone = _answer(toolbox, session, "word_inspect", {"doc": doc, "target": first})
         assert f"{first} was deleted by word_delete" in gone["error"]["message"]
     finally:
