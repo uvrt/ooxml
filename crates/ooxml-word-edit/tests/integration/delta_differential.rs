@@ -159,7 +159,6 @@ fn step(editor: &Editor, rng: &mut Rng, writer: u64) -> bool {
             let command = SetCells {
                 table: Address::from(table),
                 writes: vec![CellWrite::at(rng.below(2), rng.below(2), text())],
-                stamping: rng.below(2) == 0,
                 policy,
                 accepted: None,
             };

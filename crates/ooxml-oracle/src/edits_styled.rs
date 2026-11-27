@@ -28,7 +28,7 @@ pub fn set_text_styled(editor: &Editor, caller: &Caller, package: &Package, case
             .edits
             .iter()
             .map(|e| {
-                json!({"id": e.id, "changed": e.changed, "renamed": crate::edits::renamed(&e.renamed),
+                json!({"id": e.id, "changed": e.changed, "renamed": {},
                        "created": e.created, "removed": e.removed})
             })
             .collect();

@@ -230,12 +230,7 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
     let mut made = Vec::with_capacity(placed.len());
     let mut refs = Vec::new();
     for ((placed, item), side) in placed.into_iter().zip(work).zip(sides) {
-        let inserted = inserted_range(
-            &placed.range,
-            *side,
-            &item.text,
-            &ooxml_word_model::ids::renames_text(&placed.edited.renamed),
-        );
+        let inserted = inserted_range(&placed.range, *side, &item.text);
         if let Some(name) = item.ref_name.as_ref().filter(|n| !n.is_empty()) {
             refs.push((name.clone(), inserted.clone()));
         }
@@ -243,7 +238,6 @@ fn reply(placed: Vec<Placed>, work: &[InsertItem], sides: &[Where]) -> ToolResul
         edits.push(Outcome {
             id: placed.edited.id,
             changed: placed.edited.count > 0,
-            renamed: ooxml_word_model::ids::renames_text(&placed.edited.renamed),
             ..Outcome::default()
         });
     }
@@ -333,7 +327,7 @@ fn ref_as_place(args: &WordInsertText, item: &InsertItem, place: &str, index: Op
 
 /// `inserted_range`: the id of text just inserted before or after the range `place` (its
 /// id before the insertion): where the range started or ended, `text`'s length on.
-fn inserted_range(place: &str, side: Where, text: &str, renamed: &[(String, String)]) -> String {
+fn inserted_range(place: &str, side: Where, text: &str) -> String {
     let (head, tail) = place.split_once("..").unwrap_or((place, ""));
     let anchor = if side == Where::Before || tail.is_empty() {
         head
@@ -348,10 +342,6 @@ fn inserted_range(place: &str, side: Where, text: &str, renamed: &[(String, Stri
         offsets.last()
     };
     let at: usize = pick.and_then(|o| o.parse().ok()).unwrap_or(0);
-    let paragraph = renamed
-        .iter()
-        .find(|(old, _)| old == paragraph)
-        .map_or(paragraph, |(_, new)| new.as_str());
     format!("{paragraph}@{at}:{}", at + text.chars().count())
 }
 

@@ -50,7 +50,6 @@ use crate::replacing::{Order, Replaced};
 use crate::review::space::Space;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -199,8 +198,6 @@ pub struct BlocksCopied {
     pub id: Option<String>,
     /// Every paragraph and table made, in document order.
     pub created: Vec<String>,
-    /// Ids the edit's stamping renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The ids of the blocks replaced that went (`replace:`).
     pub removed: Vec<String>,
     /// The styles imported, the bookmarks renamed.
@@ -291,7 +288,6 @@ impl CopyBlocks {
         let source_ids = source::block_ids(source, &selected);
         let docx = sink.docx()?;
         let (mut place, replaced) = destination(sink.doc(), &docx, &self.at)?;
-        let renamed = stamp_document(sink, &docx)?;
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
         let mut replaced = Replaced::begin(sink, &mut place, replaced, tracked, Order::FirstWhereFollowed)?;
         let mut stretch = Stretch::open(sink, &place, "copy_from")?;
@@ -360,7 +356,6 @@ impl CopyBlocks {
         Ok(BlocksCopied {
             id: blocks.first().cloned(),
             created: stamped.created,
-            renamed,
             removed: replaced.removed,
             warnings,
             blocks,

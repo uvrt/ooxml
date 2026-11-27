@@ -13,7 +13,6 @@ use super::part::PartReview;
 use super::space::Space;
 use crate::comments::delete::{comment_part_relationships, delete, none_left};
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::work::Id;
 use crate::{EditError, Result};
 use ooxml_word_model::docx::changes::change_groups;
@@ -27,7 +26,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(crate) struct Step {
     /// How many records it was asked to settle.
     pub(crate) count: usize,
-    /// Renames: the stamping's (old to new) and the tables a removed first row renamed.
+    /// Renames: the tables a removed first row renamed (old to new).
     pub(crate) renamed: ooxml_word_model::ids::Renames,
     /// Every id removed.
     pub(crate) removed: Vec<String>,
@@ -71,7 +70,6 @@ pub(crate) fn step(sink: &mut EditSink<'_, '_>, accept: bool, wanted: Option<&[S
     // numbering and authors left, the notes and comments referenced
     sink.read_everything();
     let known = blocks_now(&docx0);
-    let renames = stamp_document(sink, &docx0)?;
     let docx = sink.docx()?;
     let mut run = Run {
         accept,
@@ -85,7 +83,6 @@ pub(crate) fn step(sink: &mut EditSink<'_, '_>, accept: bool, wanted: Option<&[S
         authors: super::cleanup::authors_in_use(&docx),
         ids: crate::revision_ids::document_counts(&docx),
         known,
-        renames,
         count: selected.len(),
     };
     for part in &parts {
@@ -109,7 +106,6 @@ struct Run {
 /// What the step read before it changed anything.
 struct Before {
     known: Vec<super::blocks::Known>,
-    renames: ooxml_word_model::ids::Renames,
     nums: BTreeSet<i64>,
     authors: BTreeSet<String>,
     /// Every revision id's count as the step began (its renumbering of repeats after).
@@ -205,7 +201,6 @@ impl Run {
         } = self;
         let Before {
             known,
-            renames,
             nums: before_nums,
             authors,
             ids,
@@ -231,30 +226,11 @@ impl Run {
             })
             .chain(gathered.warnings.iter().cloned())
             .collect();
-        let named: BTreeSet<String> = blocks
-            .flat
-            .iter()
-            .cloned()
-            .chain(
-                blocks
-                    .flat
-                    .iter()
-                    .filter_map(|i| renames.iter().find(|(old, _)| old == i).map(|(_, new)| new.to_string())),
-            )
-            .collect();
+        let named: BTreeSet<&String> = blocks.flat.iter().collect();
         let mut removed = blocks.flat.clone();
-        removed.extend(gathered.removed_ids.iter().filter(|i| !named.contains(*i)).cloned());
-        let mut renamed: ooxml_word_model::ids::Renames = renames
-            .into_iter()
-            .filter(|(old, _)| !removed.iter().any(|r| r == old))
-            .collect();
-        for (old, new) in &blocks.tables_renamed {
-            match renamed.iter_mut().find(|(o, _)| o == old) {
-                Some(slot) => slot.1 = new.clone(),
-                None => renamed.push((old.clone(), new.clone())),
-            }
-        }
-        if !blocks.tables_renamed.is_empty() {
+        removed.extend(gathered.removed_ids.iter().filter(|i| !named.contains(i)).cloned());
+        let renamed = blocks.tables_renamed.clone();
+        if !renamed.is_empty() {
             sink.rename(blocks.tables_renamed.clone())?;
         }
         Ok(Step {

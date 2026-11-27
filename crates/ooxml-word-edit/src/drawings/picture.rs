@@ -15,9 +15,7 @@ use super::{emu, DrawingEdited, A, EMU};
 use crate::controls::{rewrite, InParagraph, Rewrite};
 use crate::names::{W, WP, WP14};
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::work::scope_above;
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::Limits;
@@ -215,10 +213,7 @@ impl InsertPicture {
         let format = image_format(&self.image)?;
         let docx = sink.docx()?;
         let place = place(sink.doc(), &docx, &self.at)?;
-        let renamed = stamp_document(sink, &docx)?;
-        let docx = sink.docx()?;
-        let id = renamed_id(&renamed, &place.id);
-        let found = crate::set_text::find(sink.doc(), &docx, &id)?;
+        let found = crate::set_text::find(sink.doc(), &docx, &place.id)?;
         let part = found.part.clone();
         let rid = sink.media(&part, &self.image, format)?;
         let number = sink.draw_drawings(1)?.first().copied().unwrap_or(1);
@@ -267,7 +262,6 @@ impl InsertPicture {
             id: format!("d:{number}"),
             changed: true,
             created: vec![format!("d:{number}")],
-            renamed,
             warnings: Vec::new(),
         })
     }

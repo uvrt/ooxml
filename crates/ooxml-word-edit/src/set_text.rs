@@ -12,7 +12,7 @@ use crate::doc::{Draw, DrawFrom, Key, WordDoc};
 use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::text::{paragraph_text, write::check_text};
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
@@ -27,7 +27,7 @@ use std::sync::Arc;
 /// Rewrite one paragraph's text.
 #[derive(Debug, Clone)]
 pub struct SetText {
-    /// The paragraph (`p:...`, `p@body/3`, a renamed id) or a cell (`t:X/c1,1`: its first
+    /// The paragraph (`p:...`, a renamed id) or a cell (`t:X/c1,1`: its first
     /// paragraph).
     pub target: ooxml_word_model::address::Address,
     /// The whole new text (`\v` is a line break, `\t` a tab). With `\n` (`\r\n` and `\r`
@@ -45,8 +45,6 @@ pub struct TextEdited {
     pub id: ooxml_word_model::ids::BlockId,
     /// Whether anything changed.
     pub changed: bool,
-    /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
     pub part: ooxml_opc::PartName,
     /// The paragraphs made for the text's later lines, in order.
@@ -176,20 +174,6 @@ impl Command<WordDoc> for SetText {
 /// [`EditError::Text`] for text the paragraph cannot hold; a refusal for a target that is
 /// not a paragraph.
 pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) -> Result<TextEdited> {
-    write_text_as(sink, target, text, true)
-}
-
-/// [`write_text`], the document stamped first when `stamping` (docx-agent's `_write_text`
-/// with `prepare`): a table filled in one pass writes its cells' text unstamped.
-///
-/// # Errors
-/// As [`write_text`].
-pub(crate) fn write_text_as(
-    sink: &mut EditSink<'_, '_>,
-    target: &str,
-    text: &str,
-    stamping: bool,
-) -> Result<TextEdited> {
     let docx = sink.docx()?;
     let found = find(sink.doc(), &docx, target)?;
     sink.read(block_key(&found.part, &found.id));
@@ -198,22 +182,12 @@ pub(crate) fn write_text_as(
         return Ok(TextEdited {
             id: found.id.into(),
             changed: false,
-            renamed: Vec::new(),
             part: found.part.into(),
             created: Vec::new(),
         });
     }
-    // judged where the paragraph was found: before this edit stamps the document
     let found_written = sink.doc().id_written(&found.part, &found.path);
-    let renamed = if stamping {
-        stamp_document(sink, &docx)?
-    } else {
-        Vec::new()
-    };
-    let id = renamed
-        .iter()
-        .find(|(old, _)| *old == found.id)
-        .map_or_else(|| found.id.clone(), |(_, new)| new.to_string());
+    let id = found.id.clone();
     let tree = sink
         .doc()
         .tree(&found.part)?
@@ -270,7 +244,6 @@ pub(crate) fn write_text_as(
     Ok(TextEdited {
         id: id.into(),
         changed: true,
-        renamed,
         part: found.part.into(),
         created: Vec::new(),
     })

@@ -132,11 +132,6 @@ pub struct WordDoc {
     /// ids given at open and not written is fresh for the whole transaction
     /// ([`WordDoc::id_written`]).
     begun: Option<WordPackage>,
-    /// Whether an edit of the transaction working on this version has stamped its document
-    /// (`stamping::stamp_document`, a no-op on a document stamped at open): a block found
-    /// after it was found stamped ([`WordDoc::id_written`]). The transaction's own, shared by
-    /// the versions it makes and begun afresh with the next.
-    stamped: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// How a run's transaction writes ([`ooxml_store::DocModel::set_up`]).
@@ -229,7 +224,6 @@ impl WordDoc {
             spaced: 0,
             as_given: false,
             begun: None,
-            stamped: Arc::default(),
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
@@ -247,11 +241,6 @@ impl WordDoc {
     fn begun_written(&self, part: &str) -> bool {
         let base = self.begun.as_ref().unwrap_or(&self.package);
         !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_)))
-    }
-
-    /// Note that an edit of the transaction stamped the document ([`WordDoc::id_written`]).
-    pub(crate) fn note_stamped(&self) {
-        self.stamped.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The package, as every reader reads it.
@@ -368,7 +357,6 @@ impl WordDoc {
             spaced: self.spaced,
             as_given: self.as_given,
             begun: self.begun.clone(),
-            stamped: Arc::clone(&self.stamped),
         }
     }
 
@@ -483,16 +471,12 @@ impl WordDoc {
     }
 
     /// Whether the id of the block at `path` of `part` (in this version) has been written.
-    /// An unwritten id counts as fresh at its block's first write: an id given at open has
-    /// been seen by no reader of the file, so an edit that writes its block keeps it whole (a
-    /// text edit does not renew its textId), as an edit that stamped the block itself kept
-    /// the pair it drew -- until an edit of the transaction has stamped its document, after
-    /// which a block found was found stamped and renews as usual.
+    /// A textId renews against the version last written: an id given at open and never
+    /// written has been seen by no reader of the file, so it stays fresh for every write of
+    /// the transaction that began with its part unwritten (a text edit keeps it whole, the
+    /// second edit of the block in that transaction too); the next transaction renews it.
     #[must_use]
     pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
-        if self.stamped.load(std::sync::atomic::Ordering::Relaxed) {
-            return true;
-        }
         let base = self.begun.as_ref().unwrap_or(&self.package);
         if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
             return true;
@@ -509,9 +493,6 @@ impl WordDoc {
     /// [`WordDoc::id_written`] of the block of `part` whose paraId is `para_id`.
     #[must_use]
     pub fn para_id_written(&self, part: &str, para_id: &str) -> bool {
-        if self.stamped.load(std::sync::atomic::Ordering::Relaxed) {
-            return true;
-        }
         let base = self.begun.as_ref().unwrap_or(&self.package);
         if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
             return true;

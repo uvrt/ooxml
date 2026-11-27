@@ -1,6 +1,6 @@
 //! Owns: one paragraph's list step as docx-agent's `ListOps` makes it -- its checks before
 //! anything changes (the messages docx-agent's refusals carry), then `_list_edit`: the
-//! stamping, the change (the numbering part's writes, then each paragraph's properties,
+//! change (the numbering part's writes, then each paragraph's properties,
 //! tracked as `w:pPrChange`s), the instances and definitions left unused removed, and the
 //! edit's end (text boxes synced, revision ids made unique, the people part).
 //!
@@ -9,7 +9,7 @@
 use super::numbering::{self as nb, LEVELS};
 use super::paragraph::{self as pp, LevelFormat};
 use super::read::{self, Place};
-use super::{ListAction, ListStep, Stamped};
+use super::{ListAction, ListStep};
 use crate::doc::Key;
 use crate::marks::clean_properties;
 use crate::names::{W, W16DU};
@@ -85,7 +85,6 @@ pub(crate) fn precheck(docx: &Docx, place: &Place, action: &ListAction) -> Resul
 /// docx-agent's refusals; when a part is not XML.
 pub(crate) fn step(
     sink: &mut EditSink<'_, '_>,
-    stamped: &mut Stamped,
     place: &Place,
     action: &ListAction,
 ) -> Result<Stepped> {
@@ -97,7 +96,7 @@ pub(crate) fn step(
     let step = match action {
         ListAction::Add { kind, level } => {
             level_range(*level)?;
-            list_edit(sink, stamped, place, found.as_ref(), |sink| {
+            list_edit(sink, place, found.as_ref(), |sink| {
                 add(sink, place, kind, *level)
             })?
         }
@@ -105,7 +104,7 @@ pub(crate) fn step(
             if found.is_none() {
                 return Ok(Stepped::Listless(id));
             }
-            list_edit(sink, stamped, place, found.as_ref(), |sink| remove(sink, place))?
+            list_edit(sink, place, found.as_ref(), |sink| remove(sink, place))?
         }
         ListAction::Level(level) => {
             level_range(*level)?;
@@ -120,7 +119,7 @@ pub(crate) fn step(
                     options: vec!["0".to_owned()],
                 });
             }
-            list_edit(sink, stamped, place, found.as_ref(), |sink| {
+            list_edit(sink, place, found.as_ref(), |sink| {
                 rewrite(sink, place, |work, p, orders| {
                     pp::set_numbering(work, p, (num_id, *level), orders)
                 })?;
@@ -130,7 +129,7 @@ pub(crate) fn step(
         ListAction::Restart(at) => {
             let list = in_list()?;
             let abstract_id = defined(&list)?;
-            let mut done = list_edit(sink, stamped, place, found.as_ref(), |sink| {
+            let mut done = list_edit(sink, place, found.as_ref(), |sink| {
                 restart(sink, place, &list, abstract_id, *at)
             })?;
             if list.from_style {
@@ -141,7 +140,7 @@ pub(crate) fn step(
         ListAction::Continue(from) => {
             let list = in_list()?;
             let target = continued(&docx, place, &id, &list, from.as_deref())?;
-            list_edit(sink, stamped, place, found.as_ref(), |sink| {
+            list_edit(sink, place, found.as_ref(), |sink| {
                 continue_list(sink, place, &list, target)
             })?
         }
@@ -156,7 +155,7 @@ pub(crate) fn step(
                 return Err(refused("start is 0 to 32767".to_owned()));
             }
             let abstract_id = defined(&list)?;
-            list_edit(sink, stamped, place, found.as_ref(), |sink| {
+            list_edit(sink, place, found.as_ref(), |sink| {
                 set_format(sink, &list, (abstract_id, level), format)
             })?
         }
@@ -170,17 +169,15 @@ fn defined(list: &Membership) -> Result<i64> {
         .ok_or_else(|| refused(format!("list instance {} names no abstract definition", list.num_id)))
 }
 
-/// docx-agent's `_list_edit`: stamp, `change`, remove what it (and the paragraph's list
+/// docx-agent's `_list_edit`: `change`, remove what it (and the paragraph's list
 /// before) left unused. The edit's end (text boxes synced, revision ids made unique) is the
 /// command's, once after its last step: no step reads what it changes.
 fn list_edit(
     sink: &mut EditSink<'_, '_>,
-    stamped: &mut Stamped,
     place: &Place,
     before: Option<&Membership>,
     change: impl FnOnce(&mut EditSink<'_, '_>) -> Result<BTreeSet<i64>>,
 ) -> Result<ListStep> {
-    let renamed = stamped.once(sink)?;
     let mut candidates = change(sink)?;
     if let Some(before) = before {
         candidates.insert(before.num_id);
@@ -193,7 +190,6 @@ fn list_edit(
         id: id.into(),
         changed: true,
         removed,
-        renamed,
         warnings: Vec::new(),
     })
 }

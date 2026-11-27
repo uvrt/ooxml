@@ -93,7 +93,6 @@ fn the_first_edit_writes_every_story_part_renames_nothing_and_reopens_with_the_s
             .run(&Caller::anonymous(), &set_text(&target, "Written."))
             .unwrap();
         assert!(done.changed, "{name}");
-        assert!(done.out.renamed.is_empty(), "{name}: {:?}", done.out.renamed);
         assert!(done.version.doc().ids().aliases().is_empty(), "{name}");
         let doc = done.version.doc();
         assert!(doc.package().unwritten().is_empty(), "{name}: every part written");

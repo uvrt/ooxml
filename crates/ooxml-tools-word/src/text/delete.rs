@@ -205,7 +205,7 @@ fn blocks(
             id: d.id,
             created: Vec::new(),
             removed: d.removed,
-            renamed: ooxml_word_model::ids::renames_text(&d.renamed),
+            renamed: Vec::new(),
             warnings: d.warnings,
         })
         .collect();
@@ -239,7 +239,7 @@ fn placed(edited: ooxml_word_edit::RangesEdited) -> Outcome {
     Outcome {
         changed: edited.count > 0,
         id: edited.id,
-        renamed: ooxml_word_model::ids::renames_text(&edited.renamed),
+        renamed: Vec::new(),
         ..Outcome::default()
     }
 }

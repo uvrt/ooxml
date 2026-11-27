@@ -105,7 +105,7 @@ impl From<ListStep> for Outcome {
             changed: step.changed,
             created: Vec::new(),
             removed: step.removed,
-            renamed: ooxml_word_model::ids::renames_text(&step.renamed),
+            renamed: Vec::new(),
             warnings: step.warnings,
         }
     }

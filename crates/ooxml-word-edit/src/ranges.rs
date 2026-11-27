@@ -15,7 +15,7 @@ use crate::names::{W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::set_text::{find, paragraph_has_annotations, Found};
 use crate::sink::{annotation_draws, EditSink, Keep, Numbered};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::text::{atoms, write::check_text};
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result};
@@ -75,8 +75,6 @@ pub struct RangesEdited {
     pub id: Option<String>,
     /// How many ranges were replaced.
     pub count: usize,
-    /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
 }
 
 /// One range to replace: its paragraph (its first and last, across paragraphs), its
@@ -302,28 +300,23 @@ fn order_plans(plans: &mut [Plan], tracked: bool) -> Result<()> {
     Ok(())
 }
 
-/// docx-agent's `_replace_ranges`: the plans ordered last first, overlaps refused, the
-/// document stamped, each paragraph's ranges replaced in one copy of it, then the people
+/// docx-agent's `_replace_ranges`: the plans ordered last first, overlaps refused, each paragraph's ranges replaced in one copy of it, then the people
 /// part, the text ids, the namespaces they need.
 fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep) -> Result<RangesEdited> {
     if plans.is_empty() {
         return Ok(RangesEdited {
             id: None,
             count: 0,
-            renamed: Vec::new(),
         });
     }
     order_plans(&mut plans, matches!(sink.policy(), RevisionPolicy::Tracked(_)))?;
     let count = plans.len();
-    let docx = sink.docx()?;
     for plan in &plans {
         sink.read(Key::block(plan.found.part.as_str(), plan.found.id.as_str()));
     }
-    let renamed = stamp_document(sink, &docx)?;
-    let first = plans.last().map(|p| {
-        let named = p.across.as_ref().map_or(&p.found.id, |a| &a.last.id);
-        renamed_id(&renamed, named)
-    });
+    let first = plans
+        .last()
+        .map(|p| p.across.as_ref().map_or(&p.found.id, |a| &a.last.id).clone());
     let mut dated: Vec<String> = Vec::new();
     let mut released: Vec<(String, Vec<String>)> = Vec::new();
     let mut gave = false;
@@ -342,8 +335,8 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
         };
         k += group.len();
         let written = match group.first() {
-            Some(plan) if plan.across.is_some() => crate::ranges_across::write_across(sink, plan, keep, &renamed)?,
-            _ => write_paragraph(sink, &group, keep, &renamed)?,
+            Some(plan) if plan.across.is_some() => crate::ranges_across::write_across(sink, plan, keep)?,
+            _ => write_paragraph(sink, &group, keep)?,
         };
         let Some(written) = written else {
             break;
@@ -376,7 +369,6 @@ fn replace_ranges(sink: &mut EditSink<'_, '_>, mut plans: Vec<Plan>, keep: Keep)
     Ok(RangesEdited {
         id: first,
         count,
-        renamed,
     })
 }
 
@@ -394,7 +386,6 @@ fn write_paragraph(
     sink: &mut EditSink<'_, '_>,
     group: &[&Plan],
     keep: Keep,
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<Option<Written>> {
     let Some(head) = group.first() else { return Ok(None) };
     let (part, path) = (head.found.part.clone(), head.found.path.clone());
@@ -436,8 +427,7 @@ fn write_paragraph(
             });
         }
     }
-    let id = renamed_id(renamed, &head.found.id);
-    let mut keys = vec![crate::set_text::block_key(&part, &id)];
+    let mut keys = vec![crate::set_text::block_key(&part, &head.found.id)];
     // the revision ids it gives, or takes away, are the annotation ids in use, which a
     // tracked edit numbers from (and an edit renumbering a repeated id reads)
     if paragraph_has_annotations(element) || paragraph_has_annotations(&new) {
@@ -445,16 +435,6 @@ fn write_paragraph(
     }
     sink.replace_drawing(&part, &path, new, keys, draws)?;
     Ok(Some(written))
-}
-
-pub(crate) fn renamed_id(
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
-    id: &str,
-) -> String {
-    renamed
-        .iter()
-        .find(|(old, _)| old == id)
-        .map_or_else(|| id.to_owned(), |(_, new)| new.to_string())
 }
 
 /// docx-agent's `insert_text` inside an edit: `text` put at the position `at`.

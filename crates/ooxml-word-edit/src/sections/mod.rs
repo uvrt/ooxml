@@ -21,7 +21,6 @@ use crate::doc::Key;
 use crate::names::W16DU;
 use crate::policy::RevisionPolicy;
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
@@ -182,8 +181,6 @@ pub struct SectionEdited {
     pub created: Vec<String>,
     /// Ids it removed.
     pub removed: Vec<String>,
-    /// Ids renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What it turned on that the caller did not ask for.
     pub warnings: Vec<String>,
 }
@@ -227,7 +224,6 @@ impl SetSection {
             None => Key::part(main.as_str()),
         };
         sink.read(key);
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let tree = sink
             .doc()
             .tree(&main)?
@@ -279,7 +275,6 @@ impl SetSection {
         Ok(SectionEdited {
             id: Some(id),
             changed: true,
-            renamed,
             ..SectionEdited::default()
         })
     }

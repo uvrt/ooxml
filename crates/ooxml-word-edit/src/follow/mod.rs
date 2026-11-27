@@ -99,12 +99,8 @@ impl CopyFollowed {
 pub struct Followed {
     /// The sample's id as located.
     pub sample: String,
-    /// Its id now (after stamping, where it is in this document).
-    pub sample_now: String,
     /// Each copy, in the order asked.
     pub copies: Vec<CopyFollowed>,
-    /// Ids stamping renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The notes and warnings.
     pub warnings: Vec<String>,
 }

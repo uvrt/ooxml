@@ -52,7 +52,6 @@ use crate::policy::{RevisionPolicy, Stamp};
 use crate::props::PropertyTracker;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::units::Twips;
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
@@ -177,8 +176,6 @@ pub struct TableEdit {
     pub id: ooxml_word_model::ids::BlockId,
     /// Whether the edit changed the table (a keep already as asked does not).
     pub changed: bool,
-    /// Ids renamed (stamping, by the first edit), old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What it did that the caller did not ask for.
     pub warnings: Vec<String>,
 }
@@ -508,9 +505,7 @@ impl FormatTable<'_> {
         self.check(&docx, &found)?;
         let room = room_for(sink.doc(), &docx, &found);
         sink.read(block_key(&found.part, &found.id));
-        // keeps first in the call are planned before the document is stamped (docx-agent's
-        // `_write_keeps` stamps only what it writes); a keep already as asked, alone, writes
-        // nothing at all
+        // a keep already as asked, alone, writes nothing at all
         let keeps_first = matches!(self.formats.first(), Some(TableFormat::Keeps { .. }));
         let mut plans = if keeps_first {
             self.keep_plans(&docx, &found)?
@@ -521,7 +516,6 @@ impl FormatTable<'_> {
             let edits = plans.into_iter().flatten().map(|p| TableEdit {
                 id: found.id.clone().into(),
                 changed: false,
-                renamed: Vec::new(),
                 warnings: p.write.warnings,
             });
             return Ok(TableFormatted {
@@ -529,14 +523,6 @@ impl FormatTable<'_> {
                 pages: None,
             });
         }
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let (docx, found) = if renamed.is_empty() {
-            (docx, found)
-        } else {
-            let docx = sink.docx()?;
-            let found = find_table(sink.doc(), &docx, self.table.as_str())?;
-            (docx, found)
-        };
         if !keeps_first {
             plans = self.keep_plans(&docx, &found)?;
         }
@@ -574,19 +560,17 @@ impl FormatTable<'_> {
         if new.as_ref() != element.as_ref() {
             write(sink, &found, &id, new, &written)?;
         }
-        let edits = self.outcomes((written.warnings, &unchanged), &plans, &id, &renamed);
+        let edits = self.outcomes((written.warnings, &unchanged), &plans, &id);
         Ok(TableFormatted { edits, pages: None })
     }
 
-    /// Each edit's outcome: the table's id after them, the renames (the first edit's), its
-    /// warnings -- a released last row's said with that id -- and whether it changed the
+    /// Each edit's outcome: the table's id after them, its warnings -- a released last row's said with that id -- and whether it changed the
     /// table (a keep already as asked did not).
     fn outcomes(
         &self,
         (warnings, unchanged): (Vec<Vec<String>>, &[bool]),
         plans: &[Option<KeepPlan>],
         id: &str,
-        renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
     ) -> Vec<TableEdit> {
         warnings
             .into_iter()
@@ -605,7 +589,6 @@ impl FormatTable<'_> {
                 TableEdit {
                     id: id.to_owned().into(),
                     changed: !fits && (!matches!(format, TableFormat::Keeps { .. }) || kept),
-                    renamed: if k == 0 { renamed.to_vec() } else { Vec::new() },
                     warnings,
                 }
             })

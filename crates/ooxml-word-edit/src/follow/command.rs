@@ -12,7 +12,6 @@ use super::{
 use crate::policy::RevisionPolicy;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::tables::tracker::TableTracker;
 use crate::tables::{write, Found, Written};
 use crate::work::{scope_above, Work};
@@ -223,29 +222,14 @@ impl Command<WordDoc> for FollowSample {
         if self.source.is_none() {
             sink.read(block_key(&sample.part, &sample.id));
         }
-        let renamed = stamp_document(&mut sink, &docx)?;
-        let renamed_to = |id: &str| {
-            renamed
-                .iter()
-                .find(|(old, _)| old == id)
-                .map_or_else(|| id.to_owned(), |(_, new)| new.to_string())
-        };
-        let sample_now = if self.source.is_none() {
-            renamed_to(&sample.id)
-        } else {
-            sample.id.clone()
-        };
         let mut out = Vec::new();
         for (asked, copy) in &copies {
-            let id = renamed_to(&copy.id);
-            out.push(self.follow_one(&mut sink, (asked, &id), &sample_now, &mut warnings)?);
+            out.push(self.follow_one(&mut sink, (asked, &copy.id), &sample.id, &mut warnings)?);
         }
         crate::after::after_edit(&mut sink)?;
         Ok(Followed {
             sample: sample.id,
-            sample_now,
             copies: out,
-            renamed,
             warnings,
         })
     }

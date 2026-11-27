@@ -9,7 +9,7 @@
 
 use crate::doc::{Draw, DrawFrom, Key};
 use crate::names::W14;
-use crate::ranges::{renamed_id, stretch, Plan, Written};
+use crate::ranges::{stretch, Plan, Written};
 use crate::set_text::{block_key, paragraph_has_annotations};
 use crate::sink::{annotation_draws, EditSink, Keep};
 use crate::stamping::w14_prefix;
@@ -31,7 +31,7 @@ fn content_index(work: &Work, root: Id, child: Id) -> Option<u32> {
     None
 }
 
-/// The keys the stretch at `paths` of `root` (renamed by stamping) is written under, made
+/// The keys the stretch at `paths` of `root` is written under, made
 /// `nodes`: its paragraphs' blocks, and the annotation ids in use when it held revision
 /// records or does now (the ids a tracked edit numbers from, as `set_text` declares them).
 fn stretch_keys(
@@ -39,12 +39,11 @@ fn stretch_keys(
     part: &str,
     (paths, root): (&[Box<[u32]>], &Arc<Element>),
     nodes: &[Node],
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Vec<Key> {
     let mut keys: Vec<Key> = paths
         .iter()
         .filter_map(|p| docx.part(part).and_then(|s| s.ids.paragraph_at(p)))
-        .map(|p| block_key(part, &renamed_id(renamed, &p.id)))
+        .map(|p| block_key(part, &p.id))
         .collect();
     let annotated = |n: &Node| matches!(n, Node::Element(e) if paragraph_has_annotations(e));
     if nodes.iter().any(annotated)
@@ -66,7 +65,6 @@ pub(crate) fn write_across(
     sink: &mut EditSink<'_, '_>,
     plan: &Plan,
     keep: Keep,
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
 ) -> Result<Option<Written>> {
     let Some(across) = plan.across.as_ref() else {
         return Ok(None);
@@ -121,14 +119,14 @@ pub(crate) fn write_across(
         }
     }
     let docx = sink.docx()?;
-    let keys = stretch_keys(&docx, &part, (&across.paths, tree.root()), &nodes, renamed);
+    let keys = stretch_keys(&docx, &part, (&across.paths, tree.root()), &nodes);
     // docx-agent: aliases naming a paragraph the edit joined away go with it
     let gone: Vec<String> = paragraphs
         .iter()
         .zip(&across.paths)
         .filter(|(p, _)| content_index(&work, root, **p).is_none())
         .filter_map(|(_, path)| docx.part(&part).and_then(|s| s.ids.paragraph_at(path)))
-        .map(|p| renamed_id(renamed, &p.id))
+        .map(|p| p.id)
         .collect();
     sink.splice_children(
         &part,

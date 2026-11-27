@@ -50,7 +50,7 @@ impl From<CellEdit> for Outcome {
             changed: true,
             created: edit.created,
             removed: edit.removed,
-            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
+            renamed: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -165,7 +165,6 @@ pub(super) fn plan<'a, 'e>(
     let command = KeepingRecord(SetCells {
         table: ooxml_word_model::address::Address::parse(&args.table),
         writes,
-        stamping: true,
         policy: policy(editing),
         accepted: (accepted.table.active() || accepted.table.rows_active())
             .then(|| std::sync::Arc::new(accepted.table.clone())),

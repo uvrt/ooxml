@@ -88,7 +88,6 @@ fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditEr
     let command = SetCells {
         table: table(editor),
         writes: vec![CellWrite::at(row, column, "new".to_owned())],
-        stamping: false,
         policy: RevisionPolicy::Untracked,
         accepted: None,
     };

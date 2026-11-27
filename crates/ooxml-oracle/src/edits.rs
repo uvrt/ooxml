@@ -249,7 +249,7 @@ fn insert_paragraph(editor: &Editor, caller: &Caller, package: &Package, case: &
     };
     editor.run(caller, &command).map(|done| {
         let out = &done.out;
-        let result = json!({"id": out.id, "changed": true, "renamed": renamed(&out.renamed), "created": [out.id]});
+        let result = json!({"id": out.id, "changed": true, "renamed": {}, "created": [out.id]});
         report(package, &done, result)
     })
 }
@@ -264,7 +264,7 @@ fn set_paragraph_style(editor: &Editor, caller: &Caller, package: &Package, case
         policy: policy(case),
     };
     editor.run(caller, &command).map(|done| {
-        let result = json!({"id": done.out.id, "renamed": renamed(&done.out.renamed)});
+        let result = json!({"id": done.out.id, "renamed": {}});
         report(package, &done, result)
     })
 }
@@ -280,9 +280,9 @@ fn delete(editor: &Editor, caller: &Caller, package: &Package, case: &Value) -> 
     editor.run(caller, &command).map(|done| {
         let out = &done.out;
         let result = if out.warnings.is_empty() {
-            json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed})
+            json!({"id": out.id, "renamed": {}, "removed": out.removed})
         } else {
-            json!({"id": out.id, "renamed": renamed(&out.renamed), "removed": out.removed, "warnings": out.warnings})
+            json!({"id": out.id, "renamed": {}, "removed": out.removed, "warnings": out.warnings})
         };
         report(package, &done, result)
     })
@@ -309,7 +309,6 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
             case.get("target").and_then(Value::as_str).unwrap_or("").to_owned(),
         ),
         writes,
-        stamping: false,
         policy: policy(case),
         accepted: None,
     });
@@ -318,17 +317,10 @@ fn set_cells(editor: &Editor, caller: &Caller, package: &Package, case: &Value) 
             .out
             .edits
             .iter()
-            .map(|e| json!({"id": e.id, "renamed": renamed(&e.renamed), "created": e.created, "removed": e.removed}))
+            .map(|e| json!({"id": e.id, "renamed": {}, "created": e.created, "removed": e.removed}))
             .collect();
         report(package, &done, json!({"ids": done.out.ids, "edits": edits}))
     })
-}
-
-/// Renames as the harness writes them.
-pub(crate) fn renamed(
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
-) -> Map<String, Value> {
-    renamed.iter().map(|(old, new)| (old.to_string(), json!(new))).collect()
 }
 
 /// A replace's find: plain text (white space collapsed or not), or a Python regular
@@ -346,25 +338,15 @@ fn pattern(case: &Value, find: &str, with: &str) -> Result<Arc<dyn Pattern>, Str
 
 /// A set_text's result, as the harness writes docx-agent's.
 fn text_result(out: &TextEdited, lines: bool) -> Value {
-    let renamed: Map<String, Value> = out
-        .renamed
-        .iter()
-        .map(|(old, new)| (old.to_string(), json!(new)))
-        .collect();
     if lines {
-        return json!({"id": out.id, "changed": out.changed, "renamed": renamed, "created": out.created});
+        return json!({"id": out.id, "changed": out.changed, "renamed": {}, "created": out.created});
     }
-    json!({"id": out.id, "changed": out.changed, "renamed": renamed})
+    json!({"id": out.id, "changed": out.changed, "renamed": {}})
 }
 
 /// A range edit's result.
 fn ranges_result(out: &RangesEdited) -> Value {
-    let renamed: Map<String, Value> = out
-        .renamed
-        .iter()
-        .map(|(old, new)| (old.to_string(), json!(new)))
-        .collect();
-    json!({"id": out.id, "count": out.count, "renamed": renamed})
+    json!({"id": out.id, "count": out.count, "renamed": {}})
 }
 
 /// What a case reports.

@@ -31,7 +31,7 @@ impl From<ooxml_word_edit::FieldEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: Vec::new(),
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             // docx-agent's `outcome` notes each of an edit's `unknown` after its warnings
             warnings: out
                 .warnings
@@ -49,7 +49,7 @@ impl From<ooxml_word_edit::LinkEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: out.removed,
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             warnings: out.warnings,
         }
     }

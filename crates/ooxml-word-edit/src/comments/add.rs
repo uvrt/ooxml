@@ -29,7 +29,6 @@ use crate::doc::WordDoc;
 use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::comments::comments;
@@ -70,8 +69,6 @@ pub struct AddComments {
 pub struct CommentMade {
     /// The new comment (`c:<durableId>`).
     pub id: String,
-    /// Ids the stamping before it renamed, old to new (an added comment's).
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The thread resolved after a reply, when asked.
     pub resolved: Option<CommentEdited>,
 }
@@ -136,8 +133,6 @@ impl AddComments {
 
     /// A new thread on `anchored`.
     fn add(&self, sink: &mut EditSink<'_, '_>, anchored: &Anchor, text: &str) -> Result<CommentMade> {
-        let docx = sink.docx()?;
-        let renamed = stamp_document(sink, &docx)?;
         let (id, _) = sink.marker_id()?;
         let docx = sink.docx()?;
         let reference = crate::builtin::ensure(sink, "annotation reference", "character")?;
@@ -147,7 +142,6 @@ impl AddComments {
         let made = self.write(sink, space, (id, text), None)?;
         Ok(CommentMade {
             id: made,
-            renamed,
             resolved: None,
         })
     }
@@ -161,8 +155,6 @@ impl AddComments {
         text: &str,
         resolve: bool,
     ) -> Result<CommentMade> {
-        let docx = sink.docx()?;
-        stamp_document(sink, &docx)?;
         let docx = sink.docx()?;
         let listed = comments(&docx);
         let root = find(&listed, root_id)?;
@@ -198,7 +190,6 @@ impl AddComments {
         };
         Ok(CommentMade {
             id: made,
-            renamed: Vec::new(),
             resolved,
         })
     }

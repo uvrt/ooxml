@@ -56,7 +56,7 @@ pub(crate) struct Planned<'a> {
 }
 
 /// What a tracked move did: each block's id where it is now, the copies made and the
-/// renames (the stamping's, then each copy's).
+/// renames (each moved block to its copy).
 #[derive(Default)]
 pub(crate) struct Done {
     pub(crate) moved: Vec<String>,
@@ -84,14 +84,12 @@ impl Records {
 }
 
 impl MoveBlocks {
-    /// The blocks moved as docx-agent moves them under `tracking`, `renamed` the
-    /// stamping's renames.
+    /// The blocks moved as docx-agent moves them under `tracking`.
     pub(crate) fn move_tracked(
         &self,
         sink: &mut EditSink<'_, '_>,
         tracking: &Tracking,
         plan: &Planned<'_>,
-        renamed: ooxml_word_model::ids::Renames,
     ) -> Result<Done> {
         let part = plan.part;
         let path_error = || EditError::no_element(part.to_owned());
@@ -104,15 +102,12 @@ impl MoveBlocks {
         let (mut work, parent, stretch, nodes) = stretch_of(root, plan).ok_or_else(path_error)?;
         let outside = outside_blocks(root, &parent, stretch);
         let (&target, moving) = nodes.split_last().ok_or_else(path_error)?;
-        let mut done = Done {
-            renamed,
-            ..Done::default()
-        };
+        let mut done = Done::default();
         let mut records = Records::default();
         let mut previous: Option<Id> = None;
         for ((&node, id), &tracked) in moving.iter().zip(plan.ids).zip(plan.tracked) {
             let (beside, side_after) = previous.map_or((target, self.after.is_some()), |p| (p, true));
-            let id = crate::ranges::renamed_id(&done.renamed, id);
+            let id = id.clone();
             if node == beside {
                 return Err(EditError::Refused("a block cannot move beside itself".to_owned()));
             }
@@ -147,7 +142,7 @@ impl MoveBlocks {
                 moved.delete_and_insert(sink, tracking, &mut work, &mut records, plan.story)?;
             }
             let new = copy_id(&work, copy, plan.story).ok_or_else(path_error)?;
-            merge(&mut done.renamed, (id.into(), new.clone().into()));
+            done.renamed.push((id.into(), new.clone().into()));
             done.created.push(new.clone());
             done.moved.push(new);
             previous = Some(copy);
@@ -158,13 +153,7 @@ impl MoveBlocks {
         keys.push(Key::Annotations);
         let count = (stretch.1 - stretch.0) as usize + 1;
         sink.splice_children(part, (&parent, stretch.0 as usize, count), built, keys, draws)?;
-        let aliases: ooxml_word_model::ids::Renames = done
-            .renamed
-            .iter()
-            .filter(|(_, new)| done.created.iter().any(|c| c == new))
-            .cloned()
-            .collect();
-        sink.rename(aliases)?;
+        sink.rename(done.renamed.clone())?;
         declare(sink, part, records.dated)?;
         sink.ensure_w14(part, false, &[])?;
         let gave = records.numbered.is_some_and(|n| n.to > n.from);
@@ -202,17 +191,6 @@ fn place(work: &mut Work, beside: Id, after: bool, node: Id) {
         work.add_next(beside, node);
     } else {
         work.add_previous(beside, node);
-    }
-}
-
-/// `renamed` updated as a dict is: a key already there keeps its place.
-fn merge(
-    renamed: &mut ooxml_word_model::ids::Renames,
-    (old, new): (ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId),
-) {
-    match renamed.iter_mut().find(|(o, _)| *o == old) {
-        Some(found) => found.1 = new,
-        None => renamed.push((old, new)),
     }
 }
 

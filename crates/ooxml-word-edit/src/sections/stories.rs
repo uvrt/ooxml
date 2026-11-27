@@ -16,7 +16,6 @@ use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::review::xml::{insert_in_order, make};
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::text::write::{check_text, make_run};
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -285,7 +284,6 @@ fn add_story(
         )));
     }
     crate::builtin::resolve(&docx, which, "paragraph")?;
-    let renamed = stamp_document(sink, &docx)?;
     let style = crate::builtin::ensure(sink, which, "paragraph")?;
     let mut root = story_root(which, &style, text)?;
     let mut dated = false;
@@ -322,7 +320,6 @@ fn add_story(
         id: Some(story.clone()),
         changed: true,
         created: vec![story, paragraph],
-        renamed,
         removed: Vec::new(),
         warnings,
     })
@@ -371,19 +368,14 @@ impl SetStoryText {
                 steps.push(SectionEdited {
                     id: Some(done.id.to_string()),
                     changed: done.changed,
-                    renamed: done.renamed.clone(),
                     ..SectionEdited::default()
                 });
-                let mut renamed = done.renamed;
                 for extra in ids.iter().skip(1) {
-                    let target = crate::ranges::renamed_id(&renamed, extra);
-                    let gone = crate::delete_write::delete(&mut *sink, &target)?;
-                    renamed.extend(gone.renamed.clone());
+                    let gone = crate::delete_write::delete(&mut *sink, extra)?;
                     steps.push(SectionEdited {
                         id: gone.id,
                         changed: true,
                         removed: gone.removed,
-                        renamed: gone.renamed,
                         ..SectionEdited::default()
                     });
                 }
@@ -413,7 +405,6 @@ impl SetStoryText {
                 id: Some(done.id.to_string()),
                 changed: true,
                 created: vec![done.id.to_string()],
-                renamed: done.renamed,
                 ..SectionEdited::default()
             });
             last = done.id.to_string();
@@ -454,10 +445,7 @@ impl LinkToPrevious {
             });
         };
         let story = reference_part(sink.doc(), &docx, &rid).and_then(|p| docx.part(&p).map(|s| (p, s.story.clone())));
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        // the section by the id it has once stamped, as docx-agent reports it
-        let stamped = find_section(sink.doc(), &*sink.docx()?, &self.section)?;
-        let canonical = super::canonical(sink.doc(), &stamped, &self.section);
+        let canonical = super::canonical(sink.doc(), &found, &self.section);
         let (main, mut work) = sect_work(&*sink, &found)?;
         let sect = work.root();
         if let Some(node) = own_reference(&work, sect, self.story.part.as_str(), self.story.kind.as_str()) {
@@ -472,7 +460,6 @@ impl LinkToPrevious {
         Ok(SectionEdited {
             id: Some(canonical),
             changed: true,
-            renamed,
             removed,
             ..SectionEdited::default()
         })
@@ -525,7 +512,6 @@ impl UnlinkFromPrevious {
                 "",
             );
         };
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let tree = sink
             .doc()
             .tree(&source)?
@@ -554,7 +540,6 @@ impl UnlinkFromPrevious {
             id: Some(story.story.clone()),
             changed: true,
             created,
-            renamed,
             ..SectionEdited::default()
         })
     }

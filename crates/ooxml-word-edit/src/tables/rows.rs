@@ -29,7 +29,7 @@ use crate::policy::{RevisionPolicy, Stamp};
 use crate::review::xml::{find_path, make, set_attr};
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::table_delete::{relocates_past_table, row_fate, track_delete_rows, Fate};
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
@@ -121,8 +121,6 @@ pub struct TableChanged {
     pub created: Vec<String>,
     /// Ids removed.
     pub removed: Vec<String>,
-    /// Ids renamed (stamping), old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What it did that the caller did not ask for.
     pub warnings: Vec<String>,
     /// Nothing changed (the cells merged already, a split into one cell).
@@ -361,15 +359,13 @@ impl EditTable {
         if let Some(unchanged) = self.unchanged(&found)? {
             return Ok(unchanged);
         }
-        // the row's id as it was named before stamping (docx-agent's `entry.rows`)
+        // the row's id (docx-agent's `entry.rows`)
         let old_row = docx
             .part(&found.part)
             .and_then(|p| p.ids.table_at(&found.path))
             .and_then(|t| t.rows.get(index).map(|r| r.1.clone()))
             .unwrap_or_default();
         sink.read(block_key(&found.part, &found.id));
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let docx = sink.docx()?;
         let story = docx.part(&found.part).map(|p| p.story.clone()).unwrap_or_default();
         let id = docx
             .part(&found.part)
@@ -420,7 +416,6 @@ impl EditTable {
                 super::split::split_cell(sink, &mut held, split, orders)?
             }
         };
-        out.renamed = renamed;
         out.table = sink
             .docx()?
             .part(&held.found.part)

@@ -62,7 +62,7 @@ impl From<TableChanged> for Outcome {
             changed: !edit.unchanged,
             created: edit.created,
             removed: edit.removed,
-            renamed: ooxml_word_model::ids::renames_text(&edit.renamed),
+            renamed: Vec::new(),
             warnings: edit.warnings,
         }
     }

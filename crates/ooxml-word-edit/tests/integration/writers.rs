@@ -127,7 +127,6 @@ fn cells(rng: &mut Rng, writer: u64) -> SetCells {
             rng.below(2),
             format!("{}\n{}", WORDS[rng.below(WORDS.len())], WORDS[rng.below(4)]),
         )],
-        stamping: false,
         policy: policy(rng, writer),
         accepted: None,
     }

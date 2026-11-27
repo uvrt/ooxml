@@ -87,13 +87,10 @@ impl InsertCaption<'_> {
         }
         let mut created = vec![inserted.id.to_string()];
         created.extend(made.created);
-        let mut renamed = inserted.renamed;
-        renamed.extend(made.renamed);
         Ok(FieldEdited {
             id: Some(inserted.id.to_string()),
             changed: true,
             created,
-            renamed,
             unknown: made.unknown,
             ..FieldEdited::default()
         })
@@ -127,7 +124,7 @@ impl InsertCaption<'_> {
             id: id.to_owned(),
             offset: 0,
         };
-        super::insert::put_back(&mut *sink, &work, (&place, false), tracked, &[])
+        super::insert::put_back(&mut *sink, &work, (&place, false), tracked)
     }
 }
 

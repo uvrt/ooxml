@@ -13,7 +13,6 @@ use crate::controls::Rewrite;
 use crate::names::{WP, WP14};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -78,7 +77,6 @@ impl Command<WordDoc> for FloatDrawing {
             return Ok(out);
         }
         let mut sink = untracked(tx);
-        let renamed = stamp_document(&mut sink, &docx)?;
         let heights = all_heights(&mut sink)?;
         let docx = sink.docx()?;
         let drawing = located(&docx, &self.drawing)?;
@@ -96,7 +94,6 @@ impl Command<WordDoc> for FloatDrawing {
         Ok(DrawingEdited {
             id: self.drawing.clone(),
             changed: true,
-            renamed,
             warnings: tracked(&self.policy)
                 .then(|| FLOAT_UNTRACKED.to_owned())
                 .into_iter()
@@ -215,7 +212,6 @@ impl Command<WordDoc> for InlineDrawing {
             });
         }
         let mut sink = untracked(tx);
-        let renamed = stamp_document(&mut sink, &docx)?;
         let docx = sink.docx()?;
         let drawing = located(&docx, &self.drawing)?;
         let id = self.drawing.clone();
@@ -250,7 +246,6 @@ impl Command<WordDoc> for InlineDrawing {
         Ok(DrawingEdited {
             id: self.drawing.clone(),
             changed: true,
-            renamed,
             warnings: tracked(&self.policy)
                 .then(|| INLINE_UNTRACKED.to_owned())
                 .into_iter()
@@ -306,7 +301,6 @@ impl Command<WordDoc> for SetDrawing {
         let docx = tx.doc().docx()?;
         self.check(&docx)?;
         let mut sink = untracked(tx);
-        let renamed = stamp_document(&mut sink, &docx)?;
         let heights = if self.values.as_ref().is_some_and(|v| v.z_order.is_some()) {
             all_heights(&mut sink)?
         } else {
@@ -330,7 +324,6 @@ impl Command<WordDoc> for SetDrawing {
         Ok(DrawingEdited {
             id: self.drawing.clone(),
             changed: true,
-            renamed,
             warnings: (set && tracked(&self.policy))
                 .then(|| SET_UNTRACKED.to_owned())
                 .into_iter()

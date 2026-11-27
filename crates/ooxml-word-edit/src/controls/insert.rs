@@ -13,10 +13,8 @@ use super::{rewrite, ControlEdited, InParagraph, Rewrite, CONTENT_TRACKED};
 use crate::address_keys::names_by_id;
 use crate::names::{W, W14};
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::review::xml::make;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::text::write::{check_text, make_run};
 use crate::text_range::{range, Span};
 use crate::work::{Id, Work};
@@ -111,15 +109,13 @@ impl InsertControl {
         if !by_id {
             sink.read_everything();
         }
-        let renamed = stamp_document(sink, &docx)?;
-        let docx = sink.docx()?;
         // the number is unlike every control's: read by condition, a control given it
         // meanwhile
         let number = next_number(&docx);
         if by_id {
             sink.read_where(Arc::new(NumbersControl { number }));
         }
-        let found = crate::set_text::find(sink.doc(), &docx, &renamed_id(&renamed, &paragraph))?;
+        let found = crate::set_text::find(sink.doc(), &docx, &paragraph)?;
         let at = InParagraph {
             part: found.part,
             path: found.path,
@@ -157,7 +153,6 @@ impl InsertControl {
             id: Some(id.clone()),
             created: vec![id],
             removed: Vec::new(),
-            renamed,
             warnings,
         })
     }

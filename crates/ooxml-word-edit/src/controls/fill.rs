@@ -19,7 +19,6 @@ use crate::fields::{day_in_picture, format_date, Day};
 use crate::names::{W, W14};
 use crate::policy::RevisionPolicy;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::text::write::{check_text, make_run};
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -246,8 +245,6 @@ impl FillControl {
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<ControlEdited> {
         let docx = sink.docx()?;
         let planned = self.plan(sink.doc(), &docx)?;
-        let renamed = stamp_document(sink, &docx)?;
-        let docx = sink.docx()?;
         let found = located(&docx, &self.control)?;
         let part = docx
             .part(&found.part)
@@ -270,7 +267,6 @@ impl FillControl {
         }
         Ok(ControlEdited {
             id: Some(self.control.clone()),
-            renamed,
             warnings: planned.note.into_iter().collect(),
             ..ControlEdited::default()
         })

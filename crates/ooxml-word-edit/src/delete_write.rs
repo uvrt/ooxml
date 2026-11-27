@@ -8,17 +8,15 @@
 //! Must not: write but through the sink, or touch children outside the stretch.
 
 use crate::delete::{
-    declare, draws_of, editable, join_path, kept_renames, own_insertion, plan, stretch_keys, stretch_paths,
+    declare, draws_of, editable, join_path, forget_removed, own_insertion, plan, stretch_keys, stretch_paths,
     BlockDeleted, Planned,
 };
 use crate::doc::Key;
 use crate::marks::{delete_mark, mark, mark_record, take_properties};
 use crate::names::{W, W14};
 use crate::policy::{RevisionPolicy, Stamp, Tracking};
-use crate::ranges::renamed_id;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::table_delete::{block_sibling, drop_separator, own_table, separator_of};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
@@ -52,7 +50,7 @@ pub(crate) fn delete(sink: &mut EditSink<'_, '_>, target: &str) -> Result<BlockD
         if own_insertion(&work, work.root(), &tracking.author) {
             return outright(sink, &docx, planned, None);
         }
-        return tracked(sink, &docx, &planned, &tracking);
+        return tracked(sink, &planned, &tracking);
     }
     let separator = separator(tree.root(), &docx, &planned, &tracking.author);
     if own_table(&work, work.root(), &tracking.author) {
@@ -108,7 +106,7 @@ fn outright(
 ) -> Result<BlockDeleted> {
     let part = planned.block.part.clone();
     let path_error = || EditError::no_element(part.clone());
-    let mut renamed = kept_renames(sink, docx, &planned.removed)?;
+    forget_removed(sink, &planned.removed)?;
     let mut removed = planned.removed;
     let tree = sink
         .doc()
@@ -150,7 +148,6 @@ fn outright(
     if let (Some((_, id)), Some(&paragraph)) = (&separator, found.get(1)) {
         if drop_separator(&mut work, paragraph) {
             removed.push(id.clone());
-            renamed.retain(|(old, _)| old != id);
         }
     }
     let nodes = work.build_content(work.root()).ok_or_else(path_error)?;
@@ -160,7 +157,7 @@ fn outright(
     sink.release(&part, &released)?;
     Ok(BlockDeleted {
         id: None,
-        renamed,
+        renamed: Vec::new(),
         removed,
         part: part.into(),
         warnings: Vec::new(),
@@ -209,11 +206,10 @@ fn below(work: &Work, node: Id, ancestor: Id) -> bool {
 }
 
 /// The tracked deletion of a paragraph that is not wholly one's own insertion.
-fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking: &Tracking) -> Result<BlockDeleted> {
+fn tracked(sink: &mut EditSink<'_, '_>, planned: &Planned, tracking: &Tracking) -> Result<BlockDeleted> {
     let block = &planned.block;
     let part = block.part.clone();
     let path_error = || EditError::no_element(part.clone());
-    let renamed = stamp_document(sink, docx)?;
     let tree = sink
         .doc()
         .tree(&part)?
@@ -267,8 +263,8 @@ fn tracked(sink: &mut EditSink<'_, '_>, docx: &Docx, planned: &Planned, tracking
     sink.people(gave.then_some(tracking.author.as_str()), Some(tracking.author.as_str()))?;
     sink.release(&part, &wrote.released)?;
     Ok(BlockDeleted {
-        id: Some(renamed_id(&renamed, &block.id)),
-        renamed,
+        id: Some(block.id.clone()),
+        renamed: Vec::new(),
         removed: Vec::new(),
         part: part.into(),
         warnings: Vec::new(),

@@ -23,7 +23,6 @@ use crate::policy::RevisionPolicy;
 use crate::ranges::stretch_opening;
 use crate::set_text::block_key;
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 use ooxml_store::{Command, Txn};
@@ -47,7 +46,8 @@ pub struct DeleteBlock {
 pub struct BlockDeleted {
     /// The block's id when it stays (a tracked deletion), `None` when it went.
     pub id: Option<String>,
-    /// Ids the edit's stamping renamed, old to new, in the order made (but the removed).
+    /// Ids the edit renamed, old to new, in the order made (a table named after its new
+    /// first row).
     pub renamed: ooxml_word_model::ids::Renames,
     /// The ids of the blocks that went: the block's, a table's paragraphs'.
     pub removed: Vec<String>,
@@ -365,19 +365,12 @@ pub(crate) fn stretch_keys(docx: &Docx, part: &str, parent: &[u32], stretch: (u3
         .collect()
 }
 
-/// The stamping's renames but those of the blocks that went.
-pub(crate) fn kept_renames(
-    sink: &mut EditSink<'_, '_>,
-    docx: &Docx,
-    removed: &[String],
-) -> Result<ooxml_word_model::ids::Renames> {
-    let renamed = stamp_document(sink, docx)?;
-    // docx-agent: the aliases of the blocks that go go with them
-    sink.forget_aliases(removed)?;
-    Ok(renamed
-        .into_iter()
-        .filter(|(old, _)| !removed.iter().any(|r| r == old))
-        .collect())
+/// The aliases of the blocks that go, gone with them (docx-agent's).
+///
+/// # Errors
+/// When the sink refuses the change.
+pub(crate) fn forget_removed(sink: &mut EditSink<'_, '_>, removed: &[String]) -> Result<()> {
+    sink.forget_aliases(removed)
 }
 
 /// The draws a rewritten stretch's revision records need.

@@ -40,7 +40,7 @@ pub fn insert_markdown(editor: &Editor, caller: &Caller, package: &Package, case
     editor.run(caller, &command).map(|done| {
         let out = &done.out;
         let result = json!({"id": out.first, "changed": out.changed, "created": out.created,
-                            "renamed": crate::edits::renamed(&out.renamed), "removed": out.removed,
+                            "renamed": {}, "removed": out.removed,
                             "warnings": out.warnings, "blocks": out.blocks});
         crate::edits::report(package, &done, result)
     })

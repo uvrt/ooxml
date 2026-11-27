@@ -53,8 +53,6 @@ pub struct ItemEdit {
     pub id: Option<String>,
     /// Whether it changed anything.
     pub changed: bool,
-    /// Ids renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// Paragraphs made.
     pub created: Vec<String>,
     /// Paragraphs removed.
@@ -326,7 +324,6 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
                 out.edits.push(ItemEdit {
                     changed: true,
                     id: e.id,
-                    renamed: e.renamed,
                     created: e.created,
                     removed: e.removed,
                 });
@@ -335,7 +332,7 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
         out.written = cell_paragraph_ids(sink, item.target.as_str())?;
         if out.edits.is_empty() {
             out.edits
-                .push(edit(out.written.first().cloned(), false, Vec::new(), Vec::new()));
+                .push(edit(out.written.first().cloned(), false, Vec::new()));
         }
     } else if plan.lines.len() > 1 {
         let made = crate::paragraphs::set_lines_in(sink, &target, &text)?;
@@ -345,14 +342,13 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
         out.edits.push(edit(
             Some(made.id.to_string()),
             made.changed,
-            made.renamed,
             made.created,
         ));
     } else {
         let made = write_text(sink, &target, &text)?;
         out.written = vec![made.id.to_string()];
         out.edits
-            .push(edit(Some(made.id.to_string()), made.changed, made.renamed, Vec::new()));
+            .push(edit(Some(made.id.to_string()), made.changed, Vec::new()));
     }
     if plan.marked() {
         for (paragraph, line) in out.written.clone().iter().zip(&plan.lines) {
@@ -362,7 +358,7 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
             }
             let made = style_spans(sink, paragraph, &spans)?;
             out.edits
-                .push(edit(Some(made.id.to_string()), true, made.renamed, Vec::new()));
+                .push(edit(Some(made.id.to_string()), true, Vec::new()));
         }
         for (paragraph, line) in out.written.clone().iter().zip(&plan.lines) {
             let id = sink.doc().ids().follow(paragraph);
@@ -373,11 +369,10 @@ fn set_one(sink: &mut EditSink<'_, '_>, item: &SetStyledText, plan: &Plan) -> Re
     Ok(out)
 }
 
-fn edit(id: Option<String>, changed: bool, renamed: ooxml_word_model::ids::Renames, created: Vec<String>) -> ItemEdit {
+fn edit(id: Option<String>, changed: bool, created: Vec<String>) -> ItemEdit {
     ItemEdit {
         id,
         changed,
-        renamed,
         created,
         removed: Vec::new(),
     }
@@ -417,13 +412,13 @@ fn paragraph_style(
         let made = crate::paragraph_style::set_style(sink, &paragraph, Some(style))?;
         first.get_or_insert(made.id.to_string());
         out.edits
-            .push(edit(Some(made.id.to_string()), true, made.renamed, Vec::new()));
+            .push(edit(Some(made.id.to_string()), true, Vec::new()));
     }
     Ok(first.filter(|_| plan.cell.is_none()))
 }
 
 /// The ids of the paragraphs of the cell `target` names, in order (its table's id
-/// followed through renames, as the stamping may have renamed it).
+/// followed through renames).
 fn cell_paragraph_ids(sink: &mut EditSink<'_, '_>, target: &str) -> Result<Vec<String>> {
     let docx = sink.docx()?;
     let target = match target.rsplit_once('/') {

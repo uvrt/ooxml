@@ -20,7 +20,6 @@ use crate::names::{R, W};
 use crate::policy::RevisionPolicy;
 use crate::set_text::block_key;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::text::atoms;
 use crate::text_range::{range, range_id, Span};
 use crate::work::{scope_above, Id, Work};
@@ -260,8 +259,7 @@ impl AddHyperlink {
         let part = span.part.clone();
         sink.read(block_key(&part, &paragraph.id));
         let id = range_id(&crate::text_range::range(sink.doc(), &docx, &self.range)?);
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let new_id = crate::ranges::renamed_id(&renamed, &paragraph.id);
+        let new_id = paragraph.id.clone();
         let tree = sink
             .doc()
             .tree(&part)?
@@ -287,7 +285,7 @@ impl AddHyperlink {
                 id: paragraph.id.clone(),
                 offset: 0,
             };
-            return put_tracked(sink, work, (&runs, parent), target, (&place, tracking), renamed);
+            return put_tracked(sink, work, (&runs, parent), target, (&place, tracking));
         }
         let link = wrap(&mut work, &runs, parent, target);
         let style = crate::builtin::ensure(&mut *sink, "Hyperlink", "character")?;
@@ -304,18 +302,17 @@ impl AddHyperlink {
         sink.keep_written(&part, None, &work);
         let new = work.build().ok_or_else(|| EditError::unbuilt(part.clone()))?;
         sink.replace(&part, &paragraph.path, new, vec![block_key(&part, &new_id)])?;
-        Ok(made(&new_id, index, renamed))
+        Ok(made(&new_id, index))
     }
 }
 
 /// The reply of a link made: the `index`th of the paragraph `id`.
-fn made(id: &str, index: usize, renamed: ooxml_word_model::ids::Renames) -> LinkEdited {
+fn made(id: &str, index: usize) -> LinkEdited {
     let made = format!("hl:{id}/{index}");
     LinkEdited {
         id: Some(made.clone()),
         changed: true,
         created: vec![made],
-        renamed,
         ..LinkEdited::default()
     }
 }
@@ -329,7 +326,6 @@ fn put_tracked(
     (runs, parent): (&[Id], Id),
     target: Target,
     (place, tracking): (&crate::fields::Place, crate::policy::Tracking),
-    renamed: ooxml_word_model::ids::Renames,
 ) -> Result<LinkEdited> {
     let style = crate::builtin::ensure(&mut *sink, "Hyperlink", "character")?;
     let shared = sink.doc().shared_handle();
@@ -342,8 +338,7 @@ fn put_tracked(
         .position(|l| *l == link)
         .unwrap_or(0);
     sink.keep_written(&place.part, None, &work);
-    crate::fields::put_back(&mut *sink, &work, (place, true), Some((numbered, dated)), &renamed)?;
+    crate::fields::put_back(&mut *sink, &work, (place, true), Some((numbered, dated)))?;
     sink.release(&place.part, &released)?;
-    let new_id = crate::ranges::renamed_id(&renamed, &place.id);
-    Ok(made(&new_id, index, renamed))
+    Ok(made(&place.id, index))
 }
