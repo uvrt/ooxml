@@ -16,7 +16,8 @@ gate cases and the host goldens that named blocks by place re-targeted to those 
   map is written.
 * ``host``: every docx stream's events re-targeted the same way -- a call's arguments and its
   recorded result through the map of the document the call names (``doc``), the documents
-  each case opened known from its ``open`` events.  Re-runnable: a second run changes nothing.
+  each case opened known from its ``open`` events -- and the frozen answers of ``frozen/``
+  through their document's.  Re-runnable: a second run changes nothing.
 
 Stdlib only.
 """
@@ -190,7 +191,25 @@ def cmd_host(args) -> int:
             else:
                 out.append(line)
         stream.write_text("".join(x + "\n" for x in out))
-    print(f"{events} events, {rewritten} re-targeted")
+    # the Python host's frozen answers (frozen/*.jsonl): each a call on one document
+    for frozen in sorted((ORACLE / "frozen").glob("*.jsonl")):
+        out = []
+        for line in frozen.read_text().splitlines():
+            if not line.strip():
+                out.append(line)
+                continue
+            answer = json.loads(line)
+            source = ((answer.get("document") or {}).get("input") or {}).get("path")
+            ids = maps.get(resolved(source), {}) if source else {}
+            new = {**answer, **{k: renamed(answer[k], ids) for k in ("arguments", "result") if k in answer}}
+            events += 1
+            if new != answer:
+                rewritten += 1
+                out.append(json.dumps(new, ensure_ascii=False))
+            else:
+                out.append(line)
+        frozen.write_text("".join(x + "\n" for x in out))
+    print(f"{events} events and frozen answers, {rewritten} re-targeted")
     return 0
 
 

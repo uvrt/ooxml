@@ -234,7 +234,8 @@ fn control_ids(root: &Element) -> HashMap<usize, String> {
 }
 
 /// What the change from `before` to `after` touched, one entry per part (sorted by name),
-/// the body's per heading section.
+/// the body's per heading section; a part only written with the ids given at open, a plain
+/// entry.
 ///
 /// # Errors
 /// When `after` cannot be read as a Word document.
@@ -264,6 +265,21 @@ pub fn touched_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> Re
             section: None,
         });
     }
+    // a part written with the ids given at open (the first change of the package writes
+    // them): its bytes changed, though no reader sees it otherwise
+    let changed: std::collections::HashSet<&str> = delta.changed_parts().into_iter().collect();
+    let (old, new) = (before.package(), after.package());
+    for part in new.part_names() {
+        let written = matches!((old.part(&part), new.part(&part)), (Some(a), Some(b))
+            if matches!(a, ooxml_opc::PartVersion::Unwritten(_)) && !a.saved().same(b.saved()));
+        if written && !changed.contains(part.as_str()) {
+            out.push(Touched {
+                part: part.into(),
+                section: None,
+            });
+        }
+    }
+    out.sort_by(|a, b| a.part.cmp(&b.part));
     Ok(out)
 }
 

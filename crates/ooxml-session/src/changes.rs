@@ -1,8 +1,8 @@
 //! Owns: what one version of a document changed from another: the parts whose content
 //! differs, by name ([`Opened::parts_changed_since`]).
 //!
-//! Must not: read a part both versions share (decided by identity, `PartVersion::same`), or
-//! change either version.
+//! Must not: read a part both versions share (decided by identity of what a save writes,
+//! `PartVersion::saved`), or change either version.
 
 use crate::{Opened, SessionError};
 
@@ -30,7 +30,8 @@ pub fn changed(then: &ooxml_opc::Package, now: &ooxml_opc::Package) -> Vec<Strin
     let mut out = Vec::new();
     for name in now.part_names() {
         let same = match (now.part(&name), then.part(&name)) {
-            (Some(here), Some(there)) => here.same(there),
+            // as saved: a part read with ids given at open and written since has changed
+            (Some(here), Some(there)) => here.saved().same(there.saved()),
             _ => false,
         };
         if !same {
