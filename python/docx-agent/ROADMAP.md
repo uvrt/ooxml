@@ -5,6 +5,11 @@
 > when the Rust session took the document over (P4e; CHANGELOG.md, 0.2.0). What it records
 > of Word -- the measurements and the decisions -- still holds; the module names and APIs
 > it names do not exist any more.
+>
+> **Since Phase 3 E2 the Python host is gone too.** Every call of a Word tool runs on the Rust
+> host (`ooxml-host`, through ooxml-edit's `Toolbox`); `docx_agent.rust` (the owner, the mirror,
+> the served adapters) and ooxml-edit's `owned`/`served`/`gate` are deleted. The pptx and xlsx
+> libraries keep the Python host until Phase 4.
 
 Working plan for `docx-agent`: an AI-editable Word layer, the counterpart of `pptx-agent`.
 Written to be picked up cold: every phase says what is missing, where it goes, how to

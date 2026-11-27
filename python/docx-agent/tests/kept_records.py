@@ -1,5 +1,5 @@
 """What a Word document keeps of the values placed in it, as the Rust session reads its
-records (P4e: no Python view; a session on the Rust host's, or the Python host's mirror's until E2): the tables' and charts' sources (``provenance``, also the
+records (P4e: no Python view; a session on the Rust host's): the tables' and charts' sources (``provenance``, also the
 session's ``Session.provenance``), the values written into paragraphs by reference
 (``facts``) and the labels written in place of values (``labels``), each by paragraph id.
 
@@ -15,14 +15,7 @@ from typing import Any
 def records(session: Any, doc: str) -> dict[str, Any]:
     """The session's reading of the document's records at the version the calls read now:
     ``{"provenance": [[key, record]...], "facts": [[paragraph, facts]...], "labels": [...]}``."""
-    from ooxml_edit.tools.hosted import HostedSession
-
-    if isinstance(session, HostedSession):
-        found = session.rust.version(doc).records()
-    else:
-        from docx_agent.rust import hooks
-
-        found = hooks.version_of(session.entry(doc).subject).records()
+    found = session.rust.version(doc).records()
     out = json.loads(found) if found is not None else {}
     return {"provenance": out.get("provenance", []), "facts": out.get("facts", []),
             "labels": out.get("labels", []), **{k: v for k, v in out.items()

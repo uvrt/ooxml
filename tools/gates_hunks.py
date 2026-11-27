@@ -14,9 +14,7 @@ when every hunk of the file is of a kind below, else ``None`` (every fixture):
   the fixtures their ``file`` names (an entry of the corpus gate: none; one without a file:
   ``None``);
 * in a harness case maker (crates/ooxml-oracle/python/word_*_cases.py): the tools whose
-  cases changed (the tool names in the changed lines, else in the function around them);
-* in python/docx-agent/src/docx_agent/rust/edits.py: an entry of ``SERVED`` -- the served
-  tool's features.
+  cases changed (the tool names in the changed lines, else in the function around them).
 
 A tool's features are those its name's words name (gates_fixtures.FEATURE_WORDS); a tool
 whose name names none counts for every fixture.
@@ -36,14 +34,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 KNOWN = "crates/ooxml-oracle/known-differences.toml"
 REGISTRY = "crates/ooxml-session/src/registry.rs"
-SERVED = "python/docx-agent/src/docx_agent/rust/edits.py"
 CASE_MAKERS = re.compile(r"crates/ooxml-oracle/python/word_\w+_cases\.py")
 TOOL = re.compile(r"\bword_[a-z_]+\b")
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 _RUST_USE = re.compile(r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:use|mod)\b[^;{]*(?:\{[^{}]*\})?[^;{]*;", re.M)
 _REGISTER = re.compile(r"^[ \t]*registry\.register\([^;]*?\);[ \t]*$", re.M)
 _REGISTERED = re.compile(r"\booxml_tools_word::(word_[a-z_]+)\b")
-_SERVED_ENTRY = re.compile(r'^\s*"(\w+)": _\w+,\s*$')
 
 
 @dataclass
@@ -229,15 +225,6 @@ def _hunk_effect(path: str, diff: Diff, hunk: Hunk, loud, words) -> set[str] | N
             if not ok:
                 return None
             tools |= {t for text in texts for t in _REGISTERED.findall(text)}
-        found = _tools_effect(tools, words)
-        return None if found is None else found[0]
-    if path == SERVED:
-        tools = set()
-        for _, _, text in loud:
-            m = _SERVED_ENTRY.match(text)
-            if m is None:
-                return None
-            tools.add(m.group(1))
         found = _tools_effect(tools, words)
         return None if found is None else found[0]
     if CASE_MAKERS.fullmatch(path):

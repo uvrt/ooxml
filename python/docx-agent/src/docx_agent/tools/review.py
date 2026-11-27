@@ -1,5 +1,5 @@
 """Review: ``word_set_tracking``, ``word_changes`` (list, preview, accept and reject tracked
-changes) and ``word_comments`` -- the Rust session's, with the roles the tool layer gives
+changes) and ``word_comments`` -- the Rust host's, with the roles the tool layer gives
 their actions (what a reviewer may call: ``Tool.action_roles``)."""
 
 from __future__ import annotations

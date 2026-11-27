@@ -6,20 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-ooxml_core = pytest.importorskip("ooxml_core")
-if not hasattr(ooxml_core, "Version"):
-    pytest.skip("ooxml_core has no Version", allow_module_level=True)
+from ooxml_edit.tools import Toolbox
 
-from ooxml_edit.tools import Toolbox  # noqa: E402
-
-from docx_agent.rust import reads  # noqa: E402
-from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-from conftest import FIXTURE_DIR  # noqa: E402
-import word_docs  # noqa: E402
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+from conftest import FIXTURE_DIR
+import word_docs
 
 FIXTURES = sorted((FIXTURE_DIR).rglob("*.docx"))[::9]
 
@@ -30,10 +21,8 @@ def toolbox():
 
 
 def _reflow(toolbox, session, doc):
-    served = reads.served().get("check", 0)
     reply = toolbox.dispatch(session, "check", {"doc": doc, "include": ["reflow"]})
     assert reply.ok, reply.to_json()
-    assert reads.served().get("check", 0) == served + 1
     return reply.data["reflow"]
 
 

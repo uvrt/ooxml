@@ -1,7 +1,7 @@
 """The definitions docx-agent's toolbox sends against the Rust session's specs.
 
 A Word tool's definition is the Rust session's spec (``ooxml_core.tool_specs("docx")``,
-``docx_agent.rust.session.tool_of``).  A shared tool (``check``, ``render``,
+``docx_agent.tools.specs.tool_of``).  A shared tool (``check``, ``render``,
 ``save_document``...) keeps ooxml-edit's shared definition, which another library's tools
 merge with; it must stay the Rust spec byte for byte, so the two cannot drift apart.
 """

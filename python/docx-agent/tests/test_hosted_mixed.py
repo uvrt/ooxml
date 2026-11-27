@@ -13,7 +13,8 @@ documents it names.
   refused with the way out, two batches.  In a Word batch, a workbook library's tool naming no
   document is refused "send it as its own call or in its own batch", and an application's own
   tool "call it alone" (D1).
-- A toolbox with a Python format of a kind the Rust session cannot name stays on the Python host.
+- A toolbox with a Python format of a kind the Rust session cannot name is refused, naming the kinds it
+  names.
 
 Made-up documents and values only.
 """
@@ -201,7 +202,13 @@ def test_in_a_word_batch_a_workbook_tool_and_an_application_tool_are_refused_eac
     assert ok(box, session, "batch", ops=[{"tool": "grid_hint", "arguments": {"text": "x"}}]).ok
 
 
-def test_a_python_format_of_a_kind_the_rust_session_cannot_name_stays_on_the_python_host():
+def test_a_python_format_of_a_kind_the_rust_session_cannot_name_is_refused_with_the_kinds_it_names():
     other = dataclasses.replace(GRID, kind="grid")
-    with Toolbox(TOOLS, formats=[FORMAT, other], groups=GROUPS, workers=0) as toolbox:
+    with pytest.raises(ValueError) as refused:
+        Toolbox(TOOLS, formats=[FORMAT, other], groups=GROUPS, workers=0)
+    message = str(refused.value)
+    assert message.startswith("docx documents run on the Rust host, whose session cannot name a 'grid' document")
+    assert "'xlsx'" in message and "give the 'grid' format a toolbox of its own" in message
+    # (without the Word format, the Python host holds it, as before)
+    with Toolbox([], formats=[other], groups=GROUPS, workers=0) as toolbox:
         assert type(toolbox.session()) is Session

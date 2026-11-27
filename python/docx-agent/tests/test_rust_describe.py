@@ -1,4 +1,4 @@
-"""``describe`` served by the Rust session (lane P0d): its reply renders for every provider, on
+"""``describe`` on the Rust host (lane P0d): its reply renders for every provider, on
 a made-up document with threads of comments, resolved ones, footnotes beside separators and
 content controls under ``mc:Fallback``; a refusal keeps its way out.
 """
@@ -8,15 +8,10 @@ import io
 import json
 import zipfile
 
-import pytest
+from ooxml_edit.tools import Toolbox
+from ooxml_edit.tools.adapters import anthropic_tool_result, openai_function_call_output, results_for
 
-ooxml_core = pytest.importorskip("ooxml_core")
-if not hasattr(ooxml_core, "Session"):          # an ooxml-core before 0.9.0
-    pytest.skip("ooxml_core has no Session", allow_module_level=True)
-
-from ooxml_edit.tools.adapters import (anthropic_tool_result, openai_function_call_output)  # noqa: E402
-
-from docx_agent.rust.session import RustTools  # noqa: E402
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
 
 _W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _W14 = 'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
@@ -89,18 +84,19 @@ def made_up() -> bytes:
 
 
 def test_the_rust_reply_renders_for_every_provider():
-    rust = RustTools()
-    doc = rust.open(made_up(), "plan.docx")
-    result = rust.dispatch("describe", {"doc": doc})
-    text = json.dumps(result.envelope, ensure_ascii=False, separators=(",", ":"))
-    assert anthropic_tool_result(result, "call_1")["content"] == [{"type": "text", "text": text}]
-    assert openai_function_call_output(result, "call_1")["output"] == text
-    for provider in ("anthropic", "openai-responses", "openai-chat"):
-        assert rust.results(provider, [("call_1", result)])
-    short = json.loads(result.to_text(80))
-    assert short["truncated"].startswith("the result was ")
-    # a refusal keeps Rust's way out
-    refused = rust.dispatch("describe", {"doc": "d9"})
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0) as toolbox:
+        session = toolbox.session()
+        doc = session.open(made_up(), "plan.docx")
+        result = toolbox.dispatch(session, "describe", {"doc": doc})
+        text = result.to_text()
+        assert anthropic_tool_result(result, "call_1")["content"] == [{"type": "text", "text": text}]
+        assert openai_function_call_output(result, "call_1")["output"] == text
+        for provider in ("anthropic", "openai-responses", "openai-chat"):
+            assert results_for(provider, [("call_1", result)])
+        short = json.loads(result.to_text(80))
+        assert short["truncated"].startswith("the result was ")
+        # a refusal keeps Rust's way out
+        refused = toolbox.dispatch(session, "describe", {"doc": "d9"})
     assert not refused.ok and refused.error.code == "not_found"
     assert anthropic_tool_result(refused, "call_2")["is_error"] is True
     assert json.loads(refused.to_text())["error"]["valid_options"] == [doc]
