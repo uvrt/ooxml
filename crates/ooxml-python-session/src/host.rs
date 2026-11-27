@@ -697,12 +697,7 @@ impl PyHostSession {
     /// the JSON text of its dataset, `None` where `have` is its serial already (the caller's
     /// copy is of this keeping); `None` where there is no such dataset.
     #[pyo3(signature = (id, have = None))]
-    fn dataset(
-        &self,
-        py: Python<'_>,
-        id: &str,
-        have: Option<u64>,
-    ) -> Option<KeptRow> {
+    fn dataset(&self, py: Python<'_>, id: &str, have: Option<u64>) -> Option<KeptRow> {
         let session = &self.inner;
         py.detach(|| {
             let kept = session.kept_dataset(id)?;
