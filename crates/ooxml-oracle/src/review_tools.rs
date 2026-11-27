@@ -17,7 +17,6 @@ use ooxml_tools_word::{
     WordInsertMarkdown, WordInsertText, WordSetText, WordSetTracking,
 };
 use ooxml_word_edit::Editor;
-use ooxml_word_model::docx::Versions;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 
@@ -93,9 +92,8 @@ fn run(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Result<ooxml_too
             let args = WordChanges::from_arg(arguments, "").map_err(|e| e.to_string())?;
             if args.reads() {
                 // list and preview as a session serves them: on the version the call reads
-                let versions = Versions::new();
                 let last_check = ooxml_tools_word::LastCheck::default();
-                let version = crate::structure_tools::opened_version(editing, &versions, &last_check);
+                let version = crate::structure_tools::opened_version(editing, &last_check);
                 match word_changes_read(&args, &version, editing.cancel) {
                     Ok(done) => ooxml_tools::ToolResult::done(done),
                     Err(error) => ooxml_tools::ToolResult::failed(error),

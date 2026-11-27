@@ -61,7 +61,9 @@ fn every_document_opens_stamped_the_same_each_time_and_saves_as_it_was() {
         let bytes = std::fs::read(&file).unwrap();
         let Some(package) = opened(&bytes) else { continue };
         let (word, _) = WordPackage::open(package);
-        let Ok(docx) = Docx::open(&word) else { continue };
+        let Ok(docx) = Docx::open(&word, std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))) else {
+            continue;
+        };
         let what = file.display();
         opened_count += 1;
         // no block without a valid and unique id, in any story
@@ -81,7 +83,11 @@ fn every_document_opens_stamped_the_same_each_time_and_saves_as_it_was() {
         }
         // the ids are the bytes': opened again, the same
         let (again, _) = WordPackage::open(opened(&bytes).unwrap());
-        assert_eq!(ids(&docx), ids(&Docx::open(&again).unwrap()), "{what}");
+        assert_eq!(
+            ids(&docx),
+            ids(&Docx::open(&again, std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap()),
+            "{what}"
+        );
         // nothing written: the save is the bytes
         let unwritten = word.unwritten();
         stamped += usize::from(!unwritten.is_empty());
@@ -90,7 +96,11 @@ fn every_document_opens_stamped_the_same_each_time_and_saves_as_it_was() {
         let written = word.written().save().unwrap();
         let (reopened, _) = WordPackage::open(opened(&written).unwrap());
         assert!(reopened.unwritten().is_empty(), "{what}: {:?}", reopened.unwritten());
-        assert_eq!(ids(&docx), ids(&Docx::open(&reopened).unwrap()), "{what}");
+        assert_eq!(
+            ids(&docx),
+            ids(&Docx::open(&reopened, std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap()),
+            "{what}"
+        );
     }
     assert!(
         opened_count > 200 && stamped > 200,
@@ -107,13 +117,16 @@ fn a_partly_written_document_opens_again_with_the_same_ids() {
     };
     let (word, _) = WordPackage::open(raw_package(&parts));
     assert_eq!(word.unwritten(), vec!["word/document.xml".to_owned()]);
-    let docx = Docx::open(&word).unwrap();
+    let docx = Docx::open(&word, std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap();
     // the body written, the rest as it was
     let tree = word.tree("word/document.xml").unwrap().unwrap();
     let partly = word.with_tree("word/document.xml", tree).unwrap().save().unwrap();
     let (reopened, _) = WordPackage::open(opened(&partly).unwrap());
     assert!(reopened.unwritten().is_empty());
-    assert_eq!(ids(&docx), ids(&Docx::open(&reopened).unwrap()));
+    assert_eq!(
+        ids(&docx),
+        ids(&Docx::open(&reopened, std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap())
+    );
     assert!(ids(&docx)[0]
         .1
         .iter()

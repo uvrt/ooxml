@@ -1,6 +1,6 @@
 //! A Word package's parts as docx-agent finds them (`WordPackage`, `OpcPackage`): the main
 //! part, the parts related to it by type, its story parts, and the elements of a part that
-//! Word shows (not under `mc:Fallback`).
+//! the readers read (of an `mc:AlternateContent`, the branch [`crate::mc::chosen`] says).
 //!
 //! Owns: those rules, read from a version of an OPC package; relationships read as Python
 //! keys them (a dictionary by id: the first place of an id, its last relationship).
@@ -113,6 +113,46 @@ pub fn main_part(package: &Package) -> Result<Option<String>, OpcError> {
         .then(|| "word/document.xml".to_owned()))
 }
 
+/// The relationship types' namespace (`.../relationships/styles`) and what ISO/IEC 29500
+/// Strict names it.
+const REL_TRANSITIONAL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+const REL_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/";
+
+/// Whether `written`, a relationship's type, is `transitional` (a transitional type), or
+/// the type a strict document writes for it (`.../relationships/styles` written under
+/// `purl.oclc.org`): what the layout finds a strict document's parts by.
+#[must_use]
+pub fn rel_type_is(written: &str, transitional: &str) -> bool {
+    written == transitional
+        || transitional
+            .strip_prefix(REL_TRANSITIONAL)
+            .is_some_and(|kind| written.strip_prefix(REL_STRICT) == Some(kind))
+}
+
+/// The `officeDocument` relationship as ISO/IEC 29500 Strict names it.
+const REL_OFFICE_DOCUMENT_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument";
+
+/// Whether `package` is a strict Open XML document (ISO/IEC 29500 Strict, Word's "Strict
+/// Open XML Document"): its main relationship is strict's, or its main part's root is
+/// strict WordprocessingML. Its other vocabularies, relationship types and units are
+/// strict's too (`35.40pt` for 708 twips), which the reading tools and the edits do not
+/// read or write: only its layout reads it, through the namespace-exact views.
+///
+/// # Errors
+/// The package's relationships cannot be read.
+pub fn strict(package: &Package) -> Result<bool, OpcError> {
+    if !related_parts(package, "", REL_OFFICE_DOCUMENT_STRICT)?.is_empty() {
+        return Ok(true);
+    }
+    let Some(main) = main_part(package)? else {
+        return Ok(false);
+    };
+    Ok(package.tree(&main)?.is_some_and(|tree| {
+        let name = tree.root().name();
+        crate::xmlread::Ns::W.holds(name.namespace()) && name.namespace() != Some(W)
+    }))
+}
+
 /// The main part and every story part: the parts ids are read from (docx-agent's
 /// `Document._parts`).
 pub fn parts(package: &Package) -> Result<Vec<String>, OpcError> {
@@ -139,21 +179,21 @@ pub fn story_parts(package: &Package, main: &str) -> Result<Vec<String>, OpcErro
 }
 
 /// The elements below `root` named `{namespace}local`, in document order, leaving out
-/// those inside an `mc:Fallback` (a fallback repeats its choice's content and is not what
-/// Word shows).
+/// those inside a branch of an `mc:AlternateContent` the readers do not read (a Fallback
+/// repeats its Choice's content: [`crate::mc::chosen`]).
 pub fn live_elements(root: &Element, namespace: &str, local: &str) -> Vec<Arc<Element>> {
     let mut found = Vec::new();
-    let mut stack = vec![root.children().iter()];
-    while let Some(top) = stack.last_mut() {
+    let mut stack = vec![(root, root.children().iter())];
+    while let Some((parent, top)) = stack.last_mut() {
         match top.next() {
             Some(Node::Element(e)) => {
-                if e.name().is(Some(MC), "Fallback") {
+                if crate::mc::unchosen(parent, e) {
                     continue;
                 }
                 if e.name().is(Some(namespace), local) {
                     found.push(Arc::clone(e));
                 }
-                stack.push(e.children().iter());
+                stack.push((e, e.children().iter()));
             }
             Some(_) => {}
             None => {

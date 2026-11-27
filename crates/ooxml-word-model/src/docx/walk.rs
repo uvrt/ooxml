@@ -4,7 +4,6 @@
 //!
 //! Must not: know what the elements mean.
 
-use crate::ids::MC;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
 
@@ -18,7 +17,8 @@ pub struct Found {
 }
 
 /// The live elements below `root` (not `root` itself) that `wanted` accepts, in document
-/// order, with their places; `mc:Fallback` subtrees skipped. `base` is `root`'s own place.
+/// order, with their places; the branches of an `mc:AlternateContent` the readers do not
+/// read skipped ([`crate::mc::chosen`]). `base` is `root`'s own place.
 pub fn live_paths(root: &Element, base: &[u32], wanted: &dyn Fn(&Element) -> bool) -> Vec<Found> {
     let mut out = Vec::new();
     let mut path = base.to_vec();
@@ -29,7 +29,7 @@ pub fn live_paths(root: &Element, base: &[u32], wanted: &dyn Fn(&Element) -> boo
 fn walk(element: &Element, path: &mut Vec<u32>, wanted: &dyn Fn(&Element) -> bool, out: &mut Vec<Found>) {
     for (k, node) in element.children().iter().enumerate() {
         let Node::Element(child) = node else { continue };
-        if child.name().is(Some(MC), "Fallback") {
+        if crate::mc::unchosen(element, child) {
             continue;
         }
         path.push(u32::try_from(k).unwrap_or(u32::MAX));

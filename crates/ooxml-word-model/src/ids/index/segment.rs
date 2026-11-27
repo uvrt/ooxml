@@ -1,7 +1,9 @@
 //! Owns: one segment of a part's block index -- the live paragraphs, rows and tables found
 //! in one child of the part's block container (the body's child, or a story root's), with
 //! their places below that child, kinds, owning tables and paraIds as written -- and the
-//! walk that finds them, as docx-agent's `PartIndex` walks (`mc:Fallback` content left out).
+//! walk that finds them, as docx-agent's `PartIndex` walks: of an `mc:AlternateContent`,
+//! the branch the readers read alone ([`crate::mc::chosen`]: a Choice they understand,
+//! else the Fallback), so a text box's blocks are keyed from the branch the layout draws.
 //!
 //! Must not: know where its segment is (its place and order key belong to the index), or
 //! name a block (names need the whole part: ordinals and repeats).
@@ -80,7 +82,7 @@ impl Body {
                 continue;
             }
             let Node::Element(child) = node else { continue };
-            if child.name().is(Some(MC), "Fallback") {
+            if crate::mc::unchosen(root, child) {
                 continue;
             }
             let into = if skip.is_some_and(|s| k > s) {
@@ -208,7 +210,7 @@ fn visit(element: &Arc<Element>, path: &mut Vec<u32>, tables: &mut Vec<u32>, out
 fn visit_children(element: &Element, path: &mut Vec<u32>, tables: &mut Vec<u32>, out: &mut Vec<Block>) {
     for (k, node) in element.children().iter().enumerate() {
         let Node::Element(child) = node else { continue };
-        if child.name().is(Some(MC), "Fallback") {
+        if crate::mc::unchosen(element, child) {
             continue;
         }
         path.push(u32::try_from(k).unwrap_or(u32::MAX));

@@ -136,10 +136,6 @@ impl FormatDoc for FrozenDoc {
         self.inner.update(caller, tool, update)
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        self.inner.readings()
-    }
-
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
         self.inner.run(tool, run)
     }

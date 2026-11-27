@@ -12,9 +12,8 @@ use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_follow_sample, CallEditor, Editing, Others, Version, WordFollowSample};
+use ooxml_tools_word::{word_follow_sample, CallEditor, Editing, Others, WordFollowSample};
 use ooxml_word_edit::{Editor, Tracking};
-use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -55,9 +54,8 @@ fn follow(mut arguments: Value) -> Value {
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let copy = package();
-    let versions = Versions::new();
-    let copy = crate::common::read(&copy);
-    let other = Version::new("b.docx", &copy, 1, &versions);
+    let copy = crate::common::doc(&copy);
+    let other = crate::common::version("b.docx", &copy);
     let others = [("d2", other)];
     let call_editor = CallEditor::new(&editor);
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, "2026-11-17T10:00:00Z")

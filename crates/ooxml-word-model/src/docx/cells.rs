@@ -19,7 +19,7 @@ use crate::model::{Block, Story, Table};
 use crate::read::{At, Fields, Reader};
 use crate::resolve::resolve_table;
 use crate::value::{text, Props, Text};
-use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -160,9 +160,6 @@ impl Weigh for KeptTable {
     }
 }
 
-/// What the tables' readings hold at most where no budget is given, bytes.
-pub const TABLE_MEMO_BYTES: usize = 32 << 20;
-
 /// Each table's reading kept across a document's versions, by the table element's address
 /// (a weak reference keeps the address its own while it is kept), within a budget: the
 /// least recently used let go first, and those of tables no version holds swept.
@@ -175,12 +172,6 @@ impl std::fmt::Debug for TableMemo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
         f.debug_struct("TableMemo").field("stats", &memo.0.stats()).finish()
-    }
-}
-
-impl Default for TableMemo {
-    fn default() -> TableMemo {
-        TableMemo::new(Arc::new(Limit::new(TABLE_MEMO_BYTES)))
     }
 }
 

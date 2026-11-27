@@ -62,8 +62,7 @@ fn attribute_below<'e>(element: &'e ooxml_xml::Element, at: &[u32], name: &ooxml
 }
 
 /// What a version derives once, on first use, from the latest earlier version's (its
-/// reading as docx-agent reads it, its validation tally): unchanged parts are not read
-/// again.
+/// validation tally): unchanged parts are not read again.
 #[derive(Debug)]
 enum Lazy<T> {
     /// Not made yet: the earlier version's, to make it from.
@@ -92,6 +91,25 @@ fn derived<T, E>(cell: &Mutex<Lazy<T>>, make: impl FnOnce(Option<&T>) -> Result<
     Ok(made)
 }
 
+/// A version's reading as docx-agent reads it, made on first use from the latest earlier
+/// version's (the document's one chain of readings, [`Docx::open_after`]): unchanged parts
+/// are not read again.
+#[derive(Debug)]
+enum Reading {
+    /// Not made yet: the earlier version's, to make it from.
+    Pending(Arc<Docx>),
+    Ready(Arc<Docx>),
+}
+
+impl Reading {
+    /// What the next version makes its own from.
+    fn handed_on(&self) -> Arc<Docx> {
+        match self {
+            Reading::Ready(made) | Reading::Pending(made) => Arc::clone(made),
+        }
+    }
+}
+
 /// What every version of one document shares: caches that belong to the document.
 #[derive(Debug)]
 pub struct Shared {
@@ -108,6 +126,9 @@ pub struct Shared {
     /// The document's identity, whatever its version: what its store's version numbers are
     /// named with ([`ooxml_word_model::ids::VersionRef`]).
     document: DocumentId,
+    /// Whether it opened as a strict Open XML document ([`ooxml_word_model::parts::strict`]):
+    /// a property of the document, found once at open. No change applies to one.
+    strict: bool,
 }
 
 /// A Word document at one version.
@@ -115,7 +136,7 @@ pub struct Shared {
 pub struct WordDoc {
     package: WordPackage,
     ids: Ids,
-    reading: Arc<Mutex<Lazy<Docx>>>,
+    reading: Arc<Mutex<Reading>>,
     tally: Arc<Mutex<Lazy<Tally>>>,
     shared: Arc<Shared>,
     /// What the transaction that made this version drew for its stand-ins.
@@ -164,9 +185,9 @@ impl WordDoc {
         earlier: &EarlierIds,
     ) -> Result<WordDoc, EditError> {
         let (package, pool) = WordPackage::open(package);
-        let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
-        let docx = Arc::new(Docx::open_keeping(&package, kept)?);
-        Ok(WordDoc::of_docx(package, docx, budget, &pool, earlier))
+        let docx = Arc::new(Docx::open(&package, Arc::clone(&budget))?);
+        let strict = ooxml_word_model::parts::strict(&package)?;
+        Ok(WordDoc::of_docx(package, docx, budget, (&pool, strict), earlier))
     }
 
     /// The document whose first version is `package`, opened again with the id state saved
@@ -184,8 +205,7 @@ impl WordDoc {
         state: &str,
     ) -> Result<(WordDoc, LoadedState), EditError> {
         let (package, pool) = WordPackage::open(package);
-        let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
-        let docx = Arc::new(Docx::open_keeping(&package, kept)?);
+        let docx = Arc::new(Docx::open(&package, Arc::clone(&budget))?);
         let mut loaded = {
             let mut saved = Vec::with_capacity(docx.parts.len());
             for part in &docx.parts {
@@ -198,16 +218,21 @@ impl WordDoc {
         let (live, _) = block_and_drawing_ids(&roots);
         loaded.gone.retain(|value, _| !live.contains(value));
         let earlier = EarlierIds::of_state(&loaded);
-        Ok((WordDoc::of_docx(package, docx, budget, &pool, &earlier), loaded))
+        let strict = ooxml_word_model::parts::strict(&package)?;
+        Ok((
+            WordDoc::of_docx(package, docx, budget, (&pool, strict), &earlier),
+            loaded,
+        ))
     }
 
     /// The first version: `package` read as `docx`, its ids the pool its blocks' ids were
-    /// drawn from at open (`pool`) and what it had before (`earlier`).
+    /// drawn from at open (`pool`) and what it had before (`earlier`); `strict`, whether it is
+    /// a strict Open XML document.
     fn of_docx(
         package: WordPackage,
         docx: Arc<Docx>,
         budget: Arc<dyn CacheBudget>,
-        pool: &IdPool,
+        (pool, strict): (&IdPool, bool),
         earlier: &EarlierIds,
     ) -> WordDoc {
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
@@ -217,7 +242,7 @@ impl WordDoc {
         WordDoc {
             package,
             ids,
-            reading: Arc::new(Mutex::new(Lazy::Ready(docx))),
+            reading: Arc::new(Mutex::new(Reading::Ready(docx))),
             tally: Arc::new(Mutex::new(Lazy::Pending(None))),
             drawn: crate::Drawn::default(),
             redrawn: redrawn::Redrawn::default(),
@@ -231,6 +256,7 @@ impl WordDoc {
                 facts: Facts::new(budget),
                 stories: Mutex::new(StoryTable::new()),
                 document: DocumentId::fresh(),
+                strict,
             }),
         }
     }
@@ -241,6 +267,13 @@ impl WordDoc {
     fn begun_written(&self, part: &str) -> bool {
         let base = self.begun.as_ref().unwrap_or(&self.package);
         !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_)))
+    }
+
+    /// Whether the document is a strict Open XML document (found at open): only its layout
+    /// reads it; every tool but `render` refuses it, and no change applies to it.
+    #[must_use]
+    pub fn strict(&self) -> bool {
+        self.shared.strict
     }
 
     /// The package, as every reader reads it.
@@ -289,7 +322,13 @@ impl WordDoc {
     /// # Errors
     /// [`EditError`] when a story part is not XML.
     pub fn docx(&self) -> Result<Arc<Docx>, EditError> {
-        derived(&self.reading, |before| Ok(Docx::open_after(&self.package, before)?))
+        let mut slot = self.reading.lock().unwrap_or_else(PoisonError::into_inner);
+        let made = match &*slot {
+            Reading::Ready(made) => return Ok(Arc::clone(made)),
+            Reading::Pending(before) => Arc::new(Docx::open_after(&self.package, before)?),
+        };
+        *slot = Reading::Ready(Arc::clone(&made));
+        Ok(made)
     }
 
     /// What this version changed against `before` (any other version of the document): its
@@ -349,7 +388,7 @@ impl WordDoc {
         WordDoc {
             package: WordPackage::edited(package),
             ids,
-            reading: Arc::new(Mutex::new(Lazy::Pending(reading))),
+            reading: Arc::new(Mutex::new(Reading::Pending(reading))),
             tally: Arc::new(Mutex::new(Lazy::Pending(tally))),
             shared: Arc::clone(&self.shared),
             drawn: self.drawn.clone(),

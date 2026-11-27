@@ -287,7 +287,8 @@ fn drawing_place(story: &StoryPart, path: &str) -> Option<Vec<u32>> {
 }
 
 /// A run's `wp:<name>` frames in order, each with its place below the run: in its
-/// `w:drawing`s, an `mc:AlternateContent`'s choice's too.
+/// `w:drawing`s, an `mc:AlternateContent`'s too (the branch the readers read,
+/// [`ooxml_word_model::mc::chosen`]).
 fn run_frames(run: &Arc<Element>, name: &str) -> Vec<Vec<u32>> {
     const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
     const WP: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -296,8 +297,9 @@ fn run_frames(run: &Arc<Element>, name: &str) -> Vec<Vec<u32>> {
         let drawings: Vec<(Vec<u32>, &Arc<Element>)> = if is_w(child, "drawing") {
             vec![(vec![k], child)]
         } else if child.name().is(Some(MC), "AlternateContent") {
+            let chosen = ooxml_word_model::mc::chosen(child);
             elements(child)
-                .filter(|(_, c)| c.name().is(Some(MC), "Choice"))
+                .filter(|(_, c)| chosen.is_some_and(|b| Arc::ptr_eq(b, c)))
                 .flat_map(|(c, choice)| {
                     elements(choice)
                         .filter(|(_, d)| is_w(d, "drawing"))

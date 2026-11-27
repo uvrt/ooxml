@@ -39,10 +39,13 @@ fn table(rows: &[String]) -> String {
 }
 
 fn accepted(body: &str) -> Accepted {
-    let docx = Docx::open(&package(&Parts {
-        body: body.to_owned(),
-        ..Parts::default()
-    }))
+    let docx = Docx::open(
+        &package(&Parts {
+            body: body.to_owned(),
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
     .unwrap();
     let part = docx.body().unwrap();
     let found = part.ids.tables().get(0).unwrap();
@@ -134,10 +137,13 @@ fn labels_count_the_rows_and_columns_kept() {
         row(&[plain("North"), plain("1"), plain("2")], &deleted),
         row(&[plain("North"), plain("3"), plain("4")], ""),
     ]);
-    let docx = Docx::open(&package(&Parts {
-        body,
-        ..Parts::default()
-    }))
+    let docx = Docx::open(
+        &package(&Parts {
+            body,
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
     .unwrap();
     let part = docx.body().unwrap();
     let found = part.ids.tables().get(0).unwrap();

@@ -27,18 +27,53 @@ const REL_STYLES: &str = "http://schemas.openxmlformats.org/officeDocument/2006/
 /// fallback left out (a copy of its choice's, synced when the edit ends). A paragraph
 /// without an id is one a table filled in one pass writes unstamped; nothing moves it
 /// within the edit.
+/// Whether `child` of `parent` is a branch of an `mc:AlternateContent` the readers do not
+/// read: [`ooxml_word_model::mc::chosen`]'s rule, on the working tree.
+fn unchosen(work: &Work, parent: Id, child: Id) -> bool {
+    if !work.is(parent, MC, "AlternateContent") || work.name(child).is_none_or(|n| n.namespace() != Some(MC)) {
+        return false;
+    }
+    let mut fallback = None;
+    for &branch in work.children(parent) {
+        if work.is(branch, MC, "Choice") {
+            let declared = |at: Id, prefix: &str| {
+                work.declarations(at)
+                    .into_iter()
+                    .find(|d| d.prefix.as_deref() == Some(prefix))
+                    .map(|d| d.uri.to_string())
+            };
+            let namespace = |prefix: &str| {
+                declared(branch, prefix)
+                    .or_else(|| declared(parent, prefix))
+                    .or_else(|| {
+                        work.descendants(branch).into_iter().find_map(|d| {
+                            let name = work.name(d)?;
+                            (name.prefix() == Some(prefix)).then(|| name.namespace().map(str::to_owned))?
+                        })
+                    })
+            };
+            if ooxml_word_model::mc::understood(work.get(branch, None, "Requires"), namespace) {
+                return branch != child;
+            }
+        } else if work.is(branch, MC, "Fallback") && fallback.is_none() {
+            fallback = Some(branch);
+        }
+    }
+    fallback != Some(child)
+}
+
 fn paragraphs(work: &Work, at: Option<&[u32]>) -> Vec<(Id, String)> {
     let root = work.root();
     std::iter::once(root)
         .chain(work.descendants(root))
         .filter(|n| work.is(*n, W, "p"))
         .filter(|n| {
-            let mut at = work.parent(*n);
-            while let Some(a) = at {
-                if work.is(a, MC, "Fallback") {
+            let mut at = *n;
+            while let Some(parent) = work.parent(at) {
+                if unchosen(work, parent, at) {
                     return false;
                 }
-                at = work.parent(a);
+                at = parent;
             }
             true
         })
@@ -242,11 +277,12 @@ fn locate(story: &StoryPart, raw: &str) -> Option<Located> {
     Some(Located { path, element, key })
 }
 
-/// The first `w:p` below `element` whose `w14:paraId` is `raw`, outside `mc:Fallback`.
+/// The first `w:p` below `element` whose `w14:paraId` is `raw`, in the branches of an
+/// `mc:AlternateContent` the readers read ([`ooxml_word_model::mc::chosen`]).
 fn by_para_id(element: &Arc<Element>, raw: &str, path: &mut Vec<u32>) -> Option<(Vec<u32>, Arc<Element>)> {
     for (k, node) in element.children().iter().enumerate() {
         let Some(child) = node.as_element() else { continue };
-        if child.name().is(Some(MC), "Fallback") {
+        if ooxml_word_model::mc::unchosen(element, child) {
             continue;
         }
         path.push(u32::try_from(k).ok()?);

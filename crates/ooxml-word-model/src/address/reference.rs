@@ -221,7 +221,10 @@ fn every_address_of_the_cases_resolves_and_is_refused_as_before() {
         let Ok(package) = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()) else {
             continue;
         };
-        let Ok(docx) = Docx::open(&crate::WordPackage::open(package).0) else {
+        let Ok(docx) = Docx::open(
+            &crate::WordPackage::open(package).0,
+            std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+        ) else {
             continue;
         };
         for raw in &addresses {

@@ -444,10 +444,6 @@ impl FormatDoc for ToyDoc {
         FormatDoc::update(&self.stored, caller, tool, update)
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        FormatDoc::readings(&self.stored)
-    }
-
     fn run(&self, tool: &dyn ToolSpec, run: &FormatRun<'_>) -> ToolResult<Value> {
         FormatDoc::run(&self.stored, tool, run)
     }

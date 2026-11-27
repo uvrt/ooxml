@@ -16,8 +16,6 @@ use std::sync::{Arc, OnceLock};
 
 /// The WordprocessingML namespace.
 pub(crate) const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-/// The markup compatibility namespace.
-const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 
 /// What a top-level block is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +112,7 @@ fn children(element: &Arc<Element>) -> impl Iterator<Item = (u32, u32, &Arc<Elem
     let mut seen: HashMap<&str, u32> = HashMap::new();
     element.children().iter().enumerate().filter_map(move |(k, node)| {
         let Node::Element(child) = node else { return None };
-        if child.name().is(Some(MC), "Fallback") {
+        if ooxml_word_model::mc::unchosen(element, child) {
             return None;
         }
         let count = seen.entry(child.name().local()).or_insert(0);

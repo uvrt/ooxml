@@ -98,10 +98,6 @@ impl FormatDoc for Stored<PackageDoc> {
         Ok((Self::any(version), changed, attempts, batch))
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        Arc::new(())
-    }
-
     fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
         let message = format!("{} has no tools for {} documents", run.tool, run.doc.kind());
         ToolResult::failed(ToolError::internal(message, "session:package"))

@@ -13,7 +13,7 @@
 
 use crate::docx::revisions::is_revision;
 use crate::docx::Found;
-use crate::ids::{MC, W, WP};
+use crate::ids::{W, WP};
 use ooxml_xml::{Element, Node};
 use runs::Runs;
 use std::sync::Arc;
@@ -220,7 +220,7 @@ impl BlockFacts {
     fn visit(&mut self, element: &Arc<Element>, path: &mut Vec<u32>, within: Within) {
         let name = element.name();
         let within = Within {
-            fallback: within.fallback || name.is(Some(MC), "Fallback"),
+            fallback: within.fallback,
             row_gone: within.row_gone || (name.is(Some(W), "tr") && row_deleted(element)),
         };
         let fallback = within.fallback;
@@ -257,6 +257,10 @@ impl BlockFacts {
         }
         for (k, node) in element.children().iter().enumerate() {
             if let Node::Element(child) = node {
+                let within = Within {
+                    fallback: within.fallback || crate::mc::unchosen(element, child),
+                    ..within
+                };
                 path.push(index(k));
                 self.visit(child, path, within);
                 path.pop();
@@ -265,7 +269,8 @@ impl BlockFacts {
     }
 }
 
-/// Where the walk is: inside an `mc:Fallback`, inside a table row whose deletion is pending.
+/// Where the walk is: inside a branch of an `mc:AlternateContent` the readers do not read
+/// ([`crate::mc::chosen`]), inside a table row whose deletion is pending.
 #[derive(Clone, Copy, Default)]
 struct Within {
     fallback: bool,

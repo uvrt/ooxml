@@ -64,7 +64,7 @@ fn hyphenation(root: w::Settings<'_>) -> Option<Hyphenation> {
         return None;
     }
     Some(Hyphenation {
-        zone: root.hyphenation_zone().and_then(w::Val::int),
+        zone: root.hyphenation_zone().and_then(w::Val::twips),
         limit: root.hyphen_limit().and_then(w::Val::int).unwrap_or(0),
         no_caps: root.no_caps_hyphenation().is_some_and(|c| attr_on(c.element(), "val")),
     })
@@ -115,7 +115,7 @@ impl Settings {
             }
         }
         compat(view, &mut settings);
-        settings.default_tab_stop = view.default_tab_stop().and_then(w::Val::int);
+        settings.default_tab_stop = view.default_tab_stop().and_then(w::Val::twips);
         settings.even_and_odd_headers = view.even_and_odd_headers().is_some_and(|e| attr_on(e.element(), "val"));
         settings.hyphenation = hyphenation(view);
         settings.color_map = colour_mapping(root);

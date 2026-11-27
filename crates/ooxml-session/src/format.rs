@@ -324,10 +324,6 @@ pub trait FormatDoc: Send + Sync + 'static {
         update: &PartUpdate<'_>,
     ) -> Result<(AnyVersion, bool, u32, bool), SessionError>;
 
-    /// What the format keeps for reading its versions (a Word document's readings), handed
-    /// with every version read ([`Opened::readings`]).
-    fn readings(&self) -> Arc<dyn Any + Send + Sync>;
-
     /// Run `tool` as `run` says on this document. Never fails: a refusal is the result's
     /// error.
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value>;

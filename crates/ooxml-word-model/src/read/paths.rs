@@ -315,7 +315,7 @@ mod tests {
     fn a_text_box_paragraph_in_a_cell() {
         let doc = root(&format!(
             "<w:p/><w:tbl><w:sdt><w:sdtContent><w:tr><w:tc><w:p><w:r><w:drawing><wp:anchor>{BOX}</wp:anchor></w:drawing>\
-             <mc:AlternateContent><mc:Choice><w:drawing><wp:inline><wp:extent cx=\"1\" cy=\"1\"/>{BOX}</wp:inline>\
+             <mc:AlternateContent><mc:Choice Requires=\"wps\"><w:drawing><wp:inline><wp:extent cx=\"1\" cy=\"1\"/>{BOX}</wp:inline>\
              </w:drawing></mc:Choice></mc:AlternateContent></w:r></w:p></w:tc></w:tr></w:sdtContent></w:sdt></w:tbl>"
         ));
         let cell = "w:body/w:tbl[1]/w:tr[1]/w:tc[1]/w:p[1]/w:r[1]";

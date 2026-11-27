@@ -71,8 +71,9 @@ impl<T> Latest<T> {
     }
 }
 
-/// One document's latest readings per story part, shared by its versions.
-#[derive(Debug, Default)]
+/// One document's latest readings per story part, shared by its versions, counted on the
+/// document's memory budget (no limit of their own).
+#[derive(Debug)]
 pub struct Kept {
     texts: Latest<PartTexts>,
     facts: Latest<PartFacts>,

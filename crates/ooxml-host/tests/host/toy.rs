@@ -540,10 +540,6 @@ impl FormatDoc for ToyDoc {
         FormatDoc::update(&self.0, caller, tool, update)
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        FormatDoc::readings(&self.0)
-    }
-
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
         let call = ToyCall { doc: self, run };
         let mut effects = ooxml_tools::OpEffects::default();

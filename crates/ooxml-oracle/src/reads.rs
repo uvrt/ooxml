@@ -17,7 +17,7 @@ use ooxml_opc::Package;
 use ooxml_session::{CallContext, DocKind, Session, SessionConfig};
 use ooxml_tools::{ArgType, Done, ToolError};
 use ooxml_tools_word::Version;
-use ooxml_word_model::docx::Versions;
+use ooxml_word_edit::WordDoc;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
@@ -40,7 +40,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let manifest = args.first().ok_or("usage: word-reads <manifest.json>")?;
     let text = std::fs::read_to_string(manifest).map_err(|e| e.to_string())?;
     let items: Vec<Value> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let mut opened: Option<(String, ooxml_word_model::WordPackage, Versions)> = None;
+    // each file opened once: its package for the facts, and the document as its editor
+    // opens it (where it opens), whose one chain of readings the tools read
+    let mut opened: Option<(String, ooxml_word_model::WordPackage, Result<WordDoc, String>)> = None;
     for item in items {
         let file = item
             .get("file")
@@ -52,17 +54,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if opened.as_ref().is_none_or(|(f, _, _)| f != file) {
             let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
             let package = Package::open(Arc::from(bytes), &Limits::default()).map_err(|e| format!("{file}: {e}"))?;
-            opened = Some((
-                file.to_owned(),
-                ooxml_word_model::WordPackage::open(package).0,
-                Versions::new(),
-            ));
+            let word = WordDoc::open(package.clone(), Arc::new(crate::edits::Unlimited)).map_err(|e| e.to_string());
+            opened = Some((file.to_owned(), ooxml_word_model::WordPackage::open(package).0, word));
         }
-        let Some((_, package, versions)) = opened.as_ref() else {
+        let Some((_, package, word)) = opened.as_ref() else {
             continue;
         };
+        let package = word.as_ref().map_or(package, WordDoc::package);
         let name = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or(file);
-        let version = Version::new(name, package, 1, versions);
+        let version = Version::new(name, package, 1).with_word(word.as_ref().ok());
         // a case that panics is reported as one (crate::panics), and the run goes on
         let reply = crate::panics::caught(|| {
             if let Some(fact) = item.get("fact").and_then(Value::as_str) {
@@ -77,6 +77,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     .map_or(&[][..], Vec::as_slice);
                 let limit = item.get("layout_timeout").and_then(Value::as_f64);
                 through_session(tool, &arguments, (file, name), (item.get("fonts"), limit), before)
+            } else if let Err(unread) = word {
+                json!({"error": ToolError::internal(unread.clone(), "word:model").to_json()})
             } else {
                 call(tool, &arguments, &version)
             }

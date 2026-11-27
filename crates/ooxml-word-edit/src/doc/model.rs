@@ -24,6 +24,9 @@ impl DocModel for WordDoc {
     }
 
     fn apply(&mut self, change: &Change) -> Result<(), ModelError> {
+        if self.strict() {
+            return Err(ModelError::Strict);
+        }
         let (package, ids) = match change {
             Change::Splice { part, patch, draws, .. } if !draws.is_empty() => {
                 // what the transaction's earlier splices inserted, named as applied here

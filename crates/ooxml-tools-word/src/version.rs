@@ -1,7 +1,8 @@
 //! Owns: [`Version`], one version of a Word document as a reading tool is handed it: its
-//! name, its package, its number and the document's kept readings, from which the
-//! version's [`Docx`] is taken (read once per version; a new version reads only what
-//! changed); where the call may ask where its blocks are laid out ([`Placer`]); the
+//! name, its package, its number and the document as its editor holds it, whose reading
+//! of the version is the version's [`Docx`] (the document's one chain of readings: read
+//! once per version, a new version reads only what changed, kept on the document's memory
+//! budget); where the call may ask where its blocks are laid out ([`Placer`]); the
 //! version as the session's editor holds it, where it owns the document ([`Owned`]); and
 //! [`Others`], the other documents the call names, at the versions pinned for it.
 //!
@@ -14,7 +15,7 @@ use crate::placements::Placer;
 use ooxml_tools::{Limits, ToolError};
 use ooxml_word_edit::validate::Problem;
 use ooxml_word_edit::WordDoc;
-use ooxml_word_model::docx::{Docx, Versions};
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::WordPackage;
 use std::sync::Arc;
 
@@ -30,8 +31,6 @@ pub struct Version<'a> {
     pub package: &'a WordPackage,
     /// The version's number.
     pub number: u64,
-    /// The document's kept readings.
-    pub versions: &'a Versions,
     /// Where the call may ask where blocks are laid out (`None`: nowhere; a tool that needs
     /// it refuses with the call that works without).
     pub placer: Option<&'a dyn Placer>,
@@ -43,8 +42,9 @@ pub struct Version<'a> {
     /// version the session pinned for the call.
     pub others: Others<'a>,
     /// The document at this version as the session holds it, where it holds it as a Word
-    /// document (`None`: only its package): its ids and their renames, so that an address
-    /// in it resolves as the document's own tools resolve it.
+    /// document (`None`: only its package, which no reading tool reads): its ids and their
+    /// renames, so that an address in it resolves as the document's own tools resolve it,
+    /// and its reading ([`Version::docx`]).
     pub word: Option<&'a WordDoc>,
     /// The host's limits on the call's reply (a page's characters, a listing's items).
     pub limits: Limits,
@@ -65,17 +65,15 @@ pub struct LayoutCounts {
 }
 
 impl<'a> Version<'a> {
-    /// What every version is: its document's name, its package, its number and the
-    /// document's kept readings. The rest -- a placer, the session's own version, other
+    /// What every version is: its document's name, its package and its number. The rest -- a placer, the session's own version, other
     /// documents, the document as a Word document -- starts empty, the limits at their
     /// defaults, and is given with the `with_*` setters.
     #[must_use]
-    pub fn new(name: &'a str, package: &'a WordPackage, number: u64, versions: &'a Versions) -> Self {
+    pub fn new(name: &'a str, package: &'a WordPackage, number: u64) -> Self {
         Self {
             name,
             package,
             number,
-            versions,
             placer: None,
             owned: None,
             others: Others::default(),
@@ -138,13 +136,20 @@ impl Version<'_> {
             .map_or_else(|| address.to_owned(), |owned| owned.doc.ids().follow_address(address))
     }
 
-    /// This version's reading.
+    /// This version's reading: the editor's, from the document's one chain of readings.
     ///
     /// # Errors
-    /// `internal` when the package has no main part or a story part is not XML.
+    /// `internal` when the session does not hold the document as a Word document (a kind
+    /// it keeps only as a package, or one the application's own host holds), or a story
+    /// part is not XML.
     pub fn docx(&self) -> Result<Arc<Docx>, ToolError> {
-        self.versions
-            .docx(self.number, self.package)
+        let word = self.word.or(self.owned.map(|o| o.doc)).ok_or_else(|| {
+            ToolError::internal(
+                format!("{} is not a Word document the session holds", self.name),
+                "word:model",
+            )
+        })?;
+        word.docx()
             .map_err(|e| ToolError::internal(e.to_string(), "word:model"))
     }
 }

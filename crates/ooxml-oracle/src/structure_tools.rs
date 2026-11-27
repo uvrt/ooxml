@@ -26,7 +26,6 @@ use ooxml_tools_word::{
 use ooxml_word_edit::touched::{touched, Touched};
 use ooxml_word_edit::validate::{problems, Delta};
 use ooxml_word_edit::{Editor, Tracking, WordDoc};
-use ooxml_word_model::docx::Versions;
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, OnceLock};
 
@@ -54,9 +53,8 @@ pub fn case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
 fn registered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<ToolResult<Value>> {
     static REGISTRY: OnceLock<Registry> = OnceLock::new();
     let tool = REGISTRY.get_or_init(ooxml_session_word::registry).named(tool)?;
-    let versions = Versions::new();
     let last_check = LastCheck::default();
-    let version = opened_version(editing, &versions, &last_check);
+    let version = opened_version(editing, &last_check);
     let spec = tool.spec();
     let Accepted {
         mut arguments,
@@ -113,11 +111,7 @@ impl FormatCall for Outside<'_> {
 /// owns it: its Word document, the problems it opened with, the other documents the call
 /// names; `last_check` the document's (no layout is handed: a check that needs one leaves
 /// the call to the host).
-pub(crate) fn opened_version<'a>(
-    editing: &Editing<'a>,
-    versions: &'a Versions,
-    last_check: &'a LastCheck,
-) -> Version<'a> {
+pub(crate) fn opened_version<'a>(editing: &Editing<'a>, last_check: &'a LastCheck) -> Version<'a> {
     let owned = Owned {
         doc: editing.opened,
         baseline: editing.editor.baseline(),
@@ -131,7 +125,7 @@ pub(crate) fn opened_version<'a>(
         tracking: editing.tracking.map(|t| t.author.as_str()),
         min_text_size: None,
     };
-    Version::new("case.docx", editing.opened.package(), 1, versions)
+    Version::new("case.docx", editing.opened.package(), 1)
         .with_others(editing.others)
         .with_word(Some(editing.opened))
         .with_owned(Some(owned))
@@ -245,10 +239,9 @@ pub(crate) fn tool_case(
     };
     let sources = case_sources(case, refused);
     let copy = other_document(bytes, case);
-    let copy_versions = Versions::new();
     let others: Vec<(&str, Version<'_>)> = copy
         .iter()
-        .map(|(package, word)| ("d2", other_version(package, word.as_ref(), &copy_versions)))
+        .map(|(package, word)| ("d2", other_version(package, word.as_ref())))
         .collect();
     let call_editor = CallEditor::new(&editor);
     let editing = Editing::new(&call_editor, &caller, &opened, "d1", &Never, date)
@@ -302,12 +295,8 @@ fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<Strin
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
-fn other_version<'a>(
-    package: &'a ooxml_word_model::WordPackage,
-    word: Option<&'a WordDoc>,
-    versions: &'a Versions,
-) -> Version<'a> {
-    Version::new("copy.docx", package, 1, versions).with_word(word)
+fn other_version<'a>(package: &'a ooxml_word_model::WordPackage, word: Option<&'a WordDoc>) -> Version<'a> {
+    Version::new("copy.docx", package, 1).with_word(word)
 }
 
 /// The rows the case's `from` names of the datasets it defines (`datasets`: `{id, columns,

@@ -11,12 +11,9 @@
 use super::cells::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use super::keeps::RowKeep;
-use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-
-/// What the rows' keeps hold at most where no budget is given, bytes.
-pub const ROWS_MEMO_BYTES: usize = 8 << 20;
 
 /// One table's rows' keeps, and the elements they were read from, held weakly.
 #[derive(Debug, Clone)]
@@ -63,12 +60,6 @@ impl std::fmt::Debug for RowsMemo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
         f.debug_struct("RowsMemo").field("stats", &memo.0.stats()).finish()
-    }
-}
-
-impl Default for RowsMemo {
-    fn default() -> RowsMemo {
-        RowsMemo::new(Arc::new(Limit::new(ROWS_MEMO_BYTES)))
     }
 }
 

@@ -16,13 +16,10 @@
 use super::cells::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use crate::ids::W;
-use ooxml_derive::{AddressHash, CacheBudget, Limit, Memo, MemoStats, Weigh};
+use ooxml_derive::{AddressHash, CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::any::{Any, TypeId};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-
-/// What the block facts hold at most where no budget is given, bytes.
-pub const BLOCK_FACTS_BYTES: usize = 16 << 20;
 
 /// A fact of one block: a pure function of the block's element, the outermost table holding
 /// it and the formatting parts.
@@ -81,12 +78,6 @@ impl std::fmt::Debug for BlockFacts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let memo = self.memo.lock().unwrap_or_else(PoisonError::into_inner);
         f.debug_struct("BlockFacts").field("stats", &memo.0.stats()).finish()
-    }
-}
-
-impl Default for BlockFacts {
-    fn default() -> BlockFacts {
-        BlockFacts::new(Arc::new(Limit::new(BLOCK_FACTS_BYTES)))
     }
 }
 

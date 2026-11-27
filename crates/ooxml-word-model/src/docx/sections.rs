@@ -458,7 +458,10 @@ mod tests {
             let Ok(package) = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()) else {
                 continue;
             };
-            let Ok(docx) = Docx::open(&crate::WordPackage::open(package).0) else {
+            let Ok(docx) = Docx::open(
+                &crate::WordPackage::open(package).0,
+                std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+            ) else {
                 continue;
             };
             let Some(body) = docx.body() else { continue };

@@ -17,7 +17,6 @@ use ooxml_tools_word::{
     check, Check, EnginePages, LastCheck, LayoutLimit, Owned, Version, WordLayout, CHECK_NO_LAYOUT,
 };
 use ooxml_word_edit::Editor;
-use ooxml_word_model::docx::Versions;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -66,8 +65,7 @@ pub(crate) fn limited(
     )
     .unwrap();
     let doc = editor.store().snapshot().doc().clone();
-    let versions = Versions::new();
-    let version = Version::new("a.docx", doc.package(), number, &versions)
+    let version = Version::new("a.docx", doc.package(), number)
         .with_owned(Some(Owned {
             doc: &doc,
             opened: &doc,

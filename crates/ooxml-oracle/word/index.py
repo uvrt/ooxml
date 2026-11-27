@@ -134,6 +134,12 @@ OBSERVATIONS: dict[str, dict] = {
         "probe": "crates/ooxml-oracle/word/probes/separator_probe.py",
         "readers": ["python/docx-agent/tests/test_own_rows.py"],
     },
+    "strict-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/strict_probe.py",
+        "readers": ["crates/ooxml-oracle/tests/integration/word_observed/strict.rs",
+                    "crates/ooxml-session-word/tests/integration/strict.rs",
+                    "crates/ooxml-word-model/src/xmlread.rs"],
+    },
     "styleref-word.json": {
         "probe": "crates/ooxml-oracle/word/probes/styleref_probe.py",
         "readers": ["crates/ooxml-oracle/word/tests/test_styleref_recorded.py"],

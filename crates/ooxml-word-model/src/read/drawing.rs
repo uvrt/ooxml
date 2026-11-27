@@ -2,8 +2,8 @@
 //! parts of its document reader: an inline drawing's mark (`drawing:cx:cy:l:t:r:b`, its
 //! extent and effect extent, EMU), what it shows (a picture by relationship, or a shape,
 //! group, chart or SmartArt), a floating drawing's anchor as written (position, extent,
-//! wrap, stacking), and a text box's blocks. Word's `mc:AlternateContent` choice is the
-//! DrawingML one.
+//! wrap, stacking), and a text box's blocks. Of an `mc:AlternateContent`, the branch the
+//! readers read is drawn ([`crate::mc::chosen`]): Word's DrawingML Choice.
 //!
 //! Must not: read how a shape is painted -- geometry, fill, outline, effects, a picture's
 //! crop -- which its painter reads from the element kept as the graphic's `source`.
@@ -21,12 +21,12 @@ use std::sync::Arc;
 const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const DRAWN_EFFECTS: &[&str] = &["outerShdw", "innerShdw", "glow", "softEdge"];
 
-/// The `w:drawing` a run's object is: itself, or an `mc:AlternateContent`'s first choice
-/// holding one.
+/// The `w:drawing` a run's object is: itself, or the one of the branch of an
+/// `mc:AlternateContent` the readers read ([`crate::mc::chosen`]).
 pub(crate) fn drawing_element(node: &Element) -> Option<&Element> {
     match local(node) {
         "drawing" => Some(node),
-        "AlternateContent" => children(node, "Choice").find_map(|c| child(c, "drawing")),
+        "AlternateContent" => crate::mc::chosen(node).and_then(|branch| child(branch, "drawing")),
         _ => None,
     }
 }

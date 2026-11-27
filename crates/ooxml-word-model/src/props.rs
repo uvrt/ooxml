@@ -8,7 +8,7 @@
 
 use crate::theme::ThemeColours;
 use crate::value::{joined, known, text, Border, FontRef, Key, Props, Shading, TabStop, Text, TextEffect, Value};
-use crate::xmlread::{attr, attr_int, attr_on, child, elements, is_on, local};
+use crate::xmlread::{attr, attr_int, attr_on, child, elements, is_on, local, twips};
 use ooxml_xml::Element;
 use std::sync::Arc;
 
@@ -187,7 +187,7 @@ fn tab_stops(node: &Element) -> Value {
         .filter(|t| local(t) == "tab")
         .filter_map(|t| {
             Some(TabStop {
-                position: attr_int(t, "pos")?,
+                position: attr(t, "pos").and_then(twips)?,
                 alignment: text(attr(t, "val").unwrap_or("left")),
                 leader: attr(t, "leader").map(text),
             })
@@ -204,7 +204,8 @@ fn read_spacing(node: &Element, out: &mut Props) {
         ("beforeLines", "spacing.beforeLines"),
         ("afterLines", "spacing.afterLines"),
     ] {
-        if let Some(v) = attr_int(node, k) {
+        // (a universal measure, `12pt`, where a strict document writes one)
+        if let Some(v) = attr(node, k).and_then(twips) {
             out.insert(Key::Borrowed(name), Value::Int(v));
         }
     }
@@ -228,7 +229,7 @@ fn read_indent(node: &Element, out: &mut Props) {
         ("ind.firstLine", &["firstLine"][..]),
         ("ind.hanging", &["hanging"][..]),
     ] {
-        if let Some(v) = aliases.iter().find_map(|a| attr_int(node, a)) {
+        if let Some(v) = aliases.iter().find_map(|a| attr(node, a).and_then(twips)) {
             out.insert(Key::Borrowed(name), Value::Int(v));
         }
     }
@@ -298,7 +299,9 @@ fn width(node: &Element) -> Value {
             None => Value::Width(0, text(kind)),
         };
     }
-    Value::Width(py_float(raw).map_or(0, truncate), text(kind))
+    // (a universal measure, `150pt`, where a strict document writes one)
+    let value = py_float(raw).map(truncate).or_else(|| twips(raw)).unwrap_or(0);
+    Value::Width(value, text(kind))
 }
 
 /// A decimal number as Python's `float()` reads the forms a document holds (sign, digits,

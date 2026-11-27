@@ -211,6 +211,10 @@ pub enum ModelError {
     /// The version could not be read as a Word document.
     #[error("{0}")]
     Unreadable(String),
+    /// The document is a strict Open XML document, which no change is written into
+    /// (`WordDoc::strict`).
+    #[error("a strict Open XML document is not changed here: save it as a Word Document (.docx) in Word first")]
+    Strict,
 }
 
 impl Change {

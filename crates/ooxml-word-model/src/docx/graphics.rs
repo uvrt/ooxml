@@ -11,7 +11,8 @@
 
 use crate::docx::drawings::{C, DGM};
 use crate::docx::Docx;
-use crate::w::NS_R;
+/// Relationships named from a part, as docx-agent reads them (transitional only).
+const NS_R: &str = crate::xmlread::Ns::R.uri();
 use ooxml_chart::data::{chart_data, ChartData, Point};
 use ooxml_drawingml::diagram::{diagram_nodes, diagram_summary, DiagramNode};
 use ooxml_xml::Element;

@@ -22,6 +22,7 @@ mod glyphs;
 mod lines;
 mod notes;
 mod pagination;
+mod strict;
 mod tables;
 mod wrap_side;
 mod wrap_table;
