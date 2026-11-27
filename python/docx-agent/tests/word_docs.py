@@ -30,13 +30,12 @@ _ITEM = re.compile(rf"^(.*?) ?<!-- ({_ID})(?: [^>]*?)? -->$")
 def blank(*, page: str = "A4", landscape: bool = False, language: str = "en-US",
           separators: tuple[str, str] = (".", ","), title: str | None = None, author: str | None = None,
           created: datetime = CREATED) -> bytes:
-    """A new blank document's package as the Rust core makes it (``ooxml_core.new_document``,
-    what ``new_document`` writes)."""
-    import ooxml_core
+    """A new blank document's package as the Rust core makes it (what ``new_document``
+    writes; the oracle's ``blank_package``)."""
+    from blank_package import blank as made
 
-    stamp = created.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return bytes(ooxml_core.new_document(page=(page, landscape), language=language, separators=separators,
-                                         properties=(title, author, stamp)))
+    return made(page=page, landscape=landscape, language=language, separators=separators, title=title,
+                author=author, created=created)
 
 
 def replaced(data: bytes, parts: dict[str, Any]) -> bytes:

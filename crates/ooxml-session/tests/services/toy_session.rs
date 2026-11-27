@@ -440,7 +440,7 @@ impl FormatDoc for ToyDoc {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
         FormatDoc::update(&self.stored, caller, tool, update)
     }
 

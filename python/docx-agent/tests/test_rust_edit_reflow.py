@@ -7,9 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-ooxml_core = pytest.importorskip("ooxml_core")
-if not hasattr(ooxml_core, "Version"):
-    pytest.skip("ooxml_core has no Version", allow_module_level=True)
 
 from ooxml_edit.tools import Toolbox
 

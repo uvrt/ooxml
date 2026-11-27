@@ -1,13 +1,13 @@
 //! Owns: a call's context ([`CallContext`]: who calls, its cancellation token, its
-//! deadline, the versions it reads, where it may ask where blocks are laid out, the host's
-//! names for its documents, the limits on its reply), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
+//! deadline, the versions it reads, where it may ask where blocks are laid out, the limits
+//! on its reply), the token a host cancels a call with ([`CancelToken`]), the [`Cancel`] a call
 //! runs under (its token, its deadline read from the session's [`Clock`], and the
 //! session's own [`Cancel`]), and the store's clock read through the session's.
 //!
 //! Must not: read the system clock (the host gives the [`Clock`]) or keep state beyond a
 //! call.
 
-use crate::{DocNames, Opened};
+use crate::Opened;
 use ooxml_base::{Cancel, Clock};
 use ooxml_store::Caller;
 use serde_json::{Map, Value};
@@ -65,10 +65,6 @@ pub struct CallContext {
     /// stand when the call starts, which `render` refuses past; empty: none. The call's own
     /// limit is in [`Self::limits`].
     pub image_budgets: Vec<ooxml_tools::ImageBudget>,
-    /// The host's names for the documents the call names (`d1` in the host's own session),
-    /// each the session's id of one: the call names its documents by these, and its reply
-    /// names them so. Empty: by the session's ids.
-    pub names: DocNames,
     /// The host's limits on the call's reply: a page's characters, a listing's items
     /// (docx-agent's `Limits.max_result_chars`, `Limits.max_list_items`).
     pub limits: ooxml_tools::Limits,

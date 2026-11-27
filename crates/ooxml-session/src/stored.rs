@@ -136,22 +136,10 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
         self.held.store()
     }
 
-    /// The head, or for the thread whose step group holds the document the version its ops
-    /// left ([`crate::group`]).
+    /// The head.
     #[must_use]
     pub fn head(&self) -> Snapshot<D> {
-        let store = self.store();
-        store
-            .txn_current(crate::group::this_thread())
-            .unwrap_or_else(|| store.snapshot())
-    }
-
-    /// The owner of the step group this thread holds on the document, if it holds one: its
-    /// calls' edits run in the group's transaction.
-    #[must_use]
-    pub fn batch_owner(&self) -> Option<TxnOwner> {
-        let owner = crate::group::this_thread();
-        self.store().holds(owner).then_some(owner)
+        self.store().snapshot()
     }
 
     /// `snapshot` erased.
@@ -159,10 +147,8 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
         AnyVersion::of(snapshot, H::package)
     }
 
-    /// Commit a test's update of parts as `caller`, made by `tool`: in this thread's step
-    /// group where it holds one, at a savepoint (a commit of its own would wait for the gate
-    /// the group holds), else committed. The version it leaves, whether it changed anything,
-    /// how many times it was prepared, and whether it ran in the group.
+    /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
+    /// whether it changed anything, and how many times it was prepared.
     ///
     /// # Errors
     /// The update's or the store's.
@@ -171,24 +157,15 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(Snapshot<D>, bool, u32, bool), SessionError> {
+    ) -> Result<(Snapshot<D>, bool, u32), SessionError> {
         let store = self.store();
         let update = &Parts::<D, H> {
             update,
             model: PhantomData,
         };
-        let (version, previous, attempts, batch) = match self.batch_owner() {
-            Some(owner) => {
-                let ran = store.in_txn(owner, |tx| tx.run_op(update))?;
-                ran.out?;
-                (ran.after, ran.changed.then_some(ran.before), 1, true)
-            }
-            None => {
-                let done = store.run(caller, update)?;
-                let previous = done.previous.filter(|_| done.changed);
-                (done.version, previous, done.attempts, false)
-            }
-        };
+        let done = store.run(caller, update)?;
+        let previous = done.previous.filter(|_| done.changed);
+        let (version, attempts) = (done.version, done.attempts);
         if let Some(previous) = &previous {
             let by = StepBy {
                 caller: caller.name(),
@@ -197,7 +174,7 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
             };
             self.held.noted(previous, &version, by)?;
         }
-        Ok((version, previous.is_some(), attempts, batch))
+        Ok((version, previous.is_some(), attempts))
     }
 
     /// The state numbers of the steps its history holds (undo's and plain redo's).
@@ -353,12 +330,11 @@ fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Op
 /// A document's versions and history as the session reads any document's: [`Stored`]
 /// erased.
 pub trait StoredDoc: Send + Sync {
-    /// The head version; for the thread whose step group holds the document, the version
-    /// its ops left.
+    /// The head version.
     fn head(&self) -> AnyVersion;
 
-    /// The state numbered `number` the head reaches: this thread's group's version or the
-    /// head, else the newest such state undo or redo can bring back; `None` when none is kept.
+    /// The state numbered `number` the head reaches: the head, else the newest such state undo
+    /// or redo can bring back; `None` when none is kept.
     fn numbered(&self, number: u64) -> Option<AnyVersion>;
 
     /// The history in state numbers: the highest given, the steps undo can reach and those
@@ -457,7 +433,6 @@ impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
     }
 
     fn numbered(&self, number: u64) -> Option<AnyVersion> {
-        // this thread's group's version first: its ops' state, numbered as it will be
         let head = Stored::head(self);
         let found = if head.number() == number {
             Some(head)

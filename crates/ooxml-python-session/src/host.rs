@@ -9,12 +9,10 @@
 //! values all come in as values), hold a Python object, or do a host's work itself.
 
 use crate::adapters::{context, SessionStop};
-use crate::context::PyCallContext;
+use crate::errors::to_py;
 use crate::layout::PyWordPages;
 use crate::locale::locale_of;
-use crate::options::PyCallLayout;
 use crate::pages::PyPageSetup;
-use crate::session::to_py;
 use crate::version::PyVersion;
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools, Opening};
 use ooxml_session::elsewhere::ElsewhereFormat;
@@ -329,7 +327,7 @@ impl PyHostSession {
         doc_id: Option<&str>,
         state: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<String> {
-        let state = state.map(crate::session::state_text).transpose()?;
+        let state = state.map(crate::errors::state_text).transpose()?;
         let kind = match kind {
             Some(k) => Some(
                 DocKind::parse(k)
@@ -512,45 +510,36 @@ impl PyHostSession {
         self.inner.session().document_memory(&id).map_err(|e| to_py(&e))
     }
 
-    /// The live view of `doc` (`ooxml_core.Session.view`'s, on the host's documents).
+    /// The live view of the Word document `doc`: a dict of its pages now (`token`, `pages`:
+    /// `(number, blocks, width, height)` each, `changed`, `since`, `stale`, `note`,
+    /// `version`), the pages changed since the view whose token is `since` (every page
+    /// without one). Laid out by the document's own engine within the host's limit on laying
+    /// out.
     ///
     /// # Errors
-    /// As `Session.view`.
-    #[pyo3(signature = (doc, since = None, *, layout, context = None))]
-    fn view<'py>(
-        &self,
-        py: Python<'py>,
-        doc: &str,
-        since: Option<&str>,
-        layout: PyRef<'_, PyCallLayout>,
-        context: Option<PyRef<'_, PyCallContext>>,
-    ) -> PyResult<Bound<'py, PyDict>> {
-        crate::view::view(py, self.inner.session(), (doc, since), &layout, context.as_deref())
+    /// `KeyError` for a document not open, `ValueError` for one that is not Word's,
+    /// `ViewRefused` for a version not laid out, `TimeoutError` past the host's limit.
+    #[pyo3(signature = (doc, since = None))]
+    fn view<'py>(&self, py: Python<'py>, doc: &str, since: Option<&str>) -> PyResult<Bound<'py, PyDict>> {
+        crate::view::view(py, &self.inner, (doc, since))
     }
 
-    /// A page of the live view as SVG (`ooxml_core.Session.page_svg`'s, on the host's
-    /// documents).
+    /// Page `page` (1-based) of the version a view's `token` names, as `(svg, warnings)`,
+    /// its text drawn as `text` (`"text"`; outlines are refused).
     ///
     /// # Errors
-    /// As `Session.page_svg`.
-    #[pyo3(signature = (doc, page, token, *, layout, text = "text", context = None))]
+    /// As [`Self::view`]; `UnknownToken` for a token no view gave or kept, `IndexError` for
+    /// a page the version does not have.
+    #[pyo3(signature = (doc, page, token, *, text = "text"))]
     fn page_svg(
         &self,
+        py: Python<'_>,
         doc: &str,
         page: usize,
         token: &str,
-        layout: PyRef<'_, PyCallLayout>,
         text: &str,
-        context: Option<PyRef<'_, PyCallContext>>,
     ) -> PyResult<(String, Vec<String>)> {
-        let py = layout.py();
-        crate::view::page_svg(
-            py,
-            self.inner.session(),
-            (doc, page, token),
-            (&layout, text),
-            context.as_deref(),
-        )
+        crate::view::page_svg(py, &self.inner, (doc, page, token), text)
     }
 
     /// Close `doc`: the addresses of its datasets, which stay, frozen.

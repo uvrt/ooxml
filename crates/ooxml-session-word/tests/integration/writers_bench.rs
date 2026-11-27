@@ -9,11 +9,12 @@
 //!   list and out again (`word_lists`), a comment added (`word_comments`) -- and a reader
 //!   that checks the layout (`check`);
 //! - `batch` (not in the default): the small writers and the reader beside a host's batch of
-//!   [`BATCH_OPS`] text edits on one paragraph, run as one transaction that holds the
-//!   document's gate from its open to its close (`Session::open_group`);
+//!   [`BATCH_OPS`] text edits on one paragraph, run as the Rust host runs one (Phase 3's
+//!   optimistic batch: the document's store runs it as one transaction, `StoredDoc::run_batch`,
+//!   each op the session's `edit_in` in it, what the ops keep applied once it is published);
 //!
-//! The model's `batch` tool beside the same writers (Phase 3's optimistic batch) is timed through
-//! the Rust host: ooxml-oracle's `host_batch_bench`.
+//! The model's `batch` tool through the whole host beside the same writers is ooxml-oracle's
+//! `host_batch_bench`.
 //!
 //! `SESSION_WRITERS_PHASES` (default `small,mixed`) names the phases; a phase named after one
 //! whole-document worker (`fields`, `styles`, `lists`, `comments`, `check`) runs the small
@@ -32,9 +33,11 @@ use crate::common::{test_fonts, Memos, Never, NoFonts, NoParts, Unlimited};
 use ooxml_base::context::Timestamp;
 use ooxml_base::{Clock, Context, Limits};
 use ooxml_opc::Package;
-use ooxml_session::{CallContext, DocId, DocKind, MemoryBudget, Session, SessionConfig};
+use ooxml_session::{
+    BatchOps, CallCancel, CallContext, Deferred, DocId, DocKind, MemoryBudget, OpRan, Session, SessionConfig,
+};
 use ooxml_session_word::SessionPages;
-use ooxml_store::{Caller, Histogram, StoreConfig};
+use ooxml_store::{Caller, Histogram, OpTxn, StoreConfig};
 use ooxml_tools_word::PageSetup;
 use ooxml_word_edit::Editor;
 use ooxml_word_pages::EngineOptions;
@@ -357,26 +360,78 @@ fn reader() -> Worker {
 /// How many ops the `batch` phase's batch holds.
 const BATCH_OPS: usize = 20;
 
-/// A host's batch: [`BATCH_OPS`] text edits of one paragraph in one step group, closed as
-/// one step; timed whole (open to close).
+/// A batch's ops as the host hands them to the store: each a `word_set_text` of one paragraph,
+/// back and forth, run in the batch's transaction; what each keeps once it is published.
+struct TextOps<'a> {
+    session: &'a Session,
+    doc: &'a DocId,
+    id: &'a str,
+    texts: [&'a str; 2],
+    caller: &'a CallContext,
+    kept: Mutex<Vec<Deferred>>,
+    failed: AtomicUsize,
+}
+
+impl BatchOps for TextOps<'_> {
+    fn attempt(&self) {
+        self.kept.lock().unwrap().clear();
+        self.failed.store(0, Ordering::Relaxed);
+    }
+
+    fn count(&self) -> usize {
+        BATCH_OPS
+    }
+
+    fn atomic(&self) -> bool {
+        false
+    }
+
+    fn run(&self, index: usize, txn: &dyn OpTxn) -> OpRan {
+        let text = self.texts[index % 2];
+        let mut arguments = serde_json::Map::new();
+        arguments.insert("doc".into(), Value::from(self.doc.to_string()));
+        arguments.insert("target".into(), Value::from(self.id));
+        arguments.insert("text".into(), Value::from(text));
+        let ran = self.session.edit_in("word_set_text", arguments, self.caller, txn);
+        if ran.result.is_error() {
+            self.failed.fetch_add(1, Ordering::Relaxed);
+            return OpRan::Failed;
+        }
+        self.kept.lock().unwrap().extend(ran.deferred);
+        OpRan::Applied
+    }
+}
+
+/// A host's batch: [`BATCH_OPS`] text edits of one paragraph as one transaction (one step),
+/// run by the document's store as the host runs one; timed whole.
 fn batch_writer(target: (String, String)) -> Worker {
     let caller = context("batch");
     let (id, text) = target;
     let other = swapped(&text);
     let work: Work = Box::new(move |s, d, book, _| {
         let started = Instant::now();
-        let group = s.open_group(d).unwrap();
-        let mut failed = 0;
-        for op in 0..BATCH_OPS {
-            let set = if op % 2 == 0 { &other } else { &text };
-            let arguments = json!({"doc": d.to_string(), "target": id, "text": set});
-            failed += usize::from(s.call("word_set_text", arguments, &caller).is_error());
+        let ops = TextOps {
+            session: s,
+            doc: d,
+            id: &id,
+            texts: [&other, &text],
+            caller: &caller,
+            kept: Mutex::new(Vec::new()),
+            failed: AtomicUsize::new(0),
+        };
+        let format = s.format_doc(d).unwrap();
+        let committed = format.stored().run_batch(&caller.caller, &ops);
+        if let Ok(committed) = &committed {
+            let ports = s.context();
+            let cancel = CallCancel::new(&caller, &*ports.cancel, &*ports.clock);
+            for keep in ops.kept.into_inner().unwrap() {
+                keep(&*format, &committed.version, &caller, &cancel);
+            }
         }
-        s.close_group(d, &group, &caller, Some("batch")).unwrap();
         let mut book = book.lock().unwrap();
         let calls = book.entry(format!("batch of {BATCH_OPS}")).or_default();
         calls.times.push(started.elapsed());
-        calls.failed += failed;
+        calls.failed += ops.failed.load(Ordering::Relaxed) + usize::from(committed.is_err());
     });
     Worker {
         label: "batch".to_owned(),

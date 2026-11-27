@@ -93,9 +93,9 @@ impl FormatDoc for Stored<PackageDoc> {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
-        let (version, changed, attempts, batch) = Stored::update(self, caller, tool, update)?;
-        Ok((Self::any(version), changed, attempts, batch))
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
+        let (version, changed, attempts) = Stored::update(self, caller, tool, update)?;
+        Ok((Self::any(version), changed, attempts))
     }
 
     fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
@@ -138,8 +138,7 @@ impl Document {
         self.doc.stored()
     }
 
-    /// The head version; for the thread whose batch holds the document, the version its
-    /// ops left ([`crate::group`]).
+    /// The head version.
     pub(crate) fn head(&self) -> AnyVersion {
         self.stored().head()
     }

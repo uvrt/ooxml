@@ -40,7 +40,7 @@ class PlanTest(unittest.TestCase):
             self.assertEqual(versions[-1], "3.15")
         # Windows: only the packages with code of their own there.
         self.assertEqual(_legs(out, "windows"), {name: ["3.15"] for name in SMOKE})
-        self.assertEqual(SMOKE, ["ooxml-common", "ooxml-edit"])
+        self.assertEqual(SMOKE, ["ooxml-common"])
         self.assertIs(out["any_windows"], True)
         self.assertEqual(out["macos"]["include"], [])
         self.assertIs(out["any_macos"], False)
@@ -203,7 +203,8 @@ class ShardTest(unittest.TestCase):
         out = _plan("push")
         for key in ("linux", "windows", "ft"):
             for leg in out[key]["include"]:
-                self.assertEqual(leg.get("core", False), leg["package"] in ("docx2svg", "docx-agent", "xlsx-agent"), leg)
+                self.assertEqual(leg.get("core", False), leg["package"] in (
+                    "ooxml-edit", "docx2svg", "pptx-agent", "docx-agent", "xlsx-agent"), leg)
 
     def test_every_file_in_exactly_one_shard(self) -> None:
         for name, spec in ci.PACKAGES.items():

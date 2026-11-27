@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("ooxml_core")
 pytest.importorskip("docx_agent.tools")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "crates" / "ooxml-oracle" / "python"))

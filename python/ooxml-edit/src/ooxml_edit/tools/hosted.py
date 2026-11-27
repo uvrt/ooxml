@@ -1,5 +1,11 @@
 """The Rust host behind the :class:`~.dispatch.Toolbox` (Phase 3, E1): the facade's Rust path.
 
+The Rust core's Python module (``ooxml_core``) is internal (decision D6): the facade reaches it
+here, and a format library through this module's :func:`rust_host`, :func:`tool_specs`,
+:func:`host_tools`, :func:`host_held_kinds` and :func:`open_refusal`; an application through the
+:class:`~.dispatch.Toolbox`, its sessions (the live view: :meth:`HostedSession.live_view` and
+:meth:`HostedSession.page_svg`) and :mod:`ooxml_edit.chunks`.
+
 A format whose documents the Rust host holds says so with :attr:`~.session.DocumentFormat.host`
 (a format library's): an object with
 
@@ -75,6 +81,75 @@ if TYPE_CHECKING:
 #: How many times a call is made again with what it asked of the Python host's documents that
 #: was not resolved before it (:mod:`.hosted_values`): one is enough for every call measured.
 MISSED_ROUNDS = 2
+
+
+# -- the Rust core, reached only here: ooxml_core is internal (decision D6) ---------------------
+
+
+def rust_host(settings: str | None = None, *, pages: Any = None, **format_settings: Any) -> Any:
+    """A Rust host (the core's ``Host``) for a format's :attr:`~.session.DocumentFormat.host`
+    ``make``: ``settings`` as JSON text (:func:`_settings`' form; ``None``: the defaults),
+    its documents laid out with ``pages`` (a ``PageSetup`` the format's renderer made), and the
+    format's own settings by name (Word's ``min_text_size``, ``typography``)."""
+    import ooxml_core
+
+    if settings is None:
+        return ooxml_core.Host()
+    return ooxml_core.Host(settings, pages=pages, **format_settings)
+
+
+def tool_specs(kind: str) -> list[dict[str, Any]]:
+    """The Rust host's tool definitions for documents of ``kind`` (each a tool's exported spec,
+    which a format library makes its :class:`~.registry.Tool` definitions from)."""
+    import ooxml_core
+
+    return json.loads(ooxml_core.tool_specs(kind))
+
+
+def host_tools() -> tuple[str, ...]:
+    """The names of the Rust host's tools (its formats' and the session's own)."""
+    return tuple(rust_host().tools())
+
+
+def host_held_kinds() -> tuple[str, ...]:
+    """The kinds whose documents the Rust host's sessions name while the Python host holds
+    them (until Phase 4)."""
+    import ooxml_core
+
+    return tuple(ooxml_core.Host.held_kinds())
+
+
+def open_refusal(exc: BaseException) -> "tuple[str, str] | None":
+    """An open the Rust host refused, read: ``(why, message)``, ``why`` one of
+    ``argument``, ``limit``, ``unreadable``, ``state``; ``None`` for any other exception."""
+    import ooxml_core
+
+    if isinstance(exc, ooxml_core.OpenRefused):
+        message, why = exc.args
+        return why, message
+    if isinstance(exc, ooxml_core.StateRefused):
+        return "state", str(exc)
+    return None
+
+
+class UnknownToken(LookupError):
+    """A token :meth:`HostedSession.page_svg` was given that names no version kept for the
+    document."""
+
+
+@contextmanager
+def _viewing() -> Iterator[None]:
+    """The live view's errors in the facade's words: an unknown token as
+    :class:`UnknownToken`, a version or mode not drawn yet as the host's refusal (a
+    :class:`~.results.ToolError`)."""
+    import ooxml_core
+
+    try:
+        yield
+    except ooxml_core.UnknownToken as error:
+        raise UnknownToken(str(error)) from error
+    except ooxml_core.ViewRefused as error:
+        raise tool_error(error.args[2]) from error
 
 
 def runs_on_host(toolbox: "Toolbox") -> bool:
@@ -952,6 +1027,27 @@ class HostedSession(Session):
         name, mime, data = found
         return Blob(handle, name, mime, bytes(data))
 
+    # -- the live view (an application's, not a tool) -----------------------------------------
+
+    def live_view(self, doc_id: str, since: str | None = None) -> dict[str, Any]:
+        """The live view of the Word document ``doc_id``: ``token`` (this version's), ``pages``
+        (``(number, blocks, width, height)`` each), the pages ``changed`` since the view whose
+        token is ``since`` (every page without one, or with a ``stale`` one: ``note`` says
+        why) and the state number laid out (``version``), laid out by the document's own engine
+        within the session's limits.  Raises the host's refusal (a ``ToolError``) for a version
+        it does not lay out yet, ``TimeoutError`` past the limit on laying out."""
+        with _viewing():
+            return dict(self.rust.view(doc_id, since))
+
+    def page_svg(self, doc_id: str, page: int, token: str, *, text: str = "text") -> tuple[str, list[str]]:
+        """Page ``page`` (1-based) of the version a view's ``token`` names, as SVG (its
+        paragraph groups carry that version's ids), with what was not drawn as Word draws it.
+        Raises :class:`UnknownToken` for a token no view gave or kept, ``IndexError`` for a
+        page the version does not have, ``ValueError`` for a text mode there is none of."""
+        with _viewing():
+            svg, warnings = self.rust.page_svg(doc_id, page, token, text=text)
+        return svg, list(warnings)
+
     def memory_now(self, doc_id: str) -> dict[str, float]:
         """What this process holds, in MB (``describe``'s, the application's): ``document``,
         what the host keeps of the document, and the process's own (:func:`.memory.process_memory`)."""
@@ -993,4 +1089,5 @@ def _record_of(result: Result, comments: Sequence[Mapping[str, Any]]) -> CallRec
                       comments=[dict(c) for c in comments] or None)
 
 
-__all__ = ["HostResult", "HostedSession", "Hosting", "own_tools", "runs_on_host"]
+__all__ = ["HostResult", "HostedSession", "Hosting", "UnknownToken", "host_held_kinds", "host_tools", "open_refusal",
+           "own_tools", "runs_on_host", "rust_host", "tool_specs"]

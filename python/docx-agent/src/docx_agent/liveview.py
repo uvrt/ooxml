@@ -12,7 +12,7 @@ changes it -- asks the session for the pages and for the ones an edit changed::
     ...
     shown = view(session, "d1", since=shown.token)       # after edits: the pages they changed
 
-The work is the Rust host's (its session's ``view`` and ``page_svg``): the version is
+The work is the Rust host's (``HostedSession.live_view`` and ``page_svg``, ooxml-edit's): the version is
 laid out by the document's page engine, the last versions views were given are kept within
 the session's memory budget, and a token names one (``<session>-<doc>-<state number>``).
 This module finds the document's session and engine, and gives pictures back by name.
@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import re
-from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping
+
+from ooxml_edit.tools import hosted as _hosted
 
 __all__ = ["PageSvg", "UnknownToken", "View", "ViewPage", "embed_images", "externalise_images",
            "page_svg", "view"]
@@ -78,17 +78,17 @@ class PageSvg:
     warnings: list[str] = field(default_factory=list)
 
 
-class UnknownToken(LookupError):
-    """A token :func:`page_svg` was given that names no version kept for the document."""
+#: A token :func:`page_svg` was given that names no version kept for the document (a
+#: ``LookupError``).
+UnknownToken = _hosted.UnknownToken
 
 
 def view(where: Any, *args: str, since: str | None = None) -> View:
     """``view(session, doc)``: the document's pages now, which changed since ``since``, and a
     new token.  Raises the session's refusal (a ``ToolError``) for a version it does not lay
     out yet, ``TimeoutError`` past the session's limit on laying out."""
-    session, doc, call, _ = _target(where, args, "view", 0)
-    with _raised():
-        got = session.view(doc, since, **call)
+    session, doc, _ = _target(where, args, "view", 0)
+    got = session.live_view(doc, since)
     pages = [ViewPage(number, tuple(blocks), width, height) for number, blocks, width, height in got["pages"]]
     return View(got["token"], pages, list(got["changed"]), got["since"], got["stale"], got["note"],
                 got["version"])
@@ -107,57 +107,25 @@ def page_svg(where: Any, *args: Any, text: str = "text", images: str = "external
         raise ValueError(f"images must be one of {', '.join(IMAGE_MODES)}, not {images!r}")
     if glyphs is not None and text != "outlines":
         raise ValueError("glyphs is the glyph set of outlined pages: give text=\"outlines\" with it")
-    session, doc, call, (page, token) = _target(where, args, "page_svg", 2)
-    with _raised():
-        svg, warnings = session.page_svg(doc, page, token, text=text, **call)
+    session, doc, (page, token) = _target(where, args, "page_svg", 2)
+    svg, warnings = session.page_svg(doc, page, token, text=text)
     store: dict[str, bytes] = {}
     if images == "external":
         svg = externalise_images(svg, store)
     return PageSvg(page, token, svg, store, list(warnings))
 
 
-def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, dict[str, Any], tuple]:
-    """The Rust host's session holding the document ``(session, doc, ...)`` names, its id
-    there, the call's keywords (``layout``: the document's page engine; ``context``: the
-    session's limits on laying out and on the reply), and the ``rest`` arguments after ``doc``."""
-    import ooxml_core
-
+def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, tuple]:
+    """The session on the Rust host holding the Word document ``(session, doc, ...)`` names,
+    that document, and the ``rest`` arguments after ``doc``."""
     tail = ", page, token" if rest else ""
     if not callable(getattr(where, "entry", None)) or len(args) != rest + 1:
         raise TypeError(f"{name} takes (session, doc{tail}): a document's live view is its session's -- "
                         f"open it in one (doc = session.open(data, name)) and call {name}(session, doc{tail})")
-    host = getattr(where, "rust", None)     # a session on the Rust host
-    pages = host.pages(args[0]) if host is not None and where.kind_of(args[0]) == "docx" else None
-    if pages is None:
+    if getattr(where, "live_view", None) is None or where.kind_of(args[0]) != "docx":
         raise TypeError(f"{args[0]} is not a Word document the session's Rust host holds; {name} draws "
                         "the pages of one")
-    limits = getattr(where, "limits", None)
-    given: dict[str, Any] = {"layout_timeout": getattr(limits, "layout_timeout", None)}
-    if limits is not None:
-        given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars, list_items=limits.max_list_items,
-                                            images_per_call=limits.max_images_per_call,
-                                            image_edge=limits.max_image_edge)
-    call = {"layout": ooxml_core.CallLayout(pages), "context": ooxml_core.CallContext(**given)}
-    return host, args[0], call, tuple(args[1:])
-
-
-@contextmanager
-def _raised() -> Iterator[None]:
-    """The session's errors in this module's words: ``ooxml_core.UnknownToken`` as
-    :class:`UnknownToken`, ``ooxml_core.ViewRefused`` as the session's refusal."""
-    import ooxml_core
-
-    from ooxml_edit.tools import ToolError
-
-    try:
-        yield
-    except ooxml_core.UnknownToken as error:
-        raise UnknownToken(str(error)) from error
-    except ooxml_core.ViewRefused as error:
-        refused = json.loads(error.args[2])
-        raise ToolError(refused["code"], refused["message"], field=refused.get("field"),
-                        valid_options=refused.get("valid_options"), details=refused.get("details"),
-                        try_call=refused.get("try_call")) from error
+    return where, args[0], tuple(args[1:])
 
 
 # -- pictures by name (the names and forms pptx2svg.liveview gives) -------------------------------

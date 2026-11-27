@@ -9,7 +9,7 @@ One session holds a made-up report (docx-agent, a test-only dependency) with thr
 made-up workbook of sales and products.  Each batch derives with a join and a group
 (``xlsx_derive``: the workbook only read), syncs one table from the dataset and sets one
 paragraph.  The report is the Rust session's (docx-agent 0.2.0: made by
-``ooxml_core.new_document``, read through the tools alone), which a draft does not hold: the
+docx-agent's ``new_document``, read through the tools alone), which a draft does not hold: the
 batch runs under the documents' locks in both modes, so no result names a draft.
 """
 
@@ -22,11 +22,12 @@ import re
 import pytest
 from ooxml_edit.tools import Toolbox
 
-ooxml_core = pytest.importorskip("ooxml_core")
 docx_tools = pytest.importorskip("docx_agent.tools")
 
 from xlsx_agent import Workbook  # noqa: E402
 from xlsx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+
+from blank_word import blank_word  # noqa: E402
 
 REGIONS = ["North", "South", "East", "West"]
 
@@ -44,8 +45,7 @@ def report() -> bytes:
     markdown = "\n\n".join(f"# Part {k}\n\nFigures for part {k}.\n\nRead with care.\n\n"
                            f"| Product | Name | Total |\n|---|---|---|\n| x | y | 0 |\n\nSource: the book.\n\n"
                            f"More on part {k}." for k in range(3))
-    blank = bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
-                                          properties=(None, None, "2026-11-23T09:00:00Z")))
+    blank = blank_word()
     with Toolbox(docx_tools.TOOLS, formats=[docx_tools.FORMAT], groups=docx_tools.GROUPS, workers=0) as box:
         session = box.session()
         session.open(blank, "report.docx")

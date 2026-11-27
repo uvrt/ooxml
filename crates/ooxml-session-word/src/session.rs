@@ -1,13 +1,13 @@
 //! Owns: a session's Word documents as their host reads and opens them ([`WordSession`]):
 //! opening one with the ids it had before it was saved, or with the id state saved beside
-//! its bytes; the save gate's comparison; what its last check saw; the reflow a step group
-//! made; and which errors are a Word document's refusals ([`refuses_state`], [`not_word`]).
+//! its bytes; the save gate's comparison; what its last check saw; and which errors are a
+//! Word document's refusals ([`refuses_state`], [`not_word`]).
 //!
 //! Must not: hold documents (the session does) or dispatch a call.
 
 use crate::word::Word;
 use ooxml_opc::Package;
-use ooxml_session::{CallCancel, CallContext, DocId, DocKind, GroupMark, Opened, Session, SessionError};
+use ooxml_session::{DocId, DocKind, Opened, Session, SessionError};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{EarlierIds, EditError, WordDoc};
 use ooxml_word_model::ids::{HeldId, LoadedState};
@@ -61,22 +61,6 @@ pub trait WordSession {
     /// # Errors
     /// [`SessionError::NotOpen`].
     fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError>;
-
-    /// The reflow of what `id`'s open step group `group` did, measured once (a batch's
-    /// checks, after its last op): from the version the group started from to the version
-    /// its ops left, laid out by the call's layout, else the document's own engine -- only
-    /// where that engine laid out the version the group started from (`reflow_after_edit`);
-    /// `None` where nothing is measured (not a Word document, no change, no layout of the
-    /// start).
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`].
-    fn group_reflow(
-        &self,
-        id: &DocId,
-        group: &GroupMark,
-        context: &CallContext,
-    ) -> Result<Option<serde_json::Value>, SessionError>;
 }
 
 impl WordSession for Session {
@@ -122,28 +106,6 @@ impl WordSession for Session {
     fn last_check(&self, id: &DocId) -> Result<Option<Arc<ooxml_tools_word::LastCheck>>, SessionError> {
         let doc = self.format_doc(id)?;
         Ok(Word::of(&*doc).map(|word| Arc::clone(&word.last_check)))
-    }
-
-    fn group_reflow(
-        &self,
-        id: &DocId,
-        group: &GroupMark,
-        context: &CallContext,
-    ) -> Result<Option<serde_json::Value>, SessionError> {
-        let doc = self.format_doc(id)?;
-        let Some(word) = Word::of(&*doc) else {
-            return Ok(None);
-        };
-        let store = word.editor().store();
-        let (Some(start), Some(head)) = (store.txn_base(group.owner()), store.txn_current(group.owner())) else {
-            return Ok(None);
-        };
-        if head.seq() == start.seq() {
-            return Ok(None);
-        }
-        let ports = self.context();
-        let cancel = CallCancel::new(context, &*ports.cancel, &*ports.clock);
-        Ok(word.reflow_between(&start, &head, context, &cancel))
     }
 }
 

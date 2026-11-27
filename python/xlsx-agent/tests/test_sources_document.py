@@ -8,7 +8,7 @@ line.  The workbook is only read.
 
 docx-agent is a test-only dependency (the ``test`` extra; CI installs it from its
 repository, as it does pptx-agent).  The Word document is the Rust session's (docx-agent
-0.2.0): it is made by ``ooxml_core.new_document`` and read through the tools alone.
+0.2.0): it is made by docx-agent's ``new_document`` and read through the tools alone.
 """
 
 from __future__ import annotations
@@ -20,20 +20,20 @@ import zipfile
 import pytest
 from ooxml_edit.tools import Toolbox
 
-ooxml_core = pytest.importorskip("ooxml_core")
 docx_tools = pytest.importorskip("docx_agent.tools")
 
 from xlsx_agent import Workbook  # noqa: E402
 from xlsx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
+
+from blank_word import blank_word  # noqa: E402
 
 NOTE = ("Hinges and locks:\n\n- hinges, *oiled*\n- **locks**\n  - front door\n  - back door\n"
         "    1. latch\n    2. bolt\n- paint")
 
 
 def blank() -> bytes:
-    """A new blank Word document's bytes, as the Rust core makes one."""
-    return bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
-                                         properties=(None, None, "2026-11-23T09:00:00Z")))
+    """A new blank Word document's bytes."""
+    return blank_word()
 
 
 def book() -> bytes:
