@@ -43,7 +43,6 @@ Underline, strike, baseline and highlight stay excluded: no deck here sets one a
 
 from __future__ import annotations
 
-import base64
 from datetime import datetime
 from dataclasses import dataclass, replace
 from typing import Sequence
@@ -383,7 +382,7 @@ def _resolve_bullet(
             "unreadable; the paragraph is drawn with no bullet at all",
         )
         return None
-    payload, mime_type = media
+    payload, mime_type, part = media
     if mime_type not in SUPPORTED_IMAGE_MIME_TYPES:
         context.warn(
             "unresolved-bullet-image",
@@ -391,9 +390,7 @@ def _resolve_bullet(
             "not embeddable; the paragraph is drawn with no bullet at all",
         )
         return None
-    return m.BlipBullet(
-        image_data=base64.b64encode(payload).decode("ascii"), mime_type=mime_type
-    )
+    return m.BlipBullet(image_data=context.images.text(payload, part), mime_type=mime_type)
 
 
 def _field_text(
