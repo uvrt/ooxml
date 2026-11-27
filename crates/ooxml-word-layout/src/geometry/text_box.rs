@@ -14,10 +14,12 @@
 use super::stories::{StoryJob, StoryPage};
 use super::walk::{walk, WalkFrom};
 use crate::flow::{body_paragraphs, FlowContext, FlowItem, FlowMaker, Labels};
+use crate::naming::ItemName;
 use crate::px::Px;
 use crate::sections::Sections;
 use crate::stories::{stack_height, story_section};
 use ooxml_base::Q;
+use ooxml_word_model::ids::Anchor;
 use ooxml_word_model::model::{Block, BodyValue, Graphic, InlineObject, Paragraph, Run, Table};
 use ooxml_word_model::value::{Text, Value};
 use ooxml_word_model::{Model, WordDocument};
@@ -72,14 +74,13 @@ pub struct TextBoxStory {
 /// Every list label of the document's text boxes anchored in its body, counted as Word
 /// counts them: the text boxes one story of their own, their lists going on from box to
 /// box in the order of their anchors (docx2svg's `linebreak.text_box_labels`). Keyed by
-/// the paths the paragraphs have once laid out in their box: a top-level block's under
-/// its anchor's paragraph's path.
-pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<String, Option<String>> {
+/// what names each paragraph ([`box_label_key`]): its key, where its story's index keys it.
+pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<ItemName, Option<String>> {
     struct Count<'d, 'm> {
         model: &'m mut Model,
         document: &'d WordDocument,
         counters: ooxml_word_model::labels::Counters,
-        out: HashMap<String, Option<String>>,
+        out: HashMap<ItemName, Option<String>>,
     }
     impl Count<'_, '_> {
         fn blocks(&mut self, blocks: &[Block], prefix: Option<&str>) {
@@ -91,11 +92,8 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<St
                         }
                     }
                     Block::Paragraph(p) => {
-                        // its steps below its drawing's paragraph (RD1 keys text-box blocks)
-                        let own = p.unkeyed.as_deref().unwrap_or_default();
-                        let path = prefix.map_or_else(|| own.to_owned(), |at| format!("{at}/{own}"));
                         let label = self.label(p);
-                        self.out.insert(path, label);
+                        self.out.insert(box_label_key(p, prefix), label);
                     }
                 }
             }
@@ -155,9 +153,23 @@ pub fn text_box_labels(model: &mut Model, document: &WordDocument) -> HashMap<St
     count.out
 }
 
-/// A text box's blocks as laid out in it: each top-level block's path under its anchor's
-/// paragraph's, and the mark of every floating drawing text does not wrap around taken
-/// out (`paginate.floating_marks`); whether any was.
+/// What a text box's paragraph's label is counted under ([`text_box_labels`]): its key; one
+/// no index keys, its steps below its drawing's paragraph (`prefix`, that paragraph's path).
+fn box_label_key(paragraph: &Paragraph, prefix: Option<&str>) -> ItemName {
+    match paragraph.key {
+        Some(key) => ItemName::Anchored(Anchor::whole(key)),
+        None => {
+            let own = paragraph.unkeyed.as_deref().unwrap_or_default();
+            let path = prefix.map_or_else(|| own.to_owned(), |at| format!("{at}/{own}"));
+            ItemName::Path(Text::from(path.as_str()))
+        }
+    }
+}
+
+/// A text box's blocks as laid out in it: each top-level block its story's index does not
+/// key named by its path under its anchor's paragraph's (a keyed one is named by its key),
+/// and the mark of every floating drawing text does not wrap around taken out
+/// (`paginate.floating_marks`); whether any was.
 pub fn story_blocks(blocks: &[Block], paragraph_path: &str) -> (Vec<Block>, bool) {
     let mut taken = false;
     let out = blocks
@@ -165,14 +177,15 @@ pub fn story_blocks(blocks: &[Block], paragraph_path: &str) -> (Vec<Block>, bool
         .map(|block| {
             let block = unmarked(block, &mut taken);
             match block {
-                Block::Paragraph(p) => Block::Paragraph(Arc::new(Paragraph {
+                Block::Paragraph(p) if p.key.is_none() => Block::Paragraph(Arc::new(Paragraph {
                     unkeyed: Some(below(paragraph_path, p.unkeyed.as_deref())),
                     ..(*p).clone()
                 })),
-                Block::Table(t) => Block::Table(Arc::new(Table {
+                Block::Table(t) if t.key.is_none() => Block::Table(Arc::new(Table {
                     unkeyed: Some(below(paragraph_path, t.unkeyed.as_deref())),
                     ..(*t).clone()
                 })),
+                keyed => keyed,
             }
         })
         .collect();
@@ -295,7 +308,7 @@ pub struct TextBoxJob<'a> {
     /// Its anchor's paragraph's path.
     pub paragraph_path: &'a str,
     /// The text boxes' list labels ([`text_box_labels`]).
-    pub labels: &'a HashMap<String, Option<String>>,
+    pub labels: &'a HashMap<ItemName, Option<String>>,
 }
 
 /// Lay a text box's text out in its frame (`_text_box`).
@@ -436,13 +449,14 @@ fn box_labels(
     model: &mut Model,
     document: &WordDocument,
     paragraphs: &[Arc<Paragraph>],
-    counted: &HashMap<String, Option<String>>,
+    counted: &HashMap<ItemName, Option<String>>,
 ) -> Vec<Option<String>> {
     let mut counters = ooxml_word_model::labels::Counters::default();
     paragraphs
         .iter()
         .map(|p| {
-            if let Some(found) = p.unkeyed.as_deref().and_then(|path| counted.get(path)) {
+            // (an unkeyed paragraph's path is its laid-out one already: story_blocks)
+            if let Some(found) = counted.get(&box_label_key(p, None)) {
                 return found.clone();
             }
             let pp = model.resolve_paragraph_props(document, p);

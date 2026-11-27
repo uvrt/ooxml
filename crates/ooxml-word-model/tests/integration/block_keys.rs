@@ -75,6 +75,7 @@ struct Tally {
     durable: usize,
     odd_forms: usize,
     paths: usize,
+    text_boxes: usize,
 }
 
 /// About how many paragraphs' paths are checked against the reference per story.
@@ -157,6 +158,38 @@ impl Story<'_> {
     }
 }
 
+/// `anchor`'s name (a table's, a row's at `place`) held to the layout model's path, or, in a
+/// text box, found again at its place by that name.
+fn check_place(names: &VersionNames, root: &Arc<Element>, anchor: Anchor, place: &[u32]) {
+    let path = layout_path(root, place);
+    if path.as_deref().is_some_and(in_paragraph) {
+        let named = names.path(anchor).expect("a text box's block is named");
+        let found = ooxml_word_model::read::paths::resolve_path(root, &named).map(|(_, at)| at);
+        assert_eq!(found.as_deref(), Some(place), "{named}");
+    } else {
+        assert_eq!(names.path(anchor), path);
+    }
+}
+
+/// A paragraph's names held to the layout model's path `path` (the reference): its own, its
+/// label's, its enclosing blocks', and its key found again from its path.
+fn check_named(names: &VersionNames, ix: StoryIx, key: BlockKey, path: Option<&str>, id: &str) {
+    assert_eq!(names.path(Anchor::whole(key)).as_deref(), path, "{id}");
+    let label = Anchor {
+        block: key,
+        sub: Sub::Label,
+    };
+    assert_eq!(names.path(label), path.map(|b| format!("{b}/label")));
+    let chain = names
+        .blocks_of(key)
+        .map(|blocks| blocks.iter().map(|a| names.path(*a).unwrap()).collect::<Vec<_>>());
+    assert_eq!(chain, path.and_then(enclosing), "{id}");
+    if let Some(path) = path {
+        let found = (!in_paragraph(path)).then_some(key);
+        assert_eq!(names.key_at_path(ix, path), found, "{path}");
+    }
+}
+
 fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tally) -> usize {
     let (names, ix, ids, root) = (story.names, story.ix, &story.part.ids, story.part.root());
     let mut seen = 0;
@@ -171,21 +204,17 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
         assert_eq!(names.key_of_id(ix, &p.id), Some(key), "{}", p.id);
         if story.sampled(p.index) {
             let path = layout_path(root, &p.path);
-            assert_eq!(names.path(Anchor::whole(key)), path, "{}", p.id);
-            let label = Anchor {
-                block: key,
-                sub: Sub::Label,
-            };
-            assert_eq!(names.path(label), path.clone().map(|b| format!("{b}/label")));
-            let chain = names
-                .blocks_of(key)
-                .map(|blocks| blocks.iter().map(|a| names.path(*a).unwrap()).collect::<Vec<_>>());
-            assert_eq!(chain, path.as_deref().and_then(enclosing), "{}", p.id);
-            if let Some(path) = &path {
-                let found = (!in_paragraph(path)).then_some(key);
-                assert_eq!(names.key_at_path(ix, path), found, "{path}");
+            if path.as_deref().is_some_and(in_paragraph) {
+                // a text box's paragraph: named as the drawing readers name it, below its
+                // paragraph's path, and found again at its place by that name
+                let named = names.path(Anchor::whole(key)).expect("a text box's paragraph is named");
+                let found = ooxml_word_model::read::paths::resolve_path(root, &named).map(|(_, at)| at);
+                assert_eq!(found.as_deref(), Some(&*p.path), "{named}");
+                tally.text_boxes += 1;
+            } else {
+                check_named(names, ix, key, path.as_deref(), &p.id);
+                tally.paths += 1;
             }
-            tally.paths += 1;
         }
         let durable = key.durable();
         assert!(durable && p.state == IdState::Ok, "{}", p.id);
@@ -207,7 +236,8 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
         assert_eq!(ids.entry_of(key), Some(entry), "{}", table.id);
         assert_eq!(ids.place_of(key).as_deref(), Some(&*table.path));
         assert_eq!(names.id(key).map(String::from), Some(table.id.clone()));
-        assert_eq!(names.path(Anchor::whole(key)), layout_path(root, &table.path));
+        let in_box = layout_path(root, &table.path).is_some_and(|p| in_paragraph(&p));
+        check_place(names, root, Anchor::whole(key), &table.path);
         assert_eq!(names.key_of_id(ix, &table.id), Some(key), "{}", table.id);
         if let Some(path) = layout_path(root, &table.path) {
             let found = (!in_paragraph(&path)).then_some(key);
@@ -234,7 +264,7 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
             assert_eq!(names.id(row).map(String::from), Some(id.clone()));
             assert_eq!(names.key_of_id(ix, id), Some(row), "{id}");
             if story.sampled(r) {
-                assert_eq!(names.path(Anchor::whole(row)), layout_path(root, path), "{id}");
+                check_place(names, root, Anchor::whole(row), path);
                 if let Some(path) = layout_path(root, path) {
                     let found = (!in_paragraph(&path)).then_some(row);
                     assert_eq!(names.key_at_path(ix, &path), found, "{path}");
@@ -246,7 +276,7 @@ fn check_tables(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut Tal
             seen += 1;
             tally.rows += 1;
         }
-        if story.sampled(n) {
+        if story.sampled(n) && !in_box {
             tally.cells += check_cells(names, key, root, &table.path);
         }
     }
@@ -344,7 +374,11 @@ fn every_block_of_every_corpus_story_round_trips_by_key_id_and_path() {
         "{documents} documents, {stories_seen} stories"
     );
     assert!(
-        tally.paragraphs > 10_000 && tally.rows > 1_000 && tally.cells > 1_000 && tally.durable > 2_000,
+        tally.paragraphs > 10_000
+            && tally.rows > 1_000
+            && tally.cells > 1_000
+            && tally.durable > 2_000
+            && tally.text_boxes > 10,
         "{tally:?}"
     );
 }

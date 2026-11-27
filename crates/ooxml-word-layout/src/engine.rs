@@ -78,7 +78,7 @@ pub struct LayoutMemo {
     /// The keys its drawn lines can be of.
     line_keys: std::sync::OnceLock<Arc<crate::facts::LineKeys>>,
     /// The list labels of the text boxes anchored in the body.
-    text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<String, Option<String>>>>,
+    text_box_labels: std::sync::OnceLock<Arc<std::collections::HashMap<crate::naming::ItemName, Option<String>>>>,
     /// Each page's facts, made when first asked.
     page_facts: std::sync::OnceLock<Arc<[std::sync::OnceLock<Option<crate::facts::PageFacts>>]>>,
     /// Its body's paragraphs in document order, cells included.
@@ -173,7 +173,10 @@ impl DocumentLayout {
 
     /// The list labels of the text boxes anchored in its body
     /// ([`crate::geometry::text_box::text_box_labels`]), made when first asked.
-    pub fn text_box_labels(&self, model: &mut Model) -> Arc<std::collections::HashMap<String, Option<String>>> {
+    pub fn text_box_labels(
+        &self,
+        model: &mut Model,
+    ) -> Arc<std::collections::HashMap<crate::naming::ItemName, Option<String>>> {
         Arc::clone(
             self.memo
                 .text_box_labels

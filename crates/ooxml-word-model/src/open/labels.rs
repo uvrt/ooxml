@@ -233,9 +233,16 @@ impl TextBoxes<'_> {
                     .flat_map(|r| r.iter())
                     .for_each(|cell| self.blocks(cell, None)),
                 Block::Paragraph(p) => {
-                    // a text box's paragraph by its steps below its drawing's paragraph
-                    let own = p.unkeyed.as_deref().unwrap_or_default();
-                    let path = prefix.map_or_else(|| text(own), |pre| text(&format!("{pre}/{own}")));
+                    // a text box's paragraph by its name: its key's path, else its steps
+                    // below its drawing's paragraph
+                    let named = p.key.and_then(|key| self.names.path(crate::ids::Anchor::whole(key)));
+                    let path = named.map_or_else(
+                        || {
+                            let own = p.unkeyed.as_deref().unwrap_or_default();
+                            prefix.map_or_else(|| text(own), |pre| text(&format!("{pre}/{own}")))
+                        },
+                        |path| text(&path),
+                    );
                     let label = self.model.label_of(self.cx, &mut self.counters, p);
                     self.out.insert(path, label);
                 }

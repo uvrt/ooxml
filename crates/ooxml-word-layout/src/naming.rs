@@ -1,6 +1,6 @@
 //! Owns: what names an item the layout lays out or paints at the edge ([`ItemName`]): its
-//! anchor where a story's index holds its block, else the path it was made with (a text
-//! box's item, until RD1 keys text-box blocks; a paragraph or separator the layout makes);
+//! anchor where a story's index holds its block (a text box's blocks too, keyed by their
+//! own keys), else the path it was made with (a paragraph or separator the layout makes);
 //! and a block's path named through the version's names ([`paragraph_path`],
 //! [`table_path`]) for what the layout says of it.
 //!
@@ -16,8 +16,8 @@ use ooxml_word_model::value::Text;
 pub enum ItemName {
     /// What a story's index holds: a block, or a run, label, cell or section's place on it.
     Anchored(Anchor),
-    /// What no story's index holds, by the path it was made with: a text box's item (until
-    /// RD1 keys text-box blocks), a paragraph the layout makes.
+    /// What no story's index holds, by the path it was made with: a paragraph the layout
+    /// makes, a block of a part no index holds.
     Path(Text),
 }
 

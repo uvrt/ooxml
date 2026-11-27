@@ -66,8 +66,8 @@ fn white_text(props: &ooxml_word_model::value::Props) -> bool {
 pub struct MeasuredTable {
     /// Its block's key (`None`: a table no story's index holds).
     pub key: Option<BlockKey>,
-    /// Where no story's index holds it, the path its cells are named below (a text box's
-    /// table, until RD1).
+    /// Where no story's index holds it, the path its cells are named below (a table of a
+    /// part no index holds).
     pub unkeyed_cells: Option<Text>,
     /// Each cell's place in the table as written (the model's [`Table::cell_places`]).
     ///

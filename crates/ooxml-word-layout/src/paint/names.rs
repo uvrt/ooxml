@@ -4,16 +4,14 @@
 //! from the paragraph's projection (the line's runs), a floating drawing's below its run's --
 //! each block named once per page.
 //!
-//! A text box's items are named by the paths their reading gave them: their drawing's and
-//! their place in its content. No story's index holds a text box's blocks as the layout
-//! reads them: a VML box is read from `mc:Fallback`, which the index
-//! skips, and the paths below a drawing follow the drawing reader's own steps (its
-//! `wp:anchor[n]`, a group's members, `wps:txbx/w:txbxContent`). Keying them waits for one
-//! `mc:` rule on both sides (phase 3 identity design, RD1).
+//! A text box's blocks are keyed by their own keys (phase 3 identity design, RD1: the index
+//! keys the branch of an `mc:AlternateContent` the layout reads) and named like any block:
+//! the version's names write the drawing reader's steps below their paragraph (its
+//! `wp:anchor[n]`, a group's members, `wps:txbx/w:txbxContent`).
 //!
 //! An item no story's index holds is named by the path it was made with ([`ItemName::Path`]):
-//! a text box's (until RD1 keys text-box blocks) and a paragraph the layout makes (the
-//! endnotes' continuation separator). Everything else carries only its anchor.
+//! a paragraph the layout makes (the endnotes' continuation separator), a block of a part no
+//! index holds. Everything else carries only its anchor.
 //!
 //! Must not: lay out or paint, or key anything by a name.
 
