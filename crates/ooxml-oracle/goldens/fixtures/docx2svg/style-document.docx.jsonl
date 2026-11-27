@@ -1549,14 +1549,14 @@
 {"digest":"sha256:172719fb8e1da40684f35d0f150d4a1f","id":"tools:d30f45064171cfcf","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:28ff9b725bc5b6c0aa436dc5d0eec757","id":"tools:9ea1ccd21be03a0b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0b5882beadbda1b5acd5ec01788cd02f","id":"tools:47ca2fb246677139","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ee5383ad0694558cd38d7a2c756173c3","id":"check:3224e54d4c1c04fe","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:ac1f7646705907b61b77c4e7371f4f7d","id":"check:3224e54d4c1c04fe","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:81f90e7571e323e04ec538d2b7e846fd","id":"check:b5774400ff67b03e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:97c4358691f92faf49bf66d62b737dcf","id":"check:688ba5a48331bdac","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:8b636f8279c9fcf1d5cabc3669ab0011","id":"check:688ba5a48331bdac","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:2b01b8c21e31e358fe72814ed6e38657","id":"check:eb41c5ec52be273f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:066e6004a91b630b67955de4e8c0696a","id":"check:1c4b9008881f3572","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:ca84ec90681fedee62a8c1d576f710d3","id":"check:1c4b9008881f3572","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:457fe52e4a39c7cb35de8a52d91e4dcd","id":"check:d5fac73bb2df989d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fdd4b4c49ebc61af42a48a342d125704","id":"check:87c98bf5fec99f5a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a1dc07415447035a5d4844b4801e8210","id":"check:abf1e924473b5e03","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:538bdb4d97c1d2bce1650c11531456d3","id":"check:87c98bf5fec99f5a","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
+{"digest":"sha256:374b8e4d458c4c813da72bf58aafee7b","id":"check:abf1e924473b5e03","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:f4f880cb3295361e5eb58e3545902284","id":"check:e675f5705917d84b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b879a5a777f2dd573d98c13457d8eb5a","id":"check:bfe99cc124fc08c8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:13515fe9f6466db1106c3ae5b218a162","id":"check:3f649dd37edf9874","source":"frozen Python a512c901, unmeasured"}
@@ -1564,12 +1564,12 @@
 {"digest":"sha256:2d8d637415eff9824ed4fbfa99441d53","id":"check:7a56a081e9530d95","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7c4b1947db1aaee2da786aa608eacee2","id":"check:7a85ee8bfd9e838d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:273338319d3d6fc0c4bca97ac96a0cbd","id":"check:e1ef2cfc96c9519d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2a9a67c60a46b9b2da428b2f3cd6369b","id":"check:8e450bd4489bc750","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c6d2d2097adf30f9488c8bef12dcc39c","id":"check:c1209dd965822ef7","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4de52de43cb79ba6c6a4afcbb8cf3ebf","id":"check:2b971c46b2b0268a","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:0b7d197f1c7bcef78bee842e1cb8f7ba","id":"check:8e450bd4489bc750","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
+{"digest":"sha256:e346ad72a9b65aab3677b800ec3da2bb","id":"check:c1209dd965822ef7","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
+{"digest":"sha256:e7f79e8a6bf3375b7647602e2caa9a00","id":"check:2b971c46b2b0268a","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:81ec1ca35af1bb3ba7d82d98b65b8b13","id":"check:8ff5db5ed4fca597","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:15fed5dc2287f4acd8346e1ed4455e75","id":"check:11c13284405eb4f2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:29a143746b7db71abf453de146ec44a5","id":"check:937543ded4cdfcf1","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:003b0a8400c92bf7fc7bc9122c455db2","id":"check:937543ded4cdfcf1","source":"E1a, user decision structured-problems-2026-11-25: check's validate/validation in the one problems shape"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:ac4a32bce1f4c209","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:f8d4bdcd8b803c75","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:2cda3d3a313f1b5c","source":"frozen Python a512c901, unmeasured"}
