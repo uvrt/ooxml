@@ -1,9 +1,7 @@
 # Changelog
 
 ooxml-core is the Rust core of the ooxml packages (`crates/`), as the Python module
-`ooxml_core`. Its version is the `crates/python` crate's. **The module is internal** (Phase 3 E2):
-applications and the format libraries use ooxml-edit's facade (`ooxml_edit.tools`,
-`ooxml_edit.chunks`); only ooxml-edit and docx2svg import it.
+`ooxml_core`. Its version is the `crates/python` crate's.
 
 ## 0.12.2 -- v2026.11.27
 
