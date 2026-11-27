@@ -1128,7 +1128,7 @@
 {"digest":"sha256:5345492a877e61b2964f38771266a883","id":"objects:d595dc0d951f06ea","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3df3391d80aa19258c00e6ad97abbcc0","id":"objects:ad1d2c4262a15a60","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a8171b64cc7cf9e56d9411ccf1c090cf","id":"objects:ce57f050c3767f4b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:27bca8e3d33201ec9a4ff956c7ec53ab","id":"objects:4d220107c647b3c6","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:c80eb8890ce6d7eea938ceaf8239616b","id":"objects:4d220107c647b3c6","source":"R142 (round 60, user decision limits-in-details-2026-11-25): a limit refusal says its numbers in details"}
 {"digest":"sha256:84274132631f8056f2916bb97852f55a","id":"objects:ecd657c1a4f3d2f6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bb2a84a4e8b2397098bb8e3c173d8096","id":"objects:9654fa2e3adc0c1f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:509a751a9e351552f37fd203439516fe","id":"objects:525d3f3032ca76e4","source":"frozen Python a512c901, unmeasured"}
