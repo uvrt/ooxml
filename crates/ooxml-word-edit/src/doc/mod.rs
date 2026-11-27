@@ -448,6 +448,26 @@ impl WordDoc {
         Ok(package)
     }
 
+    /// Whether the id of the block at `path` of `part` has been written: it is the one the
+    /// part's saved form holds there. An id given at open and not written yet has been seen by
+    /// no reader of the file, so it counts as fresh at its block's first write: that write
+    /// keeps it whole (a text edit does not renew its textId), as an edit that stamped the
+    /// block itself kept the pair it drew; later writes renew as usual.
+    #[must_use]
+    pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
+        if !matches!(self.package.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
+            return true;
+        }
+        let id = |tree: Option<Tree>| {
+            tree.and_then(|t| {
+                ooxml_word_model::docx::at_path(t.root(), path)
+                    .and_then(|e| e.attribute(Some(crate::names::W14), "paraId").map(str::to_owned))
+            })
+        };
+        let now = id(self.package.tree(part).ok().flatten());
+        now.is_some() && now == id(self.package.saved_tree(part).ok().flatten())
+    }
+
     /// The package with `part` put in place as another writer wrote it (`tree`), every
     /// part read with ids given at open written (the package changes), and the ids: a story
     /// part whose blocks lack ids read stamped and kept unwritten, a block the part held the

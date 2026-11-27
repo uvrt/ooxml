@@ -220,9 +220,11 @@ pub(crate) fn write_text_as(
     work = Work::of(element, scope_above(tree.root(), &found.path));
     sink.load_written(&found.part, Some(&found.path), &mut work);
     let wrote = sink.set_paragraph_text(&mut work, text)?;
-    // a paragraph stamped before gets a new text id, drawn where the change is applied
+    // a paragraph stamped before gets a new text id, drawn where the change is applied; an
+    // id given at open and not written counts as fresh (WordDoc::id_written)
+    let written = found.state == IdState::Ok && sink.doc().id_written(&found.part, &found.path);
     let mut draws = Vec::new();
-    if found.state == IdState::Ok {
+    if written {
         let prefix = w14_prefix(tree.root(), &found.path);
         draws.push(Draw {
             from: DrawFrom::Seed(Arc::from(format!("{}\0text", found.part))),
@@ -246,7 +248,7 @@ pub(crate) fn write_text_as(
     if wrote.dated {
         sink.ensure_w14(&found.part, false, &[("w16du", W16DU)])?;
     }
-    if found.state == IdState::Ok {
+    if written {
         sink.ensure_w14(&found.part, false, &[])?;
     }
     if let RevisionPolicy::Tracked(tracking) = sink.policy().clone() {
