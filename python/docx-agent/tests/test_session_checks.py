@@ -22,8 +22,11 @@ import threading
 import pytest
 from ooxml_edit.tools import Toolbox
 
-from docx_agent.rust.reads import BATCH_CHECK
-
+#: What the Python host said of a check between a batch's changes (before Phase 3 E2): never said
+#: where the check comes after the batch's last change.
+BATCH_CHECK = ("check laid the document out between the batch's changes, holding it: other calls waited. "
+               "Put check after the batch's last change (or call it alone): there it lets the document go "
+               "while it lays out")
 #: What a check between the changes of a batch on one document says on the Rust host (user decision
 #: 2026-11-25, optimistic batches; host known differences): the batch holds nothing, and runs again
 #: where it conflicts.

@@ -1,22 +1,16 @@
-"""Lane H1: a batch's ops on a document the Rust session owns are served by the session, in
-one step group of the session's -- one undo step, all or none where atomic, a failed op
-taken back alone where not, its reads reading what its earlier ops made -- and the group
-closed on every path."""
+"""A batch of Word ops on the Rust host is one step: one undo takes it back, all or none where
+atomic (undo and redo as they were where it fails), a failed op taken back alone where not, its
+reads reading what its earlier ops made, a writer beside it losing nothing, and an id one of its
+ops deleted refused naming the batch's change (lane H1, on the host)."""
 
 import threading
 
 import pytest
 
-from docx_agent.rust import edits
-from docx_agent.rust.reads import Mirror
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 
 @pytest.fixture(scope="module")
@@ -29,9 +23,12 @@ def toolbox():
 def opened(toolbox, constructs_doc):
     session = toolbox.session()
     doc = session.open(constructs_doc.read_bytes(), name=constructs_doc.name)
-    entry = session.entry(doc)
     paragraphs = [block for block, text in word_docs.paragraphs(session, doc) if text.strip() and block != "p:None"]
-    yield session, doc, entry, paragraphs
+
+    def version() -> int:
+        return toolbox.dispatch(session, "describe", {"doc": doc}).version
+
+    yield session, doc, version, paragraphs
     session.close(doc)
 
 
@@ -45,54 +42,52 @@ def _set(target, text):
     return {"tool": "word_set_text", "arguments": {"doc": "d1", "target": target, "text": text}}
 
 
-def test_an_atomic_batch_is_served_and_one_undo_takes_it_back(toolbox, opened):
-    session, doc, entry, ids = opened
+def test_an_atomic_batch_is_one_step_and_one_undo_takes_it_back(toolbox, opened):
+    session, doc, version, ids = opened
     targets = ids[:3]
-    before, start, served = _texts(session, doc, targets), entry.version, sum(edits.served().values())
+    before, start = _texts(session, doc, targets), version()
     result = toolbox.dispatch(session, "batch", {"atomic": True,
                                                  "ops": [_set(t, f"Batch {k}") for k, t in enumerate(targets)]})
     assert result.ok, result.error
-    assert sum(edits.served().values()) - served == 3
-    assert entry.version == start + 1 == result.version
+    assert version() == start + 1 == result.version
     assert _texts(session, doc, targets) == ["Batch 0", "Batch 1", "Batch 2"]
     assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    assert entry.version == start
+    assert version() == start
     assert _texts(session, doc, targets) == before
     assert toolbox.dispatch(session, "undo", {"doc": doc, "redo": True}).ok
     assert _texts(session, doc, targets) == ["Batch 0", "Batch 1", "Batch 2"]
 
 
 def test_a_failed_atomic_batch_leaves_undo_and_redo_as_they_were(toolbox, opened):
-    session, doc, entry, ids = opened
+    session, doc, version, ids = opened
     assert toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": ids[0], "text": "Kept"}).ok
     assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    before, start = _texts(session, doc, ids[:3]), entry.version
+    before, start = _texts(session, doc, ids[:3]), version()
     result = toolbox.dispatch(session, "batch", {"atomic": True, "ops": [
         _set(ids[1], "Gone 1"), _set(ids[2], "Gone 2"), _set("p:FFFFFFFF", "nowhere")]})
     assert not result.ok
     assert "nothing in the batch was applied" in result.error.message
-    assert entry.version == start
+    assert version() == start
     assert _texts(session, doc, ids[:3]) == before
-    assert entry.history.can_redo()
     assert toolbox.dispatch(session, "undo", {"doc": doc, "redo": True}).ok
     assert _texts(session, doc, ids[:1]) == ["Kept"]
 
 
 def test_a_partial_batch_keeps_the_ops_that_applied(toolbox, opened):
-    session, doc, entry, ids = opened
-    before, start = _texts(session, doc, ids[:3]), entry.version
+    session, doc, version, ids = opened
+    before, start = _texts(session, doc, ids[:3]), version()
     result = toolbox.dispatch(session, "batch", {"ops": [
         _set(ids[0], "First"), _set("p:FFFFFFFF", "nowhere"), _set(ids[2], "Third")]})
     assert result.ok, result.error
     assert result.data["failed"] == [1]
-    assert entry.version == start + 1
+    assert version() == start + 1
     assert _texts(session, doc, ids[:3]) == ["First", before[1], "Third"]
     assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
     assert _texts(session, doc, ids[:3]) == before
 
 
 def test_reads_inside_a_batch_read_its_earlier_writes(toolbox, opened):
-    session, doc, entry, ids = opened
+    session, doc, version, ids = opened
     result = toolbox.dispatch(session, "batch", {"atomic": True, "ops": [
         _set(ids[0], "Written first"),
         {"tool": "word_read", "arguments": {"doc": "d1", "range": ids[0]}},
@@ -101,46 +96,10 @@ def test_reads_inside_a_batch_read_its_earlier_writes(toolbox, opened):
     assert "Written first" in str(result.data["ops"][1]), result.data["ops"][1]
 
 
-def _part(data, name):
-    import io
-    import zipfile
-
-    with zipfile.ZipFile(io.BytesIO(data)) as package:
-        return package.read(name) if name in package.namelist() else b""
-
-
-def test_an_error_mid_batch_closes_the_group(toolbox, opened, monkeypatch):
-    session, doc, entry, ids = opened
-    before, start = _texts(session, doc, ids[:2]), entry.version
-    real, calls = edits._edit, []
-
-    class Stop(BaseException):
-        pass
-
-    def failing(call, entry_, arguments, counted):
-        calls.append(1)
-        if len(calls) == 2:
-            raise Stop()
-        return real(call, entry_, arguments, counted)
-
-    monkeypatch.setattr(edits, "_edit", failing)
-    with pytest.raises(Stop):
-        toolbox.dispatch(session, "batch", {"atomic": True,
-                                            "ops": [_set(ids[0], "One"), _set(ids[1], "Two")]})
-    monkeypatch.setattr(edits, "_edit", real)
-    assert entry._group is None and not entry.history.grouped
-    assert entry.version == start and _texts(session, doc, ids[:2]) == before
-    # the group was closed: a new batch opens its own, and its step undoes alone
-    assert toolbox.dispatch(session, "batch", {"ops": [_set(ids[0], "Again")]}).ok
-    assert entry.version == start + 1
-    assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    assert _texts(session, doc, ids[:2]) == before
-
-
 def test_a_writer_arriving_mid_batch_waits_and_loses_nothing(toolbox, opened):
-    session, doc, entry, ids = opened
+    session, doc, version, ids = opened
     batch_ids, single_ids = ids[:20], ids[20:26]
-    start, failures = entry.version, []
+    start, failures = version(), []
     started = threading.Event()
 
     def batch() -> None:
@@ -167,38 +126,15 @@ def test_a_writer_arriving_mid_batch_waits_and_loses_nothing(toolbox, opened):
     assert not failures, failures[0]
     assert _texts(session, doc, batch_ids) == [f"Batch {k}" for k in range(len(batch_ids))]
     assert _texts(session, doc, single_ids) == [f"Alone {k}" for k in range(len(single_ids))]
-    assert entry.version == start + 1 + len(single_ids)
+    assert version() == start + 1 + len(single_ids)
 
 
-def test_every_version_of_a_batch_is_numbered_as_its_step(toolbox, opened):
-    session, doc, entry, ids = opened
-    mirror = entry.handle
-    first = mirror.session.head(mirror.doc).number + 1
+def test_an_id_a_batch_deleted_is_retired_by_the_batch_s_step(toolbox, opened):
+    session, doc, version, ids = opened
     result = toolbox.dispatch(session, "batch", {"atomic": True, "ops": [
         {"tool": "word_delete", "arguments": {"doc": "d1", "target": ids[0]}}, _set(ids[1], "After the delete")]})
     assert result.ok, result.error
-    last = mirror.session.head(mirror.doc).number
-    assert last > first
-    assert all(mirror.numbers[seq] == entry.version for seq in range(first, last + 1))
     # the deleted paragraph's id is retired by the batch's step, as the session's record says
     refused = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": ids[0], "text": "x"})
-    assert not refused.ok and f"the change that made version {entry.version}" in refused.error.message, \
+    assert not refused.ok and f"the change that made version {version()}" in refused.error.message, \
         refused.error.message
-
-
-def test_a_step_of_several_versions_numbers_each():
-    """The gap found on the way (lane H1): a step the session made in several versions (a
-    call's edits, a batch's ops) had only its last numbered, so what its earlier versions
-    retired was left out of the record of retired ids."""
-
-    class Head:
-        number = 9
-
-        def __init__(self, state: int) -> None:
-            self.state = state
-
-    mirror = Mirror(None, "d1", {})
-    mirror.keep(Head(4), 7)
-    assert mirror.numbers == {7: 4, 8: 4, 9: 4}
-    mirror.keep(Head(5))
-    assert mirror.numbers[9] == 5

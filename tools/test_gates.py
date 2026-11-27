@@ -142,8 +142,8 @@ class AutoModes(unittest.TestCase):
 
     def test_the_frozen_reference_packages_run_nothing(self) -> None:
         # the reference is installed from crates/ooxml-oracle/reference.toml's commit
-        self.assertEqual(self.modes("python/docx-agent/src/docx_agent/rust/edits.py",
-                                    "python/ooxml-edit/src/ooxml_edit/tools/served.py",
+        self.assertEqual(self.modes("python/docx-agent/src/docx_agent/tools/format.py",
+                                    "python/ooxml-edit/src/ooxml_edit/tools/hosted.py",
                                     "python/docx-agent/pyproject.toml"), (set(), False))
 
     def test_the_reads_case_makers_run_the_reads(self) -> None:
@@ -329,14 +329,6 @@ class ChangedLines(unittest.TestCase):
         self.assertEqual(set(self.select({cases: (base, base.replace('"insert"', '"delete"'))})),
                          self.features("notes"))
         self.assertEqual(self.select({cases: (base, base.replace("return []", "return [1]"))}), gates_fixtures.ALL)
-
-    def test_a_served_entry_runs_its_tool(self) -> None:
-        served = "python/docx-agent/src/docx_agent/rust/edits.py"
-        base = 'SERVED = {\n    "word_delete": _delete,\n}\n'
-        head = base.replace("}", '    "word_format_table": _format_table,\n}')
-        self.assertEqual(set(self.select({served: (base, head)})), self.features("tables", "styles"))
-        self.assertEqual(self.select({served: (base, head.replace("SERVED = {", "X = 2\nSERVED = {"))}),
-                         gates_fixtures.ALL)
 
 
 class JobPlan(unittest.TestCase):

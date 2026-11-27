@@ -10,15 +10,11 @@ import zlib
 
 import pytest
 
-from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -64,17 +60,14 @@ def _report() -> bytes:
     return _made("# A made-up report\n\nLantern meadow by the harbour.\n\nRiver stone number one.\n")
 
 
-def test_pictures_served_from_the_hosts_blobs(toolbox):
+def test_pictures_from_the_sessions_blobs(toolbox):
     session = toolbox.session(clock=CLOCK)
     doc = session.open(_report(), "report.docx")
     image = session.add_blob(png(), "logo.png")
     ids = _ids(session, doc)
 
     def run(arguments: dict) -> object:
-        before = edits.served().get("word_drawings", 0)
-        result = toolbox.dispatch(session, "word_drawings", {"doc": doc, **arguments})
-        assert edits.served().get("word_drawings", 0) == before + 1
-        return result
+        return toolbox.dispatch(session, "word_drawings", {"doc": doc, **arguments})
 
     first = run({"action": "insert_picture", "image": image, "find": "meadow", "width": 30,
                  "alt_text": "A made-up logo"})
@@ -91,7 +84,7 @@ def test_pictures_served_from_the_hosts_blobs(toolbox):
     assert 'descr="A made-up logo, larger"' in xml and 'descr="The logo again"' in xml
     assert any(name.startswith("word/media/") for name in
                __import__("zipfile").ZipFile(__import__("io").BytesIO(word_docs.saved(session, doc))).namelist())
-    # a blob that is not there: refused by the session, in docx-agent's words (lane P2e1)
+    # a blob that is not there: refused, in docx-agent's words (lane P2e1)
     missing = run({"action": "insert_picture", "image": "b9", "at": ids["Lantern meadow by the harbour."],
                    "alt_text": "None"})
     assert not missing.ok and missing.error.code == "not_found"

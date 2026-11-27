@@ -170,7 +170,7 @@ def test_a_revision_and_an_endnote_give_their_block(box, made):
 
 def test_the_application_resolves_refs_outside_a_call(box, made):
     """Round 23, V5: block_of(session, doc, id) and blocks_between(session, doc, a, b), the
-    same helpers as a handler's (call, ...) forms, resolve a ref with Session.resolve_ref."""
+    resolve a ref with Session.resolve_ref."""
     session, doc = made["session"], made["doc"]
     result = box.dispatch(session, "word_insert_text", {"doc": doc, "items": [
         {"target": made["cell"], "text": " more", "ref": "cell_text"},

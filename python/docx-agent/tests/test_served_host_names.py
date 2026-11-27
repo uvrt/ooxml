@@ -1,8 +1,7 @@
-"""Lane P2c17: a call the Rust session answers names documents as its host does.  One Rust
-session serves every host session of the process and numbers documents across them, so a
-host's ``d1`` is the session's ``d3`` from the second host session on; every name a served
-reply carries (its undo and way-out calls, its summary, its data, its refs) is the host's.
-Made-up documents only."""
+"""Lane P2c17, on the Rust host: every host session numbers its own documents (a second session's
+``d1`` is its own), and every name a reply carries -- its undo and way-out calls, its summary, its
+data, its refs -- is one of its session's documents.  (The core's session alone, with no host
+names, keeps its own ids.)  Made-up documents only."""
 
 from __future__ import annotations
 
@@ -11,15 +10,11 @@ import re
 
 import pytest
 
-from docx_agent.rust import edits, reads
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 _NAME = re.compile(r"\bd\d+\b")
 
@@ -52,15 +47,13 @@ def _names_in(result) -> set[str]:
     return set(_NAME.findall(json.dumps(reply, default=str)))
 
 
-def test_a_served_reply_names_documents_as_its_host_does(toolbox):
+def test_a_reply_names_only_its_sessions_documents(toolbox):
     first = toolbox.session()
     for k in range(2):
         first.open(_report(f"First session {k}"), f"first{k}.docx")
     session = toolbox.session()
     doc = session.open(_report("A made-up report"), "report.docx")
     other = session.open(_report("Another made-up report"), "other.docx")
-    entry = session.entry(doc)
-    assert entry.handle.doc != doc, "the second host session's names are not the session's ids"
     hosts = {doc, other}
     ids: dict[str, str] = {}
     for block, text in word_docs.paragraphs(session, doc):
@@ -79,7 +72,6 @@ def test_a_served_reply_names_documents_as_its_host_does(toolbox):
         ("word_design_facts", {}),
         ("word_read", {}),
     ]
-    edits_before, reads_before = dict(edits.served()), dict(reads.served())
     seen: set[str] = set()
     for tool, arguments in calls:
         result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
@@ -87,9 +79,6 @@ def test_a_served_reply_names_documents_as_its_host_does(toolbox):
         assert _names_in(result) <= hosts, (tool, _names_in(result), result.summary, result.data)
         seen |= _names_in(result)
     assert doc in seen, "the replies name the document (the deletion's undo call)"
-    answered = sum(edits.served().get(t, 0) - edits_before.get(t, 0) for t, _ in calls)
-    answered += sum(reads.served().get(t, 0) - reads_before.get(t, 0) for t, _ in calls)
-    assert answered >= 6
 
 
 def test_a_reply_without_names_keeps_the_sessions_ids():

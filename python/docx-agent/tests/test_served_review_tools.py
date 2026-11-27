@@ -10,15 +10,10 @@ import json
 
 import pytest
 
-from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 
 @pytest.fixture(scope="module")
@@ -51,17 +46,13 @@ def other() -> bytes:
 
 
 def _calls(toolbox, data: bytes, other: bytes, calls) -> None:
-    """Each call ok; each changing one answered by the session (counted); the document as
-    valid after as it opened (no new validation problem)."""
+    """Each call ok; the document as valid after as it opened (no new validation problem)."""
     session = toolbox.session()
     doc = session.open(data, "report.docx")
     second = session.open(other, "other.docx")
-    for tool, arguments, changing in calls(toolbox, session, doc, second):
-        before = edits.served().get(tool, 0)
+    for tool, arguments, _changing in calls(toolbox, session, doc, second):
         result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
         assert result.ok, (tool, arguments, result.error)
-        if changing is not None:
-            assert edits.served().get(tool, 0) == before + 1, (tool, arguments)
     assert word_docs.validation(toolbox, session, doc)["new"] == []
 
 
@@ -121,11 +112,11 @@ def _table_calls(toolbox, session, doc, second):
 
 
 @pytest.mark.parametrize("calls", [_review_calls, _table_calls], ids=["review", "tables"])
-def test_the_last_group_served(toolbox, report, other, calls):
+def test_the_review_and_table_groups(toolbox, report, other, calls):
     _calls(toolbox, report, other, calls)
 
 
-def test_tracking_set_by_a_served_call_is_the_documents(toolbox, report):
+def test_tracking_set_by_a_call_is_the_documents(toolbox, report):
     session = toolbox.session()
     doc = session.open(report, "report.docx")
     on = toolbox.dispatch(session, "word_set_tracking", {"doc": doc, "on": True, "author": "Reviewer B"})

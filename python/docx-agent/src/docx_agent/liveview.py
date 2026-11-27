@@ -1,4 +1,4 @@
-"""An application's live view of a document the Rust session holds (round 35, R27; lane LV3).
+"""An application's live view of a document the Rust host holds (round 35, R27; lane LV3).
 
 A page that shows a document as it is written -- each page as SVG, redrawn when an edit
 changes it -- asks the session for the pages and for the ones an edit changed::
@@ -12,7 +12,7 @@ changes it -- asks the session for the pages and for the ones an edit changed::
     ...
     shown = view(session, "d1", since=shown.token)       # after edits: the pages they changed
 
-The work is the Rust session's (``ooxml_core.Session.view`` and ``page_svg``): the version is
+The work is the Rust host's (its session's ``view`` and ``page_svg``): the version is
 laid out by the document's page engine, the last versions views were given are kept within
 the session's memory budget, and a token names one (``<session>-<doc>-<state number>``).
 This module finds the document's session and engine, and gives pictures back by name.
@@ -117,43 +117,28 @@ def page_svg(where: Any, *args: Any, text: str = "text", images: str = "external
 
 
 def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, dict[str, Any], tuple]:
-    """The Rust session holding the document ``(session, doc, ...)`` names, its id there,
-    the call's keywords (``layout``: the document's page engine; ``context``: the host's
-    limit on laying out), and the ``rest`` arguments after ``doc``."""
+    """The Rust host's session holding the document ``(session, doc, ...)`` names, its id
+    there, the call's keywords (``layout``: the document's page engine; ``context``: the
+    session's limits on laying out and on the reply), and the ``rest`` arguments after ``doc``."""
     import ooxml_core
-
-    from .rust.owner import context_of
-    from .rust.reads import Mirror
 
     tail = ", page, token" if rest else ""
     if not callable(getattr(where, "entry", None)) or len(args) != rest + 1:
         raise TypeError(f"{name} takes (session, doc{tail}): a document's live view is its session's -- "
                         f"open it in one (doc = session.open(data, name)) and call {name}(session, doc{tail})")
-    limits = getattr(where, "limits", None)
-    context = context_of(None, limits, getattr(limits, "layout_timeout", None))
-    host = getattr(where, "rust", None)     # a session on the Rust host (Phase 3 E1)
-    if host is not None:
-        pages = host.pages(args[0]) if where.kind_of(args[0]) == "docx" else None
-        if pages is None:
-            raise TypeError(f"{args[0]} is not a Word document the session's Rust core holds; {name} draws "
-                            "the pages of one")
-        return host, args[0], {"layout": ooxml_core.CallLayout(pages), "context": context}, tuple(args[1:])
-    entry = where.entry(args[0])            # not_found names the open documents
-    owned = entry if isinstance(getattr(entry, "handle", None), Mirror) else None
-    if owned is None:
-        raise TypeError(f"{args[0]} is not a Word document the session's Rust core holds; {name} draws "
+    host = getattr(where, "rust", None)     # a session on the Rust host
+    pages = host.pages(args[0]) if host is not None and where.kind_of(args[0]) == "docx" else None
+    if pages is None:
+        raise TypeError(f"{args[0]} is not a Word document the session's Rust host holds; {name} draws "
                         "the pages of one")
-    call = {"layout": ooxml_core.CallLayout(_engine(owned)), "context": context}
-    return owned.handle.session, owned.handle.doc, call, tuple(args[1:])
-
-
-def _engine(owned: Any) -> Any:
-    """The page engine (an ``ooxml_core.WordPages``) the document ``owned`` (its session
-    entry) is laid out with: the session's own (:func:`docx_agent.rust.engines.session_pages`)
-    -- the one seam where this module reaches the engine."""
-    from .rust.engines import session_pages
-
-    return session_pages(owned)
+    limits = getattr(where, "limits", None)
+    given: dict[str, Any] = {"layout_timeout": getattr(limits, "layout_timeout", None)}
+    if limits is not None:
+        given["limits"] = ooxml_core.Limits(result_chars=limits.max_result_chars, list_items=limits.max_list_items,
+                                            images_per_call=limits.max_images_per_call,
+                                            image_edge=limits.max_image_edge)
+    call = {"layout": ooxml_core.CallLayout(pages), "context": ooxml_core.CallContext(**given)}
+    return host, args[0], call, tuple(args[1:])
 
 
 @contextmanager
@@ -162,14 +147,17 @@ def _raised() -> Iterator[None]:
     :class:`UnknownToken`, ``ooxml_core.ViewRefused`` as the session's refusal."""
     import ooxml_core
 
-    from .rust.refusals import refusal
+    from ooxml_edit.tools import ToolError
 
     try:
         yield
     except ooxml_core.UnknownToken as error:
         raise UnknownToken(str(error)) from error
     except ooxml_core.ViewRefused as error:
-        raise refusal(json.loads(error.args[2])) from error
+        refused = json.loads(error.args[2])
+        raise ToolError(refused["code"], refused["message"], field=refused.get("field"),
+                        valid_options=refused.get("valid_options"), details=refused.get("details"),
+                        try_call=refused.get("try_call")) from error
 
 
 # -- pictures by name (the names and forms pptx2svg.liveview gives) -------------------------------

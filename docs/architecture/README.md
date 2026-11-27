@@ -657,6 +657,11 @@ All are under 0.1 % of the edit budgets.
 - Shared reads they added to `ooxml-word-model`: `cells::PartCells` (a paragraph's cell context, each outermost table read once; `format`'s keeps use it too), `tables::cells_at` / `PlacedCell` (a row's cells with places and grid columns), `tables::cells_lost_on_accept`, `tables::own_rows`, `numbering::Lists::definition_of`.
 - Not served yet: `check` adds them under `layout`, which waits for the layout facts on the page engine (P5b). Their differential is the reads gate's `facts` mode (`word_reads_diff.py facts`, `word-reads`' `fact` cases, made-up documents for each fact on every run).
 
+**As built (Phase 3 E2: the Python docx host deleted).**
+- Every docx call runs on the Rust host (`ooxml-host`, `ooxml_edit.tools.hosted`: one `Host` per toolbox, one `HostSession` per session, decision D7). The Python host's own serving of Word documents, which the as-built entries of lanes P1c to P5a above describe, is deleted: `docx_agent/rust` (the owner, the mirror and its numbering, the edits, reads and hooks, the `served` adapters), ooxml-edit's `owned`, `served` and `gate` modules with `DocumentFormat.owner` and `serve`, and the docx format's Python hooks (`summary`, `problems`, `validation`, `state`, `own_source`, `number_texts`, `scale_values`...). docx-agent's `FORMAT` is its definitions, its prompt and its host (`WordHosting`).
+- A toolbox holding docx-agent's format beside a Python-held format of a kind the Rust session cannot name is refused when it is made (`runs_on_host`), with the kinds it can name: the Rust host's documents have no other host.
+- **pptx and xlsx keep the Python host until Phase 4**: their documents stay in ooxml-edit's dispatcher, named and counted by the Rust session (`HeldElsewhere`), their rows reaching Word calls through the values channel (`hosted_values`). Phase 4 ports each format and deletes the Python host, the facade's routing and the values channel.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.

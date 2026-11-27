@@ -679,8 +679,7 @@ class Recorder:
         for name, why in (("adopt", "a document adopted from Python objects"),
                           ("keep_datasets", "datasets kept by the application"),
                           ("drop_dataset", "a dataset dropped by the application"),
-                          ("commit", "a commit by the application"),
-                          ("owned_history", "history read by the application")):
+                          ("commit", "a commit by the application")):
             patch_sessions(name, lambda o, why=why: self._tainting(o, why))
 
         def add_output(original):

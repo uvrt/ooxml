@@ -8,7 +8,7 @@ tool, which the recorder leaves out.
 A pytest plugin (``-p freeze_values``) run over docx-agent's tests writes, for each such call, one
 line of ``frozen/values.jsonl``: the document as it was before the call (its bytes kept in
 ``host/inputs``, its id state), the session's datasets then (each with its values as the
-adapters hand them over: ``served._value``), the session's clock and locale, the call, and the
+adapters handed them over, as ``hosted_data.cell_json`` writes them), the session's clock and locale, the call, and the
 Python host's answer normalised as the host goldens normalise one, with the document's parts'
 digests after it.  The Rust host's replay of them is ``tests/integration/frozen_values.rs``.
 
@@ -54,7 +54,7 @@ def _reads_values(name: str, arguments: Any) -> bool:
 
 
 def _dataset(entry: Any) -> dict:
-    from docx_agent.rust.served import _value
+    from ooxml_edit.tools.hosted_data import cell_json as _value
 
     data = entry.dataset
     return {"id": entry.id, "columns": [str(c) for c in data.columns],

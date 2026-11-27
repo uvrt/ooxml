@@ -17,10 +17,6 @@ from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
-
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 41, 17, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -44,11 +40,14 @@ def opened(request):
             out.pop("timing", None)
             return out
 
-        yield call, first, session.entry(doc), lambda: word_docs.paragraphs(session, doc)[0][1]
+        def version() -> int:
+            return box.dispatch(session, "describe", {"doc": doc}).version
+
+        yield call, first, version, lambda: word_docs.paragraphs(session, doc)[0][1]
 
 
 def test_a_callers_own_undo_names_the_later_change_and_who_made_it(opened):
-    call, first, entry, text = opened
+    call, first, version, text = opened
     assert call("a", "undo")["error"]["message"] == (
         "nothing of yours to undo in d1: undo here takes back your own changes only")
     assert call(None, "undo", redo=True)["error"] == {
@@ -71,7 +70,7 @@ def test_a_callers_own_undo_names_the_later_change_and_who_made_it(opened):
         "Undid 1 of your own step(s) of d1", {"steps": 1, "version": 1, "own": True}, 1)
     assert undone["warnings"] == [
         "1 of 3 step(s): no more of yours, or the next depends on a later change by another caller"]
-    assert entry.version == 1 and text() == "A First"
+    assert version() == 1 and text() == "A First"
     # a's own undo now, then b's own redo is not the next: a's undo is
     assert call("a", "undo")["data"] == {"steps": 1, "version": 0, "own": True}
     assert call("b", "undo", redo=True)["error"]["message"] == (
@@ -82,13 +81,13 @@ def test_a_callers_own_undo_names_the_later_change_and_who_made_it(opened):
     # the session's own undo and redo take any caller's steps
     assert call(None, "undo", steps=2)["data"] == {"steps": 2, "version": 0}
     redone = call(None, "undo", redo=True, steps=5)
-    assert (redone["summary"], redone["warnings"], entry.version) == ("Redid 2 step(s) of d1", [], 2)
+    assert (redone["summary"], redone["warnings"], version()) == ("Redid 2 step(s) of d1", [], 2)
     assert text() == "B A First"
     assert call(None, "undo", scope="256")["error"]["field"] == "scope"
 
 
 def test_the_session_api_counts_and_a_batch_is_one_step_of_its_caller(opened):
-    call, first, entry, text = opened
+    call, first, version, text = opened
     out = call("a", "batch", ops=[
         {"tool": "word_insert_text", "arguments": {"doc": "d1", "at": f"{first}@0", "text": "1 "}},
         {"tool": "word_insert_text", "arguments": {"doc": "d1", "at": f"{first}@0", "text": "2 "}}])
@@ -104,7 +103,7 @@ def test_the_session_api_counts_and_a_batch_is_one_step_of_its_caller(opened):
 
 
 def test_nothing_to_take_lists_the_steps_and_who_made_each_and_the_call_that_works(opened):
-    call, first, _entry, _text = opened
+    call, first, _version, _text = opened
     call("a", "word_insert_text", at=f"{first}@0", text="A ")
     call("b", "word_insert_text", at=f"{first}@0", text="B ")
     by_a = {"version": 1, "tool": "word_insert_text", "context": {"agent": "a"}}

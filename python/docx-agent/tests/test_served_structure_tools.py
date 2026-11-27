@@ -8,15 +8,11 @@ import datetime as dt
 
 import pytest
 
-from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 CLOCK = lambda: dt.datetime(2026, 11, 20, 9, 0, tzinfo=dt.timezone.utc)  # noqa: E731
 
@@ -80,20 +76,18 @@ def _structure_calls(toolbox, session, doc):
     yield "word_links", {"action": "list"}
 
 
-def test_structure_tools_served(toolbox, report):
-    """Each call answered by the session (counted), the document valid after."""
+def test_structure_tools(toolbox, report):
+    """Each call answered, the document valid after."""
     session, doc = _open(toolbox, report)
     for tool, arguments in _structure_calls(toolbox, session, doc):
-        before = edits.served().get(tool, 0)
         result = toolbox.dispatch(session, tool, {"doc": doc, **arguments})
         assert result.ok, (tool, arguments, result.error)
-        assert edits.served().get(tool, 0) == before + 1, (tool, arguments)
     assert word_docs.validation(toolbox, session, doc)["new"] == []
     listed = word_docs.read(toolbox, session, doc)
     assert listed.index("Part 3") < listed.index("Part 1")
 
 
-def test_a_ref_a_served_call_defines_is_the_sessions(toolbox, report):
+def test_a_ref_a_call_defines_is_the_sessions(toolbox, report):
     session, doc = _open(toolbox, report)
     ids = _ids(toolbox, session, doc)
     result = toolbox.dispatch(session, "word_notes", {"doc": doc, "action": "insert", "at": ids["Part 1"],
@@ -137,15 +131,9 @@ def _reads(toolbox, session, mine, table, theirs, reference) -> list:
     return out
 
 
-def test_the_reads_served_with_another_documents_version(toolbox):
-    from docx_agent.rust import reads
-
+def test_the_reads_with_another_documents_version(toolbox):
     session = toolbox.session()
     mine, table, theirs, reference = _tables(toolbox, session)
-    before = dict(reads.served())
     served = _reads(toolbox, session, mine, table, theirs, reference)
-    assert {tool: reads.served().get(tool, 0) - before.get(tool, 0)
-            for tool in ("word_compare_blocks", "word_design_facts")} == {
-        "word_compare_blocks": 2, "word_design_facts": 2}
     assert served[0][2]["differences"], "the bold header row is a difference"
     assert served == _reads(toolbox, session, mine, table, theirs, reference)   # the same versions, the same reads
