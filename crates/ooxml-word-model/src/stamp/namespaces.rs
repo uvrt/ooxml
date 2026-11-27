@@ -15,7 +15,7 @@ type Remap = (Option<Arc<str>>, Option<Arc<str>>, Arc<str>);
 /// `element` (whose ancestors declare `scope`, outermost first) with every declaration
 /// that repeats one in scope removed; unchanged subtrees shared.
 #[must_use]
-pub(crate) fn strip_redundant(element: &Arc<Element>, scope: &mut Vec<NamespaceDecl>) -> Arc<Element> {
+pub fn strip_redundant(element: &Arc<Element>, scope: &mut Vec<NamespaceDecl>) -> Arc<Element> {
     let found =
         |scope: &[NamespaceDecl], uri: &str| scope.iter().rev().find(|d| &*d.uri == uri).map(|d| d.prefix.clone());
     let mut keep = Vec::new();
@@ -82,7 +82,7 @@ pub(crate) fn strip_redundant(element: &Arc<Element>, scope: &mut Vec<NamespaceD
 /// A root whose head `ensure_w14` changed by declaring namespaces: every declaration below
 /// that repeats one in scope removed (lxml's `cleanup_namespaces` with a top map).
 #[must_use]
-pub(crate) fn cleaned(root: &Arc<Element>) -> Arc<Element> {
+pub fn cleaned(root: &Arc<Element>) -> Arc<Element> {
     let mut scope = root.namespaces().to_vec();
     let mut children = Vec::with_capacity(root.children().len());
     let mut changed = false;

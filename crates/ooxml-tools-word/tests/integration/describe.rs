@@ -116,7 +116,7 @@ fn args() -> Describe {
 fn describes_what_the_parts_say() {
     let done = describe(
         &args(),
-        &Version::new("plan.docx", &made_up(), 1, &Versions::new()),
+        &Version::new("plan.docx", &crate::common::read(&made_up()), 1, &Versions::new()),
         &Never,
     )
     .unwrap();
@@ -157,10 +157,14 @@ fn a_bare_package_has_the_defaults() {
         ("_rels/.rels", root),
         ("word/document.xml", format!("<w:document {W}><w:body/></w:document>")),
     ]);
-    let data = describe(&args(), &Version::new("a.docx", &p, 1, &Versions::new()), &Never)
-        .unwrap()
-        .data
-        .unwrap();
+    let data = describe(
+        &args(),
+        &Version::new("a.docx", &crate::common::read(&p), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap()
+    .data
+    .unwrap();
     assert_eq!(data["compatibility_mode"], json!(12));
     assert_eq!(data["properties"], json!({}));
     assert_eq!(data["comments"], json!({"threads": 0, "open": 0, "by_author": {}}));
@@ -173,7 +177,7 @@ fn cancellation_stops_it_with_timeout() {
     // the first check passes, the next one stops it
     let error = describe(
         &args(),
-        &Version::new("plan.docx", &made_up(), 1, &Versions::new()),
+        &Version::new("plan.docx", &crate::common::read(&made_up()), 1, &Versions::new()),
         &After(AtomicBool::new(false)),
     )
     .unwrap_err();
@@ -185,7 +189,12 @@ fn cancellation_stops_it_with_timeout() {
 #[test]
 fn not_a_word_package_is_an_internal_error() {
     let p = package(&[("other.xml", "<a/>".into())]);
-    let error = describe(&args(), &Version::new("x.docx", &p, 1, &Versions::new()), &Never).unwrap_err();
+    let error = describe(
+        &args(),
+        &Version::new("x.docx", &crate::common::read(&p), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap_err();
     assert_eq!(error.code().as_str(), "internal");
 }
 

@@ -9,8 +9,9 @@
 
 use ooxml_base::Limits;
 use ooxml_opc::Package;
-use ooxml_word_model::ids::{load_state, record_of, story_name, Ledger, PartIds, Versions};
+use ooxml_word_model::ids::{block_and_drawing_ids, load_state, record_of, story_name, Ledger, PartIds, Versions};
 use ooxml_word_model::parts::{main_part, parts};
+use ooxml_word_model::WordPackage;
 use ooxml_xml::Tree;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -36,34 +37,51 @@ pub fn run(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// One document's ids, ledger record and next values.
+/// One document's ids, ledger record and next values, as a session opens it: every story
+/// block stamped in memory ([`WordPackage::open`]), the record's bytes the ids as saved.
 ///
 /// # Errors
 /// A message when the package cannot be read.
 pub fn ids_of(bytes: Vec<u8>, state: Option<&str>) -> Result<Value, String> {
     let package = Package::open(Arc::from(bytes), &Limits::default()).map_err(|e| e.to_string())?;
+    let (package, pool) = WordPackage::open(package);
     let main = main_part(&package).map_err(|e| e.to_string())?.ok_or("no main part")?;
     let names = parts(&package).map_err(|e| e.to_string())?;
     let mut trees: Vec<(String, Tree)> = Vec::new();
+    let mut saved: Vec<Tree> = Vec::new();
     for name in names {
         if let Some(tree) = package.tree(&name).map_err(|e| e.to_string())? {
-            trees.push((name, tree));
+            trees.push((name.clone(), tree));
         }
+        saved.extend(package.saved_tree(&name).map_err(|e| e.to_string())?);
     }
     let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|(_, t)| t.root().as_ref()).collect();
+    let saved: Vec<&ooxml_xml::Element> = saved.iter().map(|t| t.root().as_ref()).collect();
     let index: Vec<Value> = trees
         .iter()
         .map(|(part, tree)| index_json(part, &story_name(&main, part), tree))
         .collect();
-    let mut ledger = Ledger::default();
+    let mut ledger = Ledger {
+        pool: Some(pool),
+        ..Ledger::default()
+    };
     let mut versions = Versions { version: 0, last: 0 };
     if let Some(state) = state {
-        let loaded = load_state(state, &roots).map_err(|e| e.to_string())?;
+        let mut loaded = load_state(state, &saved).map_err(|e| e.to_string())?;
+        // an id the state retired that the open gave again is live
+        let (live, _) = block_and_drawing_ids(&roots);
+        loaded.gone.retain(|value, _| !live.contains(value));
         versions = loaded.versions.clone();
+        let mut pool = ledger.pool.take().unwrap_or_default();
+        pool.extend(loaded.pool.values().iter().copied());
+        for (seed, k) in loaded.pool.cursors() {
+            pool.set_cursor(seed, *k);
+        }
         ledger.restore(loaded);
+        ledger.pool = Some(pool);
     }
     ledger.note(&roots, versions.version);
-    let record = record_of(&ledger, &roots, &versions, &|_| None);
+    let record = record_of(&ledger, &saved, &versions, &|_| None);
     let mut generated = Map::new();
     for (part, _) in &trees {
         let made = ledger.pool(&roots, versions.version).generate(part, 3);

@@ -123,3 +123,58 @@ pub fn policy(rng: &mut Rng, writer: u64) -> RevisionPolicy {
 }
 
 pub const WORDS: &[&str] = &["alpha", "beta", "gamma", "report", "Quarter", "and"];
+
+/// Each block id a reading of `bytes` without stamping gives (positional `p@body/3`,
+/// `t@body/0`, `t:X/r1`, a repeat `p:X#1`) that the document opened -- every block stamped
+/// in memory -- names otherwise: the old id and the id it has now.
+pub fn stamped_ids(bytes: &Arc<[u8]>) -> Vec<(String, String)> {
+    use ooxml_word_model::ids::{story_name, PartIds};
+    let raw = Package::open(Arc::clone(bytes), &Limits::default()).unwrap();
+    let (word, _) = ooxml_word_model::WordPackage::open(raw.clone());
+    let main = ooxml_word_model::parts::main_part(&raw).unwrap().unwrap();
+    let names = |ids: PartIds| {
+        let mut out: Vec<String> = ids.paragraphs().iter().map(|p| p.id).collect();
+        for table in ids.tables().iter() {
+            out.push(table.id.clone());
+            out.extend(table.rows.iter().map(|(_, r)| r.clone()));
+        }
+        out
+    };
+    let mut renamed = Vec::new();
+    for part in ooxml_word_model::parts::parts(&raw).unwrap() {
+        let story = story_name(&main, &part);
+        let (Some(old), Some(new)) = (raw.tree(&part).unwrap(), word.tree(&part).unwrap()) else {
+            continue;
+        };
+        let pairs = names(PartIds::new(&story, old.root()))
+            .into_iter()
+            .zip(names(PartIds::new(&story, new.root())));
+        renamed.extend(pairs.filter(|(a, b)| a != b));
+    }
+    // the longest first: `p@body/12` before `p@body/1`
+    renamed.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    renamed
+}
+
+/// `text` (an address, a list of options) with every old id of `bytes` ([`stamped_ids`])
+/// as the document names it now.
+pub fn now(bytes: &Arc<[u8]>, text: &str) -> String {
+    let renamed = stamped_ids(bytes);
+    let mut out = String::new();
+    let mut rest = text;
+    'scan: while !rest.is_empty() {
+        for (old, new) in &renamed {
+            if let Some(after) = rest.strip_prefix(old.as_str()) {
+                if !after.starts_with(|c: char| c.is_ascii_digit()) {
+                    out.push_str(new);
+                    rest = after;
+                    continue 'scan;
+                }
+            }
+        }
+        let mut chars = rest.chars();
+        out.extend(chars.next());
+        rest = chars.as_str();
+    }
+    out
+}

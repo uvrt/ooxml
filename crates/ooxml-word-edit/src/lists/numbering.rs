@@ -10,11 +10,11 @@
 use crate::doc::Key;
 use crate::list_style::parsed;
 use crate::names::W;
-use crate::namespaces::strip_redundant;
 use crate::sink::EditSink;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result};
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::stamp::namespaces::strip_redundant;
 use ooxml_word_model::xmlread::py_int;
 use ooxml_xml::{Element, Node};
 use std::collections::{BTreeSet, HashSet};

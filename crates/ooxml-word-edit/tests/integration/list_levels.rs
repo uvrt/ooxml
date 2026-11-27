@@ -22,7 +22,10 @@ fn tracked() -> RevisionPolicy {
 
 fn level_one() -> ListEdit {
     ListEdit {
-        targets: vec![ooxml_word_model::address::Address::parse("p@body/11")],
+        targets: vec![ooxml_word_model::address::Address::parse(&crate::common::now(
+            &fixture("docx2svg/style-document.docx"),
+            "p@body/11",
+        ))],
         action: ListAction::Level(1),
         policy: tracked(),
     }
@@ -104,8 +107,14 @@ fn a_target_with_a_paragraph_in_no_list_is_refused_as_not_in_a_list_first() {
     let editor = single_level_editor();
     let mixed = ListEdit {
         targets: vec![
-            ooxml_word_model::address::Address::parse("p@body/11"),
-            ooxml_word_model::address::Address::parse("p@body/0"),
+            ooxml_word_model::address::Address::parse(&crate::common::now(
+                &fixture("docx2svg/style-document.docx"),
+                "p@body/11",
+            )),
+            ooxml_word_model::address::Address::parse(&crate::common::now(
+                &fixture("docx2svg/style-document.docx"),
+                "p@body/0",
+            )),
         ],
         ..level_one()
     };

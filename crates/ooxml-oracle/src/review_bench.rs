@@ -33,7 +33,7 @@ fn ms(d: std::time::Duration) -> f64 {
 /// A fresh editor whose first version is `doc`.
 fn editor_of(doc: &WordDoc) -> Result<Editor, String> {
     Editor::open(
-        doc.package().clone(),
+        doc.package().package().clone(),
         StoreConfig::default(),
         Arc::new(Monotonic::new()),
         Arc::new(Unlimited),

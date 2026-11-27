@@ -77,9 +77,16 @@ fn table_document(rows: &str) -> Editor {
     editor(&Arc::from(zip.finish(b"").unwrap()))
 }
 
+/// The document's table, by its id.
+fn table(editor: &Editor) -> ooxml_word_model::address::Address {
+    let docx = editor.store().snapshot().doc().docx().unwrap();
+    let id = docx.parts[0].ids.tables().iter().next().unwrap().id.clone();
+    ooxml_word_model::address::Address::from(id)
+}
+
 fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditError> {
     let command = SetCells {
-        table: ooxml_word_model::address::Address::from("t@body/0".to_owned()),
+        table: table(editor),
         writes: vec![CellWrite::at(row, column, "new".to_owned())],
         stamping: false,
         policy: RevisionPolicy::Untracked,
@@ -97,7 +104,7 @@ fn set(editor: &Editor, row: usize, column: usize) -> Result<Vec<String>, EditEr
 
 fn split(editor: &Editor, row: usize, column: usize) -> Result<(), EditError> {
     let command = EditTable {
-        table: ooxml_word_model::address::Address::from("t@body/0".to_owned()),
+        table: table(editor),
         change: TableChange::Split {
             row,
             column,

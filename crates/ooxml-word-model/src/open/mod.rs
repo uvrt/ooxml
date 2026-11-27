@@ -616,7 +616,8 @@ impl Model {
     }
 
     /// Open a version of the document, reusing what it shares with the last one opened.
-    pub fn open(&mut self, package: &Package) -> Result<WordDocument, WordError> {
+    pub fn open(&mut self, package: &crate::WordPackage) -> Result<WordDocument, WordError> {
+        let package = package.package();
         let misses_before = self.resolver.stats().misses;
         let p = parts(package)?;
         let (cx, colours_d) = self.context(&p);

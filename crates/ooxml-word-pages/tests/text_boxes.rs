@@ -149,7 +149,10 @@ fn a_page_measured_with_its_text_boxes_and_footnotes_for_a_version_and_a_trial()
     let last = version.page_count() - 1;
     assert_eq!(engine.beyond_facts(Laid::Version(&version), last).text_boxes, None);
     // A trial laid out from the version measures the same.
-    let package = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let package = ooxml_word_model::WordPackage::open(
+        ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
+    )
+    .0;
     let trial = engine.trial(&package, &version, &Never).unwrap().unwrap();
     assert_eq!(engine.beyond_facts(Laid::Trial(&trial), 0), beyond);
 }

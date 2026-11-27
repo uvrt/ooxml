@@ -140,12 +140,14 @@ pub(crate) fn summary_of(word: &WordDoc) -> Result<Value, ToolError> {
     ooxml_tools_word::summary(word.package(), &docx, &CancelToken::new())
 }
 
-/// `word`'s id state, its versions and retired ids as `host` numbers them.
+/// `word`'s id state, its versions and retired ids as `host` numbers them. Its bytes are
+/// named by the ids they hold as saved: an id given at open and not written yet is not
+/// theirs (a state taken before a document's first edit is its bytes' as they were).
 pub(crate) fn id_state_of(word: &WordDoc, host: &IdStateOf) -> Result<String, SessionError> {
     let package = word.package();
     let mut trees: Vec<Tree> = Vec::new();
     for part in parts(package)? {
-        if let Some(tree) = word.tree(&part).map_err(SessionError::format)? {
+        if let Some(tree) = package.saved_tree(&part)? {
             trees.push(tree);
         }
     }

@@ -162,7 +162,7 @@ impl InsertShape {
         let xml = self.xml(&frame);
         let parsed =
             ooxml_xml::parse(xml.as_bytes(), &Limits::default().xml).map_err(|e| EditError::Refused(e.to_string()))?;
-        let holder = crate::namespaces::strip_redundant(parsed.root(), &mut scope);
+        let holder = ooxml_word_model::stamp::namespaces::strip_redundant(parsed.root(), &mut scope);
         let at = InParagraph {
             part: part.clone(),
             path: found.path.clone(),

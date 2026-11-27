@@ -82,7 +82,6 @@ mod merge;
 mod moving;
 mod moving_tracked;
 mod names;
-mod namespaces;
 mod new_part;
 mod notes;
 pub mod originals;

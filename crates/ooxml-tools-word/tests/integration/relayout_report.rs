@@ -44,7 +44,12 @@ fn ms(d: Duration) -> String {
 
 fn laid(engine: &Mutex<PageEngine>, package: &Package) -> (Arc<LaidVersion>, Duration) {
     let started = Instant::now();
-    let version = engine.lock().unwrap().lay_out(package, None).unwrap().unwrap();
+    let version = engine
+        .lock()
+        .unwrap()
+        .lay_out(&crate::common::read(package), None)
+        .unwrap()
+        .unwrap();
     (version, started.elapsed())
 }
 

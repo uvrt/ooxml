@@ -14,7 +14,7 @@
 use super::reflow::{reflow_json, LastCheck};
 use crate::pages::{LayoutLimit, WordLayout};
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
+use ooxml_word_model::WordPackage;
 use ooxml_word_pages::summarised::Summarised;
 use ooxml_word_pages::{EngineSeed, LaidVersion, PageEngine, PagesError};
 use serde_json::Value;
@@ -33,7 +33,7 @@ pub struct EditedFrom<'a> {
     /// Its number.
     pub version: u64,
     /// Its package.
-    pub package: &'a Package,
+    pub package: &'a WordPackage,
 }
 
 /// The reflow a changing call's checks report (docx-agent's `_base.checks`), measured from
@@ -53,7 +53,7 @@ pub fn reflow_after_edit(
     layout: &dyn WordLayout,
     last: &LastCheck,
     before: EditedFrom<'_>,
-    after: &Package,
+    after: &WordPackage,
     aliases: &BTreeMap<String, String>,
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
@@ -105,7 +105,7 @@ pub fn reflow_after_edit(
 fn on_spare(
     seed: &EngineSeed,
     count: usize,
-    (before, after): (&Package, &Package),
+    (before, after): (&WordPackage, &WordPackage),
     aliases: &HashMap<String, String>,
     stop: Stop<'_>,
 ) -> Option<Value> {
@@ -135,7 +135,7 @@ struct Stop<'a> {
 impl Stop<'_> {
     /// `package` laid out by `engine`; else what the reflow says (`Some`: a stop, as
     /// docx-agent's deadline says it) or `None` (the engine does not lay it out).
-    fn lay_out(self, engine: &mut PageEngine, package: &Package) -> Result<Arc<LaidVersion>, Option<Value>> {
+    fn lay_out(self, engine: &mut PageEngine, package: &WordPackage) -> Result<Arc<LaidVersion>, Option<Value>> {
         match engine.lay_out_until(package, self.limit.map_or(self.cancel, |l| l.cancel)) {
             Ok(Ok(laid)) => Ok(laid),
             Err(PagesError::Stopped) => {

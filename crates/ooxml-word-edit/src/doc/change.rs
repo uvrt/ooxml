@@ -92,6 +92,16 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
+    /// A part put in place as another writer wrote it (a host's commit of parts): a story
+    /// part whose blocks lack ids read with them stamped, kept unwritten
+    /// ([`ooxml_word_model::stamp::received`]); written like any other part by the next
+    /// change of the package.
+    Received {
+        /// The part.
+        part: Arc<str>,
+        /// Its tree, as written.
+        tree: Tree,
+    },
     /// A part put in place as bytes, kept as given (media, or any part a bridged tool wrote
     /// that is not XML).
     Bytes {
@@ -200,6 +210,7 @@ impl Change {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
             | Change::Put { part, .. }
+            | Change::Received { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. }

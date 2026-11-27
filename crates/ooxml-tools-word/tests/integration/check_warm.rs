@@ -205,7 +205,9 @@ fn versions(seed: u64, rounds: usize) -> Vec<Package> {
             }
         }
         let document = format!("{head}{}{tail}", body.concat());
-        out.push(package.with_bytes("word/document.xml", Arc::from(document.into_bytes())));
+        // read once, its ids given (and written): every editor opened on it reads its trees
+        let version = package.with_bytes("word/document.xml", Arc::from(document.into_bytes()));
+        out.push(crate::common::read(&version).written());
     }
     out
 }

@@ -31,7 +31,11 @@ struct Timed {
 }
 
 impl FieldLayout for Timed {
-    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(
+        &self,
+        package: &ooxml_word_model::WordPackage,
+        cancel: &dyn Cancel,
+    ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let started = Instant::now();
         let laid = self.inner.lay_out(package, cancel);
         self.spent

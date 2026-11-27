@@ -27,6 +27,7 @@ mod review_reads;
 mod review_writers;
 mod saving;
 mod sections_split;
+mod stamp_on_open;
 mod stamped;
 mod stand_ins;
 mod structure_bench;

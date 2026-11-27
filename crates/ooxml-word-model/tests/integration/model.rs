@@ -185,9 +185,8 @@ fn incremental_labels_equal_labels_from_scratch_after_every_edit() {
 fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
     let items: Vec<(i64, i64)> = (0..30).map(|k| (1 + (k % 2), k % 2)).collect();
     let unstamped = list(&items);
-    // a part whose keys name places (no paraIds) is read again whole: its blocks' keys may
-    // not be theirs where they are taken (ADR-008); where a block reads the same, keys
-    // included, as the last version's at its place, it is shared
+    // a part without paraIds is stamped when it is opened (the same ids for the same
+    // places): its blocks' keys are durable, so only the changed block is read again
     let mut m = model();
     let first = m.open(&package(&unstamped)).unwrap();
     let mut edited = unstamped.clone();
@@ -203,7 +202,7 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
         })
         .count();
     assert_eq!(shared, 29);
-    assert_eq!((m.stats().elements, m.stats().elements_read), (30, 30));
+    assert_eq!((m.stats().elements, m.stats().elements_read), (30, 1));
     assert_eq!(reread.body, open(&edited).1.body);
     let parts = Parts {
         body: stamped(&unstamped.body),

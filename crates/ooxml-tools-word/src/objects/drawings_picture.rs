@@ -365,15 +365,17 @@ mod tests {
         let package = Package::open(Arc::from(FIXTURE), &Limits::default()).unwrap();
         let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
         let before = editor.store().snapshot();
+        // the body's first paragraph, by the id it has from the first read
+        let first = before.doc().docx().unwrap().body().unwrap().ids.paragraphs().iter().next().unwrap().id;
         let (args, _) = WordDrawings::accept(
-            json!({"doc": "d1", "action": "insert_picture", "image": "b1", "at": "after:p@body/0",
+            json!({"doc": "d1", "action": "insert_picture", "image": "b1", "at": format!("after:{first}"),
                    "alt_text": "x", "wrap": "square"}),
             Some("docx"),
         )
         .unwrap();
         let plan = |data: &[u8]| Plan {
             paragraph: Some(InsertParagraph {
-                anchor: "p@body/0".to_owned(),
+                anchor: first.clone(),
                 after: true,
                 text: String::new(),
                 style: None,

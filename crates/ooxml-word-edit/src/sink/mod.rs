@@ -18,7 +18,8 @@ mod stretch;
 mod style_use;
 mod written;
 
-pub(crate) use heads::{annotation_draws, ensured_head};
+pub(crate) use heads::annotation_draws;
+pub(crate) use ooxml_word_model::stamp::ensured_head;
 
 use crate::doc::{Change, Draw, Key, WordDoc};
 use crate::policy::{RevisionPolicy, Stamp};
@@ -718,7 +719,7 @@ impl<'t, 's> EditSink<'t, 's> {
             // lxml declares them with a cleanup of the whole part: declarations below that
             // repeat one in scope go (the part rewritten only when one does)
             let new = Arc::new(Element::from_head(Arc::clone(&head), root.children().clone()));
-            let cleaned = crate::namespaces::cleaned(&new);
+            let cleaned = ooxml_word_model::stamp::namespaces::cleaned(&new);
             if !Arc::ptr_eq(&cleaned, &new) {
                 return self.put(part, tree.with_root(cleaned));
             }

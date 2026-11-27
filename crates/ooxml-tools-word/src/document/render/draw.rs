@@ -10,8 +10,8 @@
 use super::store::{page_key, ImageKey};
 use crate::{LayoutLimit, NotLaid, Owned, WordLayout};
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
+use ooxml_word_model::WordPackage;
 use ooxml_word_pages::png::{sized::sized, PageRaster};
 use ooxml_word_pages::{DiskFonts, LaidVersion};
 use serde_json::{json, Map, Value};
@@ -82,7 +82,7 @@ fn not_supported(who: &str, doc: &str, why: &NotLaid) -> ToolError {
 pub(super) fn laid(
     layout: &dyn WordLayout,
     owned: &Owned<'_>,
-    package: &Package,
+    package: &WordPackage,
     doc: &str,
     cancel: &dyn Cancel,
 ) -> Result<Arc<LaidVersion>, ToolError> {
@@ -100,7 +100,7 @@ pub fn laid_to_draw(
     who: &str,
     layout: &dyn WordLayout,
     limit: Option<LayoutLimit<'_>>,
-    (package, doc): (&Package, &str),
+    (package, doc): (&WordPackage, &str),
     cancel: &dyn Cancel,
 ) -> Result<Arc<LaidVersion>, ToolError> {
     let stop = limit.map_or(cancel, |limit| limit.cancel);

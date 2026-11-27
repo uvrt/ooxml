@@ -114,7 +114,11 @@ impl LaidFields for LaidTwo {
 }
 
 impl FieldLayout for TwoPages {
-    fn lay_out(&self, _: &Package, _: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(
+        &self,
+        _: &ooxml_word_model::WordPackage,
+        _: &dyn Cancel,
+    ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Ok(Box::new(LaidTwo))
     }
 }
@@ -311,7 +315,11 @@ fn a_page_number_is_inserted_with_its_result() {
 struct Stopping;
 
 impl FieldLayout for Stopping {
-    fn lay_out(&self, _: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(
+        &self,
+        _: &ooxml_word_model::WordPackage,
+        cancel: &dyn Cancel,
+    ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         assert!(cancel.is_cancelled(), "the call's limit is what stops it");
         Err(LayOutError::Stopped)
     }

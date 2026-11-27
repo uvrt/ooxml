@@ -286,11 +286,20 @@ struct OnePage {
 }
 
 impl FieldLayout for OnePage {
-    fn lay_out(&self, _package: &Package, _cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(
+        &self,
+        _package: &ooxml_word_model::WordPackage,
+        _cancel: &dyn Cancel,
+    ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Err(LayOutError::Unsupported("not needed".to_owned()))
     }
 
-    fn reflow(&self, before: &Package, after: &Package, _cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+    fn reflow(
+        &self,
+        before: &ooxml_word_model::WordPackage,
+        after: &ooxml_word_model::WordPackage,
+        _cancel: &dyn Cancel,
+    ) -> Result<PageReflow, LayOutError> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert!(
             before.part_names().len() < after.part_names().len(),
@@ -353,11 +362,20 @@ fn convert_writes_mode_fifteen_and_reports_the_reflow_then_is_a_no_op() {
 struct StoppedReflow;
 
 impl FieldLayout for StoppedReflow {
-    fn lay_out(&self, _package: &Package, _cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(
+        &self,
+        _package: &ooxml_word_model::WordPackage,
+        _cancel: &dyn Cancel,
+    ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Err(LayOutError::Unsupported("not needed".to_owned()))
     }
 
-    fn reflow(&self, _before: &Package, _after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+    fn reflow(
+        &self,
+        _before: &ooxml_word_model::WordPackage,
+        _after: &ooxml_word_model::WordPackage,
+        cancel: &dyn Cancel,
+    ) -> Result<PageReflow, LayOutError> {
         assert!(cancel.is_cancelled(), "the call's limit is what stops it");
         Err(LayOutError::Stopped)
     }

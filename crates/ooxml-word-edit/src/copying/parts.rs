@@ -45,8 +45,8 @@ impl Parts {
         let destination = sink.doc().package();
         Parts {
             source: source.clone(),
-            original: destination.clone(),
-            package: destination.clone(),
+            original: destination.package().clone(),
+            package: destination.package().clone(),
             copied: HashMap::new(),
         }
     }
@@ -67,7 +67,7 @@ impl Parts {
     ) -> Result<()> {
         // built on the package as the sink holds it now: what the copy wrote since the last
         // bringing (a numbering or notes part made, their relationships) is kept
-        self.original = sink.doc().package().clone();
+        self.original = sink.doc().package().package().clone();
         self.package = self.original.clone();
         self.relate(sink, work, elements, parts)?;
         self.flush(sink)
@@ -126,7 +126,7 @@ impl Parts {
             match version {
                 PartVersion::Tree(tree) => sink.put(&name, tree.clone())?,
                 PartVersion::Bytes(bytes) => sink.put_bytes(&name, Arc::clone(bytes))?,
-                PartVersion::Raw(_) => {}
+                PartVersion::Raw(_) | PartVersion::Unwritten(_) => {}
             }
         }
         Ok(())

@@ -154,7 +154,7 @@ fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
 /// `reference_file`; its package, and the document as a session opens one (its ids
 /// stamped, their renames kept) where it opens.
-fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<WordDoc>)> {
+fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(ooxml_word_model::WordPackage, Option<WordDoc>)> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -165,6 +165,11 @@ fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<Wo
     };
     let package = other.and_then(|b| Package::open(b, &Limits::default()).ok())?;
     let word = WordDoc::open(package.clone(), Arc::new(Unlimited)).ok();
+    // read as a session reads it: as its editor holds it, else stamped as an open stamps it
+    let package = word.as_ref().map_or_else(
+        || ooxml_word_model::WordPackage::open(package).0,
+        |w| w.package().clone(),
+    );
     Some((package, word))
 }
 
@@ -295,7 +300,11 @@ fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<Strin
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
-fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
+fn other_version<'a>(
+    package: &'a ooxml_word_model::WordPackage,
+    word: Option<&'a WordDoc>,
+    versions: &'a Versions,
+) -> Version<'a> {
     Version::new("copy.docx", package, 1, versions).with_word(word)
 }
 

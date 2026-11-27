@@ -76,7 +76,12 @@ fn sample() -> Package {
 }
 
 fn read(args: &WordRead) -> String {
-    let done = word_read(args, &Version::new("a.docx", &sample(), 1, &Versions::new()), &Never).unwrap();
+    let done = word_read(
+        args,
+        &Version::new("a.docx", &crate::common::read(&sample()), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap();
     done.data.unwrap().as_str().unwrap().to_owned()
 }
 
@@ -104,7 +109,7 @@ fn ranges_select_blocks_spans_headings_and_cells() {
 fn a_range_naming_nothing_is_refused_with_the_way_out() {
     let error = word_read(
         &args(Some("p:0000FFFF")),
-        &Version::new("a.docx", &sample(), 1, &Versions::new()),
+        &Version::new("a.docx", &crate::common::read(&sample()), 1, &Versions::new()),
         &Never,
     )
     .unwrap_err();
@@ -121,9 +126,13 @@ fn a_range_naming_nothing_is_refused_with_the_way_out() {
 fn a_range_with_every_story_is_refused_with_the_call_that_works() {
     let mut a = args(Some("p:00000001"));
     a.stories = Some(Story::All);
-    let json = word_read(&a, &Version::new("a.docx", &sample(), 1, &Versions::new()), &Never)
-        .unwrap_err()
-        .to_json();
+    let json = word_read(
+        &a,
+        &Version::new("a.docx", &crate::common::read(&sample()), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap_err()
+    .to_json();
     assert_eq!(json["code"], "invalid_arguments");
     assert_eq!(json["try_call"]["arguments"]["stories"], "all");
 }
@@ -135,18 +144,32 @@ fn a_long_document_is_paged_at_line_ends() {
         .collect();
     let pkg = package(&body);
     let mut a = args(None);
-    let first = word_read(&a, &Version::new("a.docx", &pkg, 1, &Versions::new()), &Never).unwrap();
+    let first = word_read(
+        &a,
+        &Version::new("a.docx", &crate::common::read(&pkg), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap();
     let cursor = first.next_cursor.clone().unwrap();
     let page = first.data.unwrap().as_str().unwrap().to_owned();
     assert!(page.ends_with('\n') && page.chars().count() <= 22_500);
     assert_eq!(format!("c{}", page.chars().count()), cursor);
     a.cursor = Some(cursor);
-    let second = word_read(&a, &Version::new("a.docx", &pkg, 1, &Versions::new()), &Never).unwrap();
+    let second = word_read(
+        &a,
+        &Version::new("a.docx", &crate::common::read(&pkg), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap();
     assert!(second.data.unwrap().as_str().unwrap().starts_with("<!-- p:"));
     a.cursor = Some("x1".into());
-    let json = word_read(&a, &Version::new("a.docx", &pkg, 1, &Versions::new()), &Never)
-        .unwrap_err()
-        .to_json();
+    let json = word_read(
+        &a,
+        &Version::new("a.docx", &crate::common::read(&pkg), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap_err()
+    .to_json();
     assert_eq!(
         (json["code"].as_str(), json["field"].as_str()),
         (Some("invalid_arguments"), Some("cursor"))
@@ -157,7 +180,12 @@ fn a_long_document_is_paged_at_line_ends() {
 fn views_name_the_summary() {
     let mut a = args(None);
     a.view = Some(View::Markup);
-    let done = word_read(&a, &Version::new("a.docx", &sample(), 1, &Versions::new()), &Never).unwrap();
+    let done = word_read(
+        &a,
+        &Version::new("a.docx", &crate::common::read(&sample()), 1, &Versions::new()),
+        &Never,
+    )
+    .unwrap();
     assert_eq!(done.summary, "Read the document (markup)");
 }
 

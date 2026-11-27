@@ -63,7 +63,7 @@ fn each_id_once_at_its_first_place_with_its_last_relationship() {
     assert_eq!(read.get("rId2").unwrap().rel_type, "urn:f");
 
     // A version's reading reads them once, the same.
-    let docx = Docx::open(&package).unwrap();
+    let docx = Docx::open(&ooxml_word_model::WordPackage::open(package).0).unwrap();
     let first = docx.relationships(source).unwrap();
     let again = docx.relationships(source).unwrap();
     assert!(Arc::ptr_eq(&first, &again));

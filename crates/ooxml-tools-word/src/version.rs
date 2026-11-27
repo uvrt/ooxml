@@ -11,11 +11,11 @@
 use crate::check::LastCheck;
 use crate::pages::WordLayout;
 use crate::placements::Placer;
-use ooxml_opc::Package;
 use ooxml_tools::{Limits, ToolError};
 use ooxml_word_edit::validate::Problem;
 use ooxml_word_edit::WordDoc;
 use ooxml_word_model::docx::{Docx, Versions};
+use ooxml_word_model::WordPackage;
 use std::sync::Arc;
 
 /// One version of a Word document, for a reading tool. Made with [`Version::new`] and the
@@ -27,7 +27,7 @@ pub struct Version<'a> {
     /// The document's name, as opened.
     pub name: &'a str,
     /// The package at this version.
-    pub package: &'a Package,
+    pub package: &'a WordPackage,
     /// The version's number.
     pub number: u64,
     /// The document's kept readings.
@@ -70,7 +70,7 @@ impl<'a> Version<'a> {
     /// documents, the document as a Word document -- starts empty, the limits at their
     /// defaults, and is given with the `with_*` setters.
     #[must_use]
-    pub fn new(name: &'a str, package: &'a Package, number: u64, versions: &'a Versions) -> Self {
+    pub fn new(name: &'a str, package: &'a WordPackage, number: u64, versions: &'a Versions) -> Self {
         Self {
             name,
             package,

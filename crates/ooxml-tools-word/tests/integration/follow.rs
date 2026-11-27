@@ -56,6 +56,7 @@ fn follow(mut arguments: Value) -> Value {
     let caller = Caller::anonymous();
     let copy = package();
     let versions = Versions::new();
+    let copy = crate::common::read(&copy);
     let other = Version::new("b.docx", &copy, 1, &versions);
     let others = [("d2", other)];
     let call_editor = CallEditor::new(&editor);
@@ -65,7 +66,9 @@ fn follow(mut arguments: Value) -> Value {
     let (args, _) = WordFollowSample::accept(arguments, Some("docx")).unwrap();
     let reply = Value::Object(word_follow_sample(&args, &editing).to_json());
     let head = editor.store().snapshot();
-    let document = head.doc().package().read("word/document.xml").unwrap().unwrap();
+    // the part as saved (a version no edit made is the bytes it was opened from)
+    let saved = Package::open(Arc::from(head.doc().package().save().unwrap()), &Limits::default()).unwrap();
+    let document = saved.read("word/document.xml").unwrap().unwrap();
     let keys = ["summary", "data", "changed", "warnings"];
     json!({
         "reply": keys.iter().map(|k| ((*k).to_owned(), reply.get(*k).cloned().unwrap_or(Value::Null))).collect::<serde_json::Map<_, _>>(),
@@ -86,9 +89,30 @@ fn copies_follow_as_docx_agent_makes_them_follow() {
                "report": "actionable"}),
         json!({"doc": "d1", "sample": {"block": "t@body/1"}, "copies": ["t@body/0/c1,1", "t@body/1"], "preview": true}),
     ];
+    // the calls name the made-up document's blocks as an unstamped reading did: as it is
+    // read now (stamped at open), the same blocks
+    let now = |value: Value| crate::common::now(&package(), value);
+    // a copy asked for by the id it has is not said again (`asked`: the address given, where
+    // it names the copy otherwise)
+    let asked_as_named = |mut reply: Value| {
+        let copies = reply.get_mut("data").and_then(|d| d.get_mut("copies")).and_then(Value::as_array_mut);
+        for copy in copies.into_iter().flatten() {
+            if copy.get("asked").is_some() && copy["asked"] == copy["copy"] {
+                copy.as_object_mut().unwrap().remove("asked");
+            }
+        }
+        reply
+    };
     for (call, want) in calls.into_iter().zip(golden) {
-        let have = follow(call.clone());
-        assert_eq!(have["reply"], want["reply"], "{call}");
+        let have = follow(now(call.clone()));
+        if want["reply"]["summary"].is_null() {
+            // refused when the sample and its copies were named by place (a preview leaves
+            // the document unstamped): named by the ids an open gives, it is previewed
+            assert!(have["reply"]["summary"].as_str().unwrap().contains("would follow"), "{have}");
+            assert_eq!(have["document"], want["document"], "{call}");
+            continue;
+        }
+        assert_eq!(have["reply"], asked_as_named(now(want["reply"].clone())), "{call}");
         assert_eq!(have["document"], want["document"], "{call}");
     }
 }

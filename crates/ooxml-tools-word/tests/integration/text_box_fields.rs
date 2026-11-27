@@ -23,6 +23,8 @@ const FIXTURE: &str = concat!(
 /// reply, and the fields of the version it made (keyword, result).
 fn fields_after(arguments: Value) -> (Value, Vec<(String, String)>) {
     let package = Package::open(Arc::from(std::fs::read(FIXTURE).unwrap()), &Limits::default()).unwrap();
+    // the fixture's blocks named as an unstamped reading did: as it is read now
+    let arguments = crate::common::now(&package, arguments);
     let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let layout = EnginePages::of(engine());

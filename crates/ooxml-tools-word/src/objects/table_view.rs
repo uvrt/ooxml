@@ -395,7 +395,7 @@ mod tests {
             zip.add(&entry, data.as_bytes()).unwrap();
         }
         let package = Package::open(Arc::from(zip.finish(b"").unwrap()), &Limits::default()).unwrap();
-        let docx = Docx::open(&package).unwrap();
+        let docx = Docx::open(&ooxml_word_model::WordPackage::open(package).0).unwrap();
         let story = docx.body().unwrap();
         let table = story.ids.tables().get(0).unwrap();
         let (shape, found) = shape(&table);

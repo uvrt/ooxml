@@ -73,8 +73,8 @@ fn calls(body: &str, calls: &[(&str, Value)]) -> Vec<Value> {
 }
 
 #[test]
-fn a_positional_table_id_in_a_cell_address_names_its_table_after_the_stamping() {
-    // no paraIds: the table is t@body/0 until the first edit stamps the ids
+fn a_cell_address_in_a_table_without_ids_names_its_table_across_edits() {
+    // no paraIds in the bytes: the table has its id from the first read, and keeps it
     let cell = |r: u32, c: u32| format!("<w:tc><w:p><w:r><w:t>r{r}c{c}</w:t></w:r></w:p></w:tc>");
     let row = |r: u32| format!("<w:tr>{}{}</w:tr>", cell(r, 0), cell(r, 1));
     let body = format!(
@@ -82,15 +82,16 @@ fn a_positional_table_id_in_a_cell_address_names_its_table_after_the_stamping() 
         row(0),
         row(1)
     );
+    let now = |value: Value| crate::common::now(&package(&body), value);
     let replies = calls(
         &body,
         &[
             (
                 "word_edit_table",
-                json!({"table": "t@body/0", "action": "insert_row", "index": 1}),
+                now(json!({"table": "t@body/0", "action": "insert_row", "index": 1})),
             ),
-            ("word_format", json!({"targets": ["t@body/0/c1,0"], "bold": true})),
-            ("word_format", json!({"targets": ["t@body/0/c0,1"], "italic": true})),
+            ("word_format", now(json!({"targets": ["t@body/0/c1,0"], "bold": true}))),
+            ("word_format", now(json!({"targets": ["t@body/0/c0,1"], "italic": true}))),
         ],
     );
     for reply in &replies {

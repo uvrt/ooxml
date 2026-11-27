@@ -261,6 +261,8 @@ fn section_moved(
     after: &str,
     after_section: bool,
 ) -> (Vec<String>, Vec<(Option<String>, i64)>) {
+    let (heading, after) = (crate::common::now(bytes, heading), crate::common::now(bytes, after));
+    let (heading, after) = (heading.as_str(), after.as_str());
     let editor = editor(bytes);
     let before = editor.store().snapshot();
     let blocks = ooxml_word_edit::section_blocks(before.doc(), heading).unwrap();

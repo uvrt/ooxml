@@ -209,7 +209,7 @@ impl<P: ChartParts> InsertChart<P> {
             .ok_or_else(|| EditError::no_part(part.clone()))?;
         let mut scope = scope_above(tree.root(), &found.path);
         scope.extend_from_slice(found.element.namespaces());
-        let drawing = crate::namespaces::strip_redundant(parsed.root(), &mut scope);
+        let drawing = ooxml_word_model::stamp::namespaces::strip_redundant(parsed.root(), &mut scope);
         let at = InParagraph {
             part: part.clone(),
             path: found.path.clone(),

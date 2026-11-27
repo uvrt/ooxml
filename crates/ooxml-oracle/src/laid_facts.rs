@@ -8,7 +8,6 @@
 //! Must not: be used by any library; it is a test instrument.
 
 use crate::edits::Unlimited;
-use ooxml_opc::Package;
 use ooxml_word_pages::layout_facts::{Facts, PageReads, Scope, ScopeError};
 use ooxml_word_pages::page_entry::PageEntry;
 use ooxml_word_pages::{LaidVersion, PageEngine};
@@ -57,14 +56,24 @@ impl PageReads for Painted<'_> {
 /// The layout facts of `package` laid out with `fonts`, `min_size` the minimum text size,
 /// scoped to `range` (addresses) where given, on its pages.
 #[must_use]
-pub fn reply(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Option<&Value>) -> Value {
+pub fn reply(
+    package: &ooxml_word_model::WordPackage,
+    fonts: &Value,
+    min_size: Option<&Value>,
+    range: Option<&Value>,
+) -> Value {
     match facts(package, fonts, min_size, range) {
         Ok(found) => json!({"facts": found}),
         Err(error) => json!({"error": error}),
     }
 }
 
-fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Option<&Value>) -> Result<Value, String> {
+fn facts(
+    package: &ooxml_word_model::WordPackage,
+    fonts: &Value,
+    min_size: Option<&Value>,
+    range: Option<&Value>,
+) -> Result<Value, String> {
     let minimum = ooxml_tools_word::minimum_of(min_size.unwrap_or(&Value::Null))?;
     let engine = Mutex::new(crate::structure_tools::page_engine(fonts));
     let version = {
@@ -74,7 +83,8 @@ fn facts(package: &Package, fonts: &Value, min_size: Option<&Value>, range: Opti
             Err(fallback) => return Err(format!("falls back: {} at {}", fallback.reason, fallback.at)),
         }
     };
-    let doc = ooxml_word_edit::WordDoc::open(package.clone(), Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+    let doc =
+        ooxml_word_edit::WordDoc::open(package.package().clone(), Arc::new(Unlimited)).map_err(|e| e.to_string())?;
     let docx = doc.docx().map_err(|e| e.to_string())?;
     let painted = Painted {
         engine: &engine,

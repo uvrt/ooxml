@@ -16,10 +16,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-fn editor() -> Editor {
+fn bytes() -> Arc<[u8]> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../crates/ooxml-oracle/fixtures/generated/charts/chart-places.docx");
-    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    Arc::from(std::fs::read(path).unwrap())
+}
+
+/// `text` with the fixture's blocks named as the document names them (stamped at open).
+fn ids(text: &str) -> String {
+    crate::common::now(&bytes(), text)
+}
+
+fn editor() -> Editor {
+    let bytes = bytes();
     let package = Package::open(bytes, &Limits::default()).unwrap();
     Editor::open(
         package,
@@ -38,7 +47,8 @@ fn contents(editor: &Editor) -> Vec<String> {
         .store()
         .snapshot()
         .doc()
-        .tree("word/document.xml")
+        .package()
+        .saved_tree("word/document.xml")
         .unwrap()
         .unwrap();
     let text = String::from_utf8(tree.write()).unwrap();
@@ -240,9 +250,9 @@ fn a_text_box_moved_with_its_block_is_not_synced() {
     let editor = editor();
     let fallback = contents(&editor)[1].clone();
     let moved = MoveBlocks {
-        blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p@body/4".to_owned())),
+        blocks: Moving::Blocks(ooxml_word_model::address::Address::from(ids("p@body/4"))),
         after: None,
-        before: Some(ooxml_word_model::address::Address::from("p@body/0".to_owned())),
+        before: Some(ooxml_word_model::address::Address::from(ids("p@body/0"))),
         policy: RevisionPolicy::Untracked,
     };
     assert!(editor.run(&Caller::anonymous(), &moved).unwrap().changed);

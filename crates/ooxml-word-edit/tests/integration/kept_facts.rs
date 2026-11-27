@@ -73,7 +73,7 @@ fn editor_within(budget: Arc<dyn CacheBudget>) -> Editor {
 /// `doc`'s `direct_formatting` as kept, and as a document opened afresh from its package
 /// reads it.
 fn warm_and_cold(doc: &WordDoc) -> (Vec<DirectFormatting>, Vec<DirectFormatting>) {
-    let cold = WordDoc::open(doc.package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
+    let cold = WordDoc::open(doc.package().package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
     let spacing = |d: &WordDoc| punctuation_spacing(d, Some("fr-BE")).unwrap();
     let (spacing_warm, spacing_cold) = (spacing(doc), spacing(&cold));
     assert_eq!(spacing_warm, spacing_cold, "punctuation_spacing");
@@ -186,13 +186,14 @@ fn a_tracked_grid_widening_that_leaves_the_rows_short_is_still_named() {
     // settles it
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../ooxml-oracle/cases/inputs/1ee9aec673c170821237b4c07476303e.docx");
-    let package = Package::open(Arc::from(std::fs::read(path).unwrap()), &Limits::default()).unwrap();
+    let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
+    let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
     let doc = WordDoc::open(package, Arc::new(Limit::new(64 << 20))).unwrap();
     let found = table_grid_mismatch(&doc, None).unwrap();
     assert_eq!(
         found,
         [GridMismatch::OffGrid {
-            table: "t@body/0".to_owned(),
+            table: crate::common::now(&bytes, "t@body/0"),
             grid: 3,
             rows: vec![OffGridRow { row: 0, reaches: 2 }, OffGridRow { row: 1, reaches: 2 }],
             widened: false,

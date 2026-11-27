@@ -49,21 +49,6 @@ impl<'a> PartUpdate<'a> {
     }
 }
 
-/// `new`, sharing with `old` (the part's tree in the version before) every subtree the two
-/// have alike: `old` with the differences applied, by path copying; `new` itself where
-/// there is no `old` or the two differ at the root.
-fn shared_with(old: Option<Tree>, new: Tree) -> Tree {
-    let Some(old) = old else { return new };
-    let mut shared = old;
-    for patch in ooxml_xml::diff(&shared, &new) {
-        match patch.apply(&shared) {
-            Ok(next) => shared = next,
-            Err(_) => return new,
-        }
-    }
-    new.with_root(std::sync::Arc::clone(shared.root()))
-}
-
 /// Whether a part's bytes are XML by its name (`.xml`, `.rels`, `.vml`).
 fn is_xml(part: &str) -> bool {
     let lower = part.to_ascii_lowercase();
@@ -109,7 +94,7 @@ impl<D: DocModel, H: Holds<D>> Command<D> for Parts<'_, '_, D, H> {
                             error,
                         })
                     })?;
-                    let tree = shared_with(H::package(tx.doc()).tree(&name).ok().flatten(), tree);
+                    let tree = ooxml_xml::shared_with(H::package(tx.doc()).tree(&name).ok().flatten(), tree);
                     trees.push(tree.clone());
                     H::put_tree(name, tree)
                 }

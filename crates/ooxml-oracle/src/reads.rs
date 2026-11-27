@@ -40,7 +40,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let manifest = args.first().ok_or("usage: word-reads <manifest.json>")?;
     let text = std::fs::read_to_string(manifest).map_err(|e| e.to_string())?;
     let items: Vec<Value> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let mut opened: Option<(String, Package, Versions)> = None;
+    let mut opened: Option<(String, ooxml_word_model::WordPackage, Versions)> = None;
     for item in items {
         let file = item
             .get("file")
@@ -52,7 +52,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if opened.as_ref().is_none_or(|(f, _, _)| f != file) {
             let bytes = std::fs::read(file).map_err(|e| format!("{file}: {e}"))?;
             let package = Package::open(Arc::from(bytes), &Limits::default()).map_err(|e| format!("{file}: {e}"))?;
-            opened = Some((file.to_owned(), package, Versions::new()));
+            opened = Some((
+                file.to_owned(),
+                ooxml_word_model::WordPackage::open(package).0,
+                Versions::new(),
+            ));
         }
         let Some((_, package, versions)) = opened.as_ref() else {
             continue;

@@ -23,7 +23,7 @@
 
 use crate::error::EditError;
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
+use ooxml_word_model::WordPackage;
 use std::time::Duration;
 
 /// Where a field is, or where a reference points: a body paragraph by its id (as the
@@ -164,7 +164,7 @@ pub trait FieldLayout: Send + Sync {
     /// # Errors
     /// [`LayOutError::Stopped`] where `cancel` stopped it; why it was not laid out (a
     /// version the layout does not lay out yet: the update is left to the host).
-    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
+    fn lay_out(&self, package: &WordPackage, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
 
     /// Which pages of `after` differ from `before`'s (two versions of the document,
     /// `after` made from `before`), ids as the versions' bytes name them; laying either out
@@ -174,7 +174,12 @@ pub trait FieldLayout: Send + Sync {
     /// [`LayOutError::Stopped`] where `cancel` stopped it; why the pages cannot be compared
     /// (a version the layout does not lay out, or a layout that does not compare versions:
     /// the default).
-    fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+    fn reflow(
+        &self,
+        before: &WordPackage,
+        after: &WordPackage,
+        cancel: &dyn Cancel,
+    ) -> Result<PageReflow, LayOutError> {
         let _ = (before, after, cancel);
         Err(LayOutError::Unsupported(
             "this layout does not compare versions".to_owned(),
@@ -217,7 +222,7 @@ impl<'l> EditLayout<'l> {
     /// # Errors
     /// [`EditError::LayoutStopped`] where laying it out was stopped (nothing changed);
     /// [`EditError::Unsupported`] where the layout does not lay it out.
-    pub fn lay_out(&self, package: &Package) -> Result<Box<dyn LaidFields + 'l>, EditError> {
+    pub fn lay_out(&self, package: &WordPackage) -> Result<Box<dyn LaidFields + 'l>, EditError> {
         self.layout.lay_out(package, self.stop).map_err(|error| match error {
             LayOutError::Stopped => EditError::LayoutStopped(self.limit),
             LayOutError::Unsupported(why) => EditError::Unsupported(format!("the layout of this version: {why}")),
@@ -231,7 +236,7 @@ impl<'l> EditLayout<'l> {
     /// # Errors
     /// [`EditError::LayoutStopped`] where laying either version out was stopped (nothing
     /// changes).
-    pub fn reflow(&self, before: &Package, after: &Package) -> Result<Result<PageReflow, String>, EditError> {
+    pub fn reflow(&self, before: &WordPackage, after: &WordPackage) -> Result<Result<PageReflow, String>, EditError> {
         match self.layout.reflow(before, after, self.stop) {
             Ok(found) => Ok(Ok(found)),
             Err(LayOutError::Stopped) => Err(EditError::LayoutStopped(self.limit)),

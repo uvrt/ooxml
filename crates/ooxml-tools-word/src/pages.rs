@@ -23,12 +23,12 @@
 //! Must not: hold anything but the engine and its seed, or lay out but through them.
 
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
 use ooxml_word_edit::{
     CharAdvance, FieldLayout, FieldPlace, FieldRun, LaidFields, LayOutError, PageReflow, PageShows, Unknown,
 };
 use ooxml_word_layout::fields::update::{drawn_text, style_reference_known, PageNumbers};
 use ooxml_word_model::ids::{Anchor, BlockKey, StoryIx};
+use ooxml_word_model::WordPackage;
 use ooxml_word_pages::summary::Summary;
 use ooxml_word_pages::{
     support, EngineBudgets, EngineOptions, EngineSeed, Fallback, FontSetup, LaidVersion, PageEngine, PagesError,
@@ -52,7 +52,7 @@ pub trait WordLayout: FieldLayout {
     /// # Errors
     /// Why it was not laid out: stopped, or a version the engine does not lay out yet (in
     /// its words).
-    fn laid(&self, package: &Package, cancel: &dyn Cancel) -> Result<Arc<LaidVersion>, NotLaid> {
+    fn laid(&self, package: &WordPackage, cancel: &dyn Cancel) -> Result<Arc<LaidVersion>, NotLaid> {
         let mut engine = ooxml_word_pages::lock_engine(self.engine());
         match engine.lay_out_until(package, cancel) {
             Err(PagesError::Stopped) => Err(NotLaid::Stopped),
@@ -225,7 +225,7 @@ fn laid(found: Result<Result<Arc<LaidVersion>, Fallback>, PagesError>) -> Result
 /// `package` laid out, stopped where `cancel` says so, and its pages summarised as
 /// docx-agent compares two layouts (`DocumentLayout.compare`: every line of text a page
 /// draws, its text boxes' too).
-fn summarised(engine: &mut PageEngine, package: &Package, cancel: &dyn Cancel) -> Result<Summary, LayOutError> {
+fn summarised(engine: &mut PageEngine, package: &WordPackage, cancel: &dyn Cancel) -> Result<Summary, LayOutError> {
     let found = engine.lay_out_until(package, cancel);
     if matches!(found, Err(PagesError::Stopped)) {
         return Err(LayOutError::Stopped);
@@ -247,7 +247,7 @@ impl WordLayout for EnginePages {
 }
 
 impl FieldLayout for EnginePages {
-    fn lay_out(&self, package: &Package, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
+    fn lay_out(&self, package: &WordPackage, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let found = {
             let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             engine.lay_out_until(package, cancel)
@@ -259,7 +259,12 @@ impl FieldLayout for EnginePages {
         Ok(Box::new(Laid::new(version, &self.engine)))
     }
 
-    fn reflow(&self, before: &Package, after: &Package, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
+    fn reflow(
+        &self,
+        before: &WordPackage,
+        after: &WordPackage,
+        cancel: &dyn Cancel,
+    ) -> Result<PageReflow, LayOutError> {
         let (was, now) = {
             let mut engine = ooxml_word_pages::lock_engine(&self.engine);
             (
