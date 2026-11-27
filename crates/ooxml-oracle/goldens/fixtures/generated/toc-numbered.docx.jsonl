@@ -1,9 +1,3 @@
-{"digest":"sha256:ca27a650d7e0f2369d122cfaae1b018e","id":"cells:1722a4c81243ed7a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ebcc351ad6a09970ed0516e2e9f935a1","id":"cells:aad0254e6a1e326f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f5a671794352ba1afc1b8d7d931a29b5","id":"cells:8474dc9738194c85","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
-{"digest":"sha256:854fb28209835a1efd328dc7478c2618","id":"cells:44e78a93611e77cc","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
-{"digest":"sha256:31737346890bc0d1fa917699409dea43","id":"cells:630e04bb5de99971","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:31737346890bc0d1fa917699409dea43","id":"cells:c3eb922e2008db24","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e86f2fcaf54affb5377567f67086ef07","id":"delete:d562d6aec53b99f3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f23d3a1829da62226d34385144accdae","id":"delete:b67b1f0ee058cbce","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ff9b26478343f1b9c8d344d73a6d170a","id":"delete:5c8229fbf81e87a7","source":"frozen Python a512c901, unmeasured"}
@@ -16,8 +10,6 @@
 {"digest":"sha256:076f9a999f17add7815d6cd86530d724","id":"delete:99796a6547df5aa2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:30cc93163f75208d57fb3d2ee628d6f9","id":"delete:0192ef14625dd57b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6f9e19dc36c3d0536df5860f03c241c9","id":"delete:6a3b7adf867182b8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:02b402212dd21c2ea0df60ba41e6b9df","id":"delete:b23cac785a3668cb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:05852a2deeccaf71befcbfb13d40eabd","id":"delete:f2fd2d9ef8add679","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d2d46fe732fda9afa56342a0fe18769d","id":"markdown:b1a40fd50b3a8462","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7c95265dae398cd83e05da87a1578c9b","id":"markdown:aa34cea8b8d53c09","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e0b7fe876c6519d11204b25f1c5daa57","id":"markdown:cfcb6e35677e4de6","source":"frozen Python a512c901, unmeasured"}
@@ -42,413 +34,11 @@
 {"digest":"sha256:5ddf03367752444b3d014929c21ebad3","id":"markdown:2d0d2485ee351316","source":"known difference: #89: docx-agent rolls the tree back, but its id pool and aliases keep what the stamping drew; the Rust core changes nothing (tool rule 3: a no-op changes nothing). A docx-agent leftover, not copied."}
 {"digest":"sha256:6224c0b424acecd78be81e35f0c8cdee","id":"markdown:ae583c64b6ce5c75","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6224c0b424acecd78be81e35f0c8cdee","id":"markdown:094bbe1bf270a677","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:354f710ae779bc82","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:899c5b43cffff909289a0ff032070754","id":"objects:b7acc13137e53350","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:761495c89662b61d949fe25707a06573","id":"objects:22478c0e5ec44f86","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:97de6649bdb796b8a12bcaa263fb5d86","id":"objects:b87fc2fcd78c91b8","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d384f65e5065808253298a456796a2a3","id":"objects:aeac86f7da0d0a8b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:82933ae90657d05312fb0a3f38c945b1","id":"objects:7887b2b5d312fc52","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:9bca0819d6fba0995d8c8092b8580667","id":"objects:9bc4c39b2bae259b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:84406223dccbf39d7e5dc53ffa23c415","id":"objects:115a9200486f6365","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:089855d2fa2dc5ec781cdc406da17bc7","id":"objects:dd9457f3a2e84458","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:8573fef981376346","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:3679fea9e0e0ede5e22ba028e2a7bd0b","id":"objects:d0e24fed4cb5f4b9","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:8e4fbdf0b446cfe4","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:3cf865ddda45f8118dcde0ea2654ffe6","id":"objects:05fd3905ddefec45","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:f302041a54857f49","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:731ca6bc449c09928ed6314601f9947b","id":"objects:b54e4b5fb89a82da","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:3ccd603d52ec948a4d50d45616d2c627","id":"objects:04e510025b8b6e82","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:29b008dc6faeeb40","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:347ce2bcd4aa71453d378bbe7086b4ff","id":"objects:32c7d1a74e50437b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cc4f086be33b34252e3a45a3ff165145","id":"objects:cd65551cbfb8eb6f","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1816098ddf86b8d6bf7ff8e6d65b8f0e","id":"objects:29c464271c4ed0cc","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:cfaf94df2f00dd60daf8cb6401c118ad","id":"objects:b691693e7818f8d7","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d1570c8f0744e38a564806caaf758635","id":"objects:2f810f64ede2a9ac","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:04a09ff3109c33a8ca040b8e7dc6b9e6","id":"objects:e31a70370d4bc422","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:c98500fe7460b2e7","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8472218d975c1317ef4c694fa54ad776","id":"objects:002afcd49e384695","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:9358e82532327cb49a00f479539d20dd","id":"objects:1cef1ec4dbdadee5","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8472218d975c1317ef4c694fa54ad776","id":"objects:7013450a6fdbf925","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:2d6331c1e0e1645d660b1c5d552bf13e","id":"objects:892e8f9ab89dddbb","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f86160ac708aea9ca1599edf66406e93","id":"objects:a184bc12de0f7774","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c36d9f9b3671a9461d28bb08dee90006","id":"objects:a02eab2c374d47f0","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f23edf7a58dc815fcb6edaf6cbc402c0","id":"objects:f2d977d97af42e80","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:4ecd739fe8fc38010d2ba6e4f33efbff","id":"objects:b640d6c69fce1346","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:080ee834ee0357b190dd7803fdd8c93d","id":"objects:3dd7b6f557113537","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f23edf7a58dc815fcb6edaf6cbc402c0","id":"objects:f69981865b4498c8","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:2edd503d949e0f760552ed939921d97b","id":"objects:18637e94773a43ea","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c138087a4ae5637178a27c114a1986cc","id":"objects:eeccd2c815282c33","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:bfe2cbcc4aa5ddfe87eaf8a8ae0f790b","id":"objects:3c6f6d9bb11ebe9f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cbb8f595431d71b834b71d82caadbfef","id":"objects:997d067bcf95980b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba0dcfa5a0b519ee14903b8fb7c9a4a2","id":"objects:396451fbff890075","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:55d79c73723b3eee367bd8ed08fa4999","id":"objects:cceabfc792d07a22","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:713adcd041de828a7e4a5891a5ec1fae","id":"objects:9409cf38feaf6987","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d8ff24057fe3092011b895cef33c2349","id":"objects:06219955a0a3ea0c","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:905348a31559cd9d6b1b65da191fe918","id":"objects:836c46b658679569","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1a3ac6cc0eea840f17391734c04daf11","id":"objects:794c2e815b0aebd4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0c66547e4f17be6c77376a73924db646","id":"objects:2f4f355e00a9b93b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ae45d801e9316dcc961ff6271f6286a2","id":"objects:11d42f3ce41e7c02","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:afb94ed36d2487b0a193772f6b2134b2","id":"objects:dd39ab8d74e97d84","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1a3ac6cc0eea840f17391734c04daf11","id":"objects:6fc6ee9346842d66","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b7a7cc1e4f9a883bfaa2a64901efd283","id":"objects:ecb44041ccb77460","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1f697fbb11e48b62329637446732b58c","id":"objects:61c545246de452ea","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:52f71e8c22b4d7e509b0781fb9ba04fa","id":"objects:a236ea45e13d015b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:ed318d7ebb71737a6b79720030b195b8","id":"objects:773d74427d2ee562","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c13fb38ad1369a3a5d911e96345da2bf","id":"objects:25828ac31a50bd6f","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:5b0d7afea8915135db70e7b490a7ad89","id":"objects:1c06600ecf5fd38d","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:2be3579614d1c3f2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:848d6f7b05921996","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c52b487c2251134e089f56b3deec814e","id":"objects:93689a0c86e2915b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:d9cee35a5d3a9f4b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fab46f81a291424d71d6d3a819fce1b4","id":"objects:c61ece97cadbff00","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5101a113e6540dd65115ecf10a272ad5","id":"objects:40ee989ab84de0a6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e8f9e2d2efd994a291c01a6501ff3f11","id":"objects:531b7d75ba1af953","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6aeda8bd3be3bb4b461bb6d5244030b5","id":"objects:f29acae420c1b294","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:16dfada2494cf57f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d0310dc720296f9b48b7df485d505eed","id":"objects:7df3db13a4c6b785","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2524198c947e3afb4f67cccb0ea6b143","id":"objects:ded7814173b4b089","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:a155a8a57fdaccbf","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:899c5b43cffff909289a0ff032070754","id":"objects:4a9c7e63b5842b21","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:761495c89662b61d949fe25707a06573","id":"objects:363cdf17e847f862","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d4194af4e871b58706493612e3758bd8","id":"objects:2462682fefd06de7","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:b9842dd6058735c77b41ed957ec3929c","id":"objects:828fb202a77bc69b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:35107c025928fc3b3dc6134fe0561da4","id":"objects:e6a6a063b4cc1a54","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:9fcdce505a78a222596945782be5fc84","id":"objects:73365adad2e3940a","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:703b71eb08bb386c58876174fb13439d","id":"objects:6aa0abc60a2f5c76","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:998920382a6689ded89d3402ad203bd5","id":"objects:72feed49f8233d5d","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:779067321958b5b7","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:62d3bd0d865f6194e9b42037b8a8a3ff","id":"objects:a3ed80848fa420db","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:6db48881a70f9d26","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d47a9f467dd66188e93e401e09e5cf53","id":"objects:9c53dfc8e2e7379e","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c1dbdd3253781d002ecd42f1e9a5e3dd","id":"objects:2c45e627c7be523e","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:a145587cb1c4d1e68c67fef24910e114","id":"objects:1f3404eaac5cf43b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:da286ac1b7d06804ec01a2f755f85fdb","id":"objects:959e6f1b6d099127","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:53e94cdcd26d7bff45b8ee78b2a32592","id":"objects:ac27b407e5f08766","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:347ce2bcd4aa71453d378bbe7086b4ff","id":"objects:c7a414ec5ba879ca","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:05be258b0cb2d7b32488ccd0b7dfbe06","id":"objects:1bf8198b69c6b1e8","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:871c69af6e2b5e1085a17fdc625d34cc","id":"objects:b19d4337890e796f","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:827ce337830169f7355488eb299a3ae4","id":"objects:4f5cbdbb22b2fcb9","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:753cd0525a3a6dc6b32678c2f2c6b1e4","id":"objects:db749c7fdf2424ad","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:9a854acd4a2b526f7da7bfa9564174a1","id":"objects:6c226a1882f4e0b0","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:ed663207a18e55b158d08c434f42d32e","id":"objects:93928f94ae4d3787","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f020eaaf21d8b4959c92a33445a25d9e","id":"objects:ba8dc0d6541b92df","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:cef9da7cd1df0f2ce885f546acc6680b","id":"objects:dc7fa3e4a496a64d","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f020eaaf21d8b4959c92a33445a25d9e","id":"objects:09cba3fd7ae2f56e","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:81b1f0a5cffccf9f5a3534aa24a1f57d","id":"objects:dfdc21fdfc38e8ef","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:f86160ac708aea9ca1599edf66406e93","id":"objects:fc8218aa135d5ced","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:84648b26f22a8de41555ec084b8e76f6","id":"objects:6203cc1ea43a5513","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d5331de2f42337b24517c3fbd6666de4","id":"objects:5da61581c385e6a7","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:4ecd739fe8fc38010d2ba6e4f33efbff","id":"objects:fa03a4262479a68c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b5a7d334c963dbd5f0e40c4ddb2215ee","id":"objects:e63c47a92c765170","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d5331de2f42337b24517c3fbd6666de4","id":"objects:11c8fdf4d0832450","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:53d116dc204f68eb8aa4d01ad193e0ef","id":"objects:e47cb3a2fc97e527","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c138087a4ae5637178a27c114a1986cc","id":"objects:47a7010765ff6e05","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:bfe2cbcc4aa5ddfe87eaf8a8ae0f790b","id":"objects:d3277fde0c3fbcd1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cbb8f595431d71b834b71d82caadbfef","id":"objects:9bc39d7b0e7f6587","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:79fd873f691e700e9b28fe838086b82c","id":"objects:abed4ec53ec5d0e2","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:d3d3dcc5a99ad279d29ff58e4cdba5d2","id":"objects:4ced94c6df472555","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:713adcd041de828a7e4a5891a5ec1fae","id":"objects:3a7094186ee81508","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d2f0ae428ba8aab42ea1d7e15f56a9fb","id":"objects:743eca0ede4e07de","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:25d7159a62f008f65cc89e6cc326b78e","id":"objects:52b3738d7195ce2b","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1a3ac6cc0eea840f17391734c04daf11","id":"objects:74bd69a082779188","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0c66547e4f17be6c77376a73924db646","id":"objects:e629609355a5c1a4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ae45d801e9316dcc961ff6271f6286a2","id":"objects:18eeaefd853a14b9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0dd957261e4a4ce4be8a1031721d79c0","id":"objects:9dcd9200589a11db","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1a3ac6cc0eea840f17391734c04daf11","id":"objects:38a8908482399cb4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba9de67913cb89d047dd762c3d17b7de","id":"objects:f523cdf763570c91","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:1f697fbb11e48b62329637446732b58c","id":"objects:f68a3ec6dbbc3075","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8b3600def40c078811f80f3afbed077b","id":"objects:de8619b1d1a4c51e","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:ed318d7ebb71737a6b79720030b195b8","id":"objects:008949033b09ff47","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a852f3ee1d88c496ad102970d7f52c73","id":"objects:6f2aeaec9384242e","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:9398b1bd2406caac015ba329cd1710f5","id":"objects:595a113c8a57b858","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:b02f8145033aa037","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:db96a07ed3cee49f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c52b487c2251134e089f56b3deec814e","id":"objects:83f7cf9bb80f6303","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:29e9998dd800a646","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fab46f81a291424d71d6d3a819fce1b4","id":"objects:7e9626dd18f041f5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5101a113e6540dd65115ecf10a272ad5","id":"objects:eaef441820bc3500","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e8f9e2d2efd994a291c01a6501ff3f11","id":"objects:97db7b220841c89d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6aeda8bd3be3bb4b461bb6d5244030b5","id":"objects:5e28efd56562cd7d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8797e44cc664cdce05d8109285f8fb63","id":"objects:fa0d6b76b298bb5b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d0310dc720296f9b48b7df485d505eed","id":"objects:22696a46471cdc52","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2524198c947e3afb4f67cccb0ea6b143","id":"objects:34c581b43790cd38","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8a5abc80750f9cb6883827296aa80403","id":"objects:740f4418b3053387","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:1ddb041096473efbef7fff012c974559","id":"objects:3aae267fb58107c5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e00abc271b77e007a75edf174d19b389","id":"objects:be0b483ea3cbb3ee","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:e00abc271b77e007a75edf174d19b389","id":"objects:77cd3cd4504d129a","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c138087a4ae5637178a27c114a1986cc","id":"objects:559884709e012082","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e00abc271b77e007a75edf174d19b389","id":"objects:611d847428244cd0","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:a4448965bc739cbae56f3fcd3fa74d3d","id":"objects:cbd1cb3babeb1a9f","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:69a3d4aa4ef8f4e5b1a25e4a6279c9b9","id":"objects:3144183cdb7d0d74","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8a5abc80750f9cb6883827296aa80403","id":"objects:3d465d9d19a8f10b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:1ddb041096473efbef7fff012c974559","id":"objects:342b00f1d7c88702","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:63c8f1e900778f5deaa124aba954ffe3","id":"objects:1afd6aa09bd1d024","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:63c8f1e900778f5deaa124aba954ffe3","id":"objects:963a9e05fc55edc1","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:c138087a4ae5637178a27c114a1986cc","id":"objects:53b97919e52ed200","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:63c8f1e900778f5deaa124aba954ffe3","id":"objects:54f91cd5be8977d6","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:6406d7a152bd1a92ca5093c49a2763bf","id":"objects:915a6a15adc9eddf","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:a5937068a817b032b7be0a6472971029","id":"objects:e8f3d2e3e3dbf463","source":"known difference: ph1-quirks: the reply's changed list names the table once, by the id its stamping gave it (t:...), with the rename from the address asked in renamed (tool rules: one name per block); docx-agent's handler lists the address asked as well (its toolbox folds the rename, so a host sees the stamped id either way)."}
-{"digest":"sha256:8c380f5b6e155108d3ba0b52aba668ca","id":"objects:648f77835bc4f061","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8c380f5b6e155108d3ba0b52aba668ca","id":"objects:fd7c042d2213222f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ab663a1fee6f821d0c3b5abb86947990","id":"objects:7a28ab0dc7960ec4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4d3a535487b2874ac7833adac135f117","id":"objects:808202705b8e58b9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4a8e18cae92f85fd2a430b1bf28ac272","id":"objects:61efa21f69a2e66b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:55f0f9e33098171c2f3a060cd089ebe4","id":"objects:3e28d3c05daa87b4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:56611614412f8bdffcfa2afabe2290e3","id":"objects:2d057faf2a707ed2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:964aa8558f9b4029495c31bf8527ba2f","id":"objects:e2837bfb18946374","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a2dfd1a2ef864e62e1e55a9dc178f84","id":"objects:c137dbb436e6a773","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9a2fdd06d2409d921e869737d2ac87c","id":"objects:ddc532ab0670e6e9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:923650074298ba18e3948b0ad78801f6","id":"objects:0efc8df12ca5b426","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8da4b8f0bb8cb3279198a1fad77b4947","id":"objects:4cf4f32beb2dea99","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d4da8b8c782fd310e1299a3e4a744c53","id":"objects:eef5188281e76dad","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8c380f5b6e155108d3ba0b52aba668ca","id":"objects:9cf566d9ba6d6c2a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:18297280b15dd9ecfdc055cf56bf01d5","id":"objects:93efb64e59566115","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:18297280b15dd9ecfdc055cf56bf01d5","id":"objects:33f1e40a3424c97e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:25510e19335c98517c43ff27fff2e83d","id":"objects:884812262a50a21f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7d0dbb9d7c678596b291c30a3f31c7f5","id":"objects:f5f35a93f45dadd8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a1feb9093a457da1663c61f202bc02e0","id":"objects:734dc5f9e7a136e1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2d1f0954769c42ebcc94fdc71d00b5b3","id":"objects:4e0639fcc655d1fe","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:165b7a7b507d0f0821c9c3917a4a2a63","id":"objects:f4dadd93d38427a5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:bb368d0261d57b929bb3cb41881264da","id":"objects:3c1a58f6f9227de3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1c872d17e6ef6a08584c0f8e34515da","id":"objects:4f50c0a1794df816","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa16b6c0e975b685c7fd5c5643fc991d","id":"objects:40266ec932a7000f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa16b6c0e975b685c7fd5c5643fc991d","id":"objects:1e7ea35dd06b2eb6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5568ea8aaaaa9d1e31bda2a07f0081ec","id":"objects:5daebcabbe391a61","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0af1c53379a145474b62f4e1d308e08e","id":"objects:e05291ac6b3c9c3e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4a3410037b49ff03d3bc9913b3c08a3e","id":"objects:c79d047b9f477a97","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:172a7d54e4aabdac470196a4af919c12","id":"objects:e63a92b85a7dc90f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:4659768148c9f22c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:f5c561a891b1395f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:50ab590fa530be20","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea9dff1885ce359c937f691d47fc7c11","id":"objects:d8fb331f084425e4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:610d47efa1b0155f103dc94d4f61c70b","id":"objects:b14c7188c4eae323","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:99723209c346211a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ee080ada1a7159ba61b65798e1105a6c","id":"objects:dd832b81f33f7361","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:c84549bbd6e3e370","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8884e4934b8d839f8104bd8dcf64cf74","id":"objects:ecc79a4dc8577e5e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4d6d1ce627333adf5adef12a3a1fb13f","id":"objects:2eef52f914340502","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c14262111b80d4958bce976a1bc6afae","id":"objects:2ae740e967215da7","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0e6e4997bcd25df3a3435cc30f183b34","id":"objects:b31274db89bef691","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b81d9d74b1a6df9a3fbe8270ff214359","id":"objects:1f5f09d752e5a88b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8fc098865a6e06ea5183ea725120ac58","id":"objects:28799c8cc5afc0ea","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3b809dae1ff63beaff6ddbad4eca74d1","id":"objects:b3ac4fce4a3ba0a1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d419da1b0f77fa32d13b760c2934d05a","id":"objects:74617dea230bda10","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:06ef9b73966d6671a011e504cb6ac8e2","id":"objects:abf2b0e875fe9118","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ec2605a93280fba8391d789d7cc249ca","id":"objects:442b543272b2d966","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:009fe0ee084b19df450ca55ad699c03f","id":"objects:4954326ea064d239","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:675669cc81d37c70dd0344c9303ed333","id":"objects:457d00879a6e1dd9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d8873d9d9749bbc124922fc36d6293f9","id":"objects:8a9a434a75cbbc52","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1e838f9636af827f4f5e48a4e012ef2","id":"objects:bc52f7c61b5237f1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4d25078759e5f014452d129d60b6e214","id":"objects:fdcba1cced43517e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:aeb53f3ddb9108d4cdd2cfd9498f3f66","id":"objects:650cf550a1525dde","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33c08564e962ed402c0a6755579971b","id":"objects:4c49c38df881afd5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:aeb53f3ddb9108d4cdd2cfd9498f3f66","id":"objects:185205880627ce61","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9bbcb0571a0b2ea9d70cb75ca797b44b","id":"objects:3da7fcd5e602d3ad","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4ea0a0f0fe25a612f98e83e26d2f35cc","id":"objects:da8d5da35b202d87","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:54c6f0a37c660eedcfc3a8d58e5ade39","id":"objects:826b67038b287f03","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ab4c993feb876dc1ffa38100b1bbfb0d","id":"objects:aab37448ae475921","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a8199f9a9bce2a67de667d0149c3faa","id":"objects:7f829c8546df068f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9119d42025688751599299c8fba83889","id":"objects:254a7f62f2262ed0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:3c30d7afcd248344","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:67ff4606060c528ce7aa4a5c115efea6","id":"objects:cb915285b369bd11","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:e585802dce1f97f6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:81cb8cc28dcc2822","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:c187cb92b0943692","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:84ec1cd43563f06b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:a535157c5a77424b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:bd9e063d21f614c7","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:15de48842307e82551064607b85a311b","id":"objects:caa9bc0108d6dd42","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:84563487b90c2eb760eaf91032e1b927","id":"objects:3e2cabb0f54c049c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33c08564e962ed402c0a6755579971b","id":"objects:6f21312a2061d659","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f4a6d59256fbd0016bf60daff4151d73","id":"objects:0681036bd8784b15","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:16b08f04af94df1253b44ec0e514a00c","id":"objects:c8f9b72f90d5f6ff","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7c094d11c21d69bbd887268d75a87e52","id":"objects:12a4ec62c0dde2ce","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:675669cc81d37c70dd0344c9303ed333","id":"objects:9962824923aeadcd","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f43d55beff9b85ab977c07c3ca631c2c","id":"objects:b1ba766f3b26dd4c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa0ec01106a264f277293b85ec93c13a","id":"objects:b3e6b537c0276fb1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c3ba5045d1b35aa3e8dcce34c18721e0","id":"objects:8c3d2db6e2fbed31","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7991c14489ead9aea89c19b0bc81ef07","id":"objects:eb92df000fbff216","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7991c14489ead9aea89c19b0bc81ef07","id":"objects:e13dc1ed98abf4a3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c243ce79008a729b73dbf4e49d4a02b3","id":"objects:a2932cba33f4c461","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d1173377ad0384d3b03e194e13a8931e","id":"objects:183865e3ae67f066","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5a78233c1e7a2122e59f1aba7d0c055a","id":"objects:bc9e40b6dd5a1b3f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e05ed101b426047c164101bcae16531a","id":"objects:2774b3b600641c9b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2ae53058713feb6f658f8d05ce04aa3b","id":"objects:ae75ebbae21a9c4c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2be096cfcd74fbc8d29404e3dd74d9fe","id":"objects:3ebebca6d6c7b867","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6ab4f1813f1aa51949581ed9ae69cbab","id":"objects:4a95798c6aea039d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9eead9df4d2a3f366f7b7609e78a285","id":"objects:3409ff1a30e8a43d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:42aba19eb85ffb8e401f1622c5302e83","id":"objects:48645cdbd653a28c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6e0a7952d1cd3b7874fbc591a733321e","id":"objects:e1297d2c8b3b6f73","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0c3827bfb5efb61e18f1cd6fe3d38988","id":"objects:1bca9143902cf9e6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:dfd1f9e9f76fb96eb02484d849f6dc22","id":"objects:82612bf8851acd97","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6ef5a0a7deb31a8d2c665017bcf73ca0","id":"objects:3414f095f184a972","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:acaa359073ddcbd6f24d7956578db0ac","id":"objects:a8dd641ed4b745f4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cce0ad947d03d725ab7129d067739b8d","id":"objects:861dd9ef67bff19b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ccabaf42509d8ce9080880ca895e9d2d","id":"objects:b40a0b112fd9e374","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c12d0120233a2d4e65b9d170a8daad7b","id":"objects:65847decc0882ad3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2b1e85d7d11af4b3c66731ef2446d9a4","id":"objects:693826145a1abd43","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d2c902ac2cd793d3c188c75fd04dfd7e","id":"objects:6c4f42a0c2db51c6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e82527ac4ca5dfbced66fd8ed5510ab7","id":"objects:2ed2478dbf536547","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9a2fdd06d2409d921e869737d2ac87c","id":"objects:b75cf607130d4cb6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5aa3bd17236746f05bb77be05d018af1","id":"objects:350bd50b07b166a2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5aa3bd17236746f05bb77be05d018af1","id":"objects:2de9f5e4ebb302c0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:1806be4877b3875489b98829cee4f6ce","id":"objects:d0d2de77bdb98cc0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c25612e4d23f8e9553c8bb56a5b15d48","id":"objects:394eaaa8770bb968","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c25612e4d23f8e9553c8bb56a5b15d48","id":"objects:814c2be72b2d4267","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cd8c3399c901c54d672674592719edd5","id":"objects:574983a3a5d70b08","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6b43c6e9489dba36808f57726ece89cb","id":"objects:f77e41c897553100","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f4a6d59256fbd0016bf60daff4151d73","id":"objects:62106f7239f8c230","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f5ae709a7309488a5a9351feb20eb32d","id":"objects:254108132a2aef7d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ad95409f74980b02d75dbfe6aac037ab","id":"objects:7ec7e7d1188db086","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:d399e1ec0f56ad14","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f31d069bd58988dd6cf1ae398efb9699","id":"objects:a37a803de6301a00","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3cf8589b39caf0035eb1f4d566c5e6e3","id":"objects:47292a21e572af16","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:4a49c9f8d1920836","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:8a5a731d9ad960b6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ed20556cd318c47064c048fde59bfdb3","id":"objects:7cc81f492088a2c3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a8199f9a9bce2a67de667d0149c3faa","id":"objects:5efa0f01b98623ed","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2f27f0a39395713e1939b2277feaf5f9","id":"objects:ccca18810a2bfb15","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f68658adf67aca5a0ad561606923d533","id":"objects:53ee627307f58e90","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:b53380a7a6abbc13","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:714c3b21092cf720","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:fdbaf7e649ed2411","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6266282b2bb813196b176135e8d87090","id":"objects:a70f8fa2556229bc","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:66eafb651d3b6c31078c05e07f43c2a9","id":"objects:2464e5901b3be215","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:62108c5e28ffc30c2c3148eaf1993d65","id":"objects:c4317e146f6b7baf","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:79e143408d2df542980b3fbe34ff9acc","id":"objects:37b73cdf20971fa2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fdaab9a91c8f9d006dfef215ec86a166","id":"objects:9871b478d0d49e73","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e062cbf85fbbb0a92d87ff91becc5ad6","id":"objects:ea7df658b100a0ab","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3aa18a110d01df88dc59a7e65fce3c14","id":"objects:da10bc557914d2cb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:de3f9ae08b1efcda8fe7dba74ed2d317","id":"objects:0877826fedcd4b24","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:de3f9ae08b1efcda8fe7dba74ed2d317","id":"objects:ac4c46ea8d225e80","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5d751c6c7279ffd80db86e56af326c20","id":"objects:933b1a403b715c90","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4d3a535487b2874ac7833adac135f117","id":"objects:1e707fb7c552f5d8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4a8e18cae92f85fd2a430b1bf28ac272","id":"objects:7bb8fdca58035a2e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:55f0f9e33098171c2f3a060cd089ebe4","id":"objects:69f5a30e0b0ce082","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:56611614412f8bdffcfa2afabe2290e3","id":"objects:7baa5e162c7ebfae","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:964aa8558f9b4029495c31bf8527ba2f","id":"objects:6c06d7d7076cb094","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a2dfd1a2ef864e62e1e55a9dc178f84","id":"objects:147671c9c5607fe3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9a2fdd06d2409d921e869737d2ac87c","id":"objects:feff479b22359f74","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:923650074298ba18e3948b0ad78801f6","id":"objects:d029c3eeeef78c85","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8da4b8f0bb8cb3279198a1fad77b4947","id":"objects:c9622b5df267da43","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d4da8b8c782fd310e1299a3e4a744c53","id":"objects:3877bde07f9ed182","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:de3f9ae08b1efcda8fe7dba74ed2d317","id":"objects:37c533fb41d48d4f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:94048180d8b561a688f0d61aeb246ef6","id":"objects:110a6e33b3ef7838","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:94048180d8b561a688f0d61aeb246ef6","id":"objects:68cd3567299e40a4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:af4644bda7c7ada49d2720d0e06bf9be","id":"objects:cbefd0d99fc1d19d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7d0dbb9d7c678596b291c30a3f31c7f5","id":"objects:49c6c29f6f7ec76b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a1feb9093a457da1663c61f202bc02e0","id":"objects:c1a2070493a40347","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2d1f0954769c42ebcc94fdc71d00b5b3","id":"objects:86d3cf21e8532f2e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:165b7a7b507d0f0821c9c3917a4a2a63","id":"objects:80d9f11540acd334","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:bb368d0261d57b929bb3cb41881264da","id":"objects:bd3cb0c0eb079d5d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1c872d17e6ef6a08584c0f8e34515da","id":"objects:971d31e1a69fc56f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:266188981cac187d1e00555dbd9567a8","id":"objects:87788e8aa8ae1716","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:266188981cac187d1e00555dbd9567a8","id":"objects:45d87537363b1248","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fe094dfa929dbbfa7835870d06a62cf7","id":"objects:6ed42e9dc2088649","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0af1c53379a145474b62f4e1d308e08e","id":"objects:0dfa93d99c5ba752","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4a3410037b49ff03d3bc9913b3c08a3e","id":"objects:ca6a47a4adbf3f9c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:172a7d54e4aabdac470196a4af919c12","id":"objects:a9d83ba8035e42c3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:dbc2864780876584","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:8bf25fd08dd8df6f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:0862375e48ee9e63","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ea9dff1885ce359c937f691d47fc7c11","id":"objects:7ae792653c5e6432","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:610d47efa1b0155f103dc94d4f61c70b","id":"objects:c717d659958f083e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:d93fe2112d0a802a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ee080ada1a7159ba61b65798e1105a6c","id":"objects:cdc872ea1f674b53","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ba21a65961b70fd01c7fa7e6245d40de","id":"objects:a218844aa4df7db4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8db23f95d703f3321a42b0bf4b48799a","id":"objects:51e2d7853e2c1751","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5d56e5e9be3e64348239ad959af39099","id":"objects:6c1d772746568894","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c14262111b80d4958bce976a1bc6afae","id":"objects:23c5e2190674196b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0e6e4997bcd25df3a3435cc30f183b34","id":"objects:3adddb15a334c43f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b81d9d74b1a6df9a3fbe8270ff214359","id":"objects:35dd90d1141070a8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8fc098865a6e06ea5183ea725120ac58","id":"objects:36c232d14926a00e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3b809dae1ff63beaff6ddbad4eca74d1","id":"objects:52e9cc958d99bd06","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d419da1b0f77fa32d13b760c2934d05a","id":"objects:9a9ad4b862fc37d9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:06ef9b73966d6671a011e504cb6ac8e2","id":"objects:28e1df7c12f9f944","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:41764842b4facf8bcd8012a669b9d56d","id":"objects:4cae37e893784912","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:009fe0ee084b19df450ca55ad699c03f","id":"objects:fa4e57d7c4d8ffcd","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:675669cc81d37c70dd0344c9303ed333","id":"objects:e1abcdbd1e9907a1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d8873d9d9749bbc124922fc36d6293f9","id":"objects:ce1bf847594a082b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c1e838f9636af827f4f5e48a4e012ef2","id":"objects:27a04b1362cbe82c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4d25078759e5f014452d129d60b6e214","id":"objects:35e3cf59d554d573","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:aeb53f3ddb9108d4cdd2cfd9498f3f66","id":"objects:6d104ae7d607841e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33c08564e962ed402c0a6755579971b","id":"objects:ca2c8a2f2c9cafc1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:aeb53f3ddb9108d4cdd2cfd9498f3f66","id":"objects:813f5eb091226982","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9bbcb0571a0b2ea9d70cb75ca797b44b","id":"objects:0da72525506bf8e5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4ea0a0f0fe25a612f98e83e26d2f35cc","id":"objects:40e188312507f47d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:54c6f0a37c660eedcfc3a8d58e5ade39","id":"objects:94adddc897a88f8a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ab4c993feb876dc1ffa38100b1bbfb0d","id":"objects:7ef8e4989c47a022","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a8199f9a9bce2a67de667d0149c3faa","id":"objects:b6b72853e704a5f7","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9119d42025688751599299c8fba83889","id":"objects:a6b034d585ccf382","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:b8c9e6f67438bce8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:67ff4606060c528ce7aa4a5c115efea6","id":"objects:cee74ec4d155926e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:5ff4957dfc5c1c0b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:c1e673e1384a9615","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:d80789583e2b2c25","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:52191c5f057568af","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:8c6d50b3dcb604e2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ace5af5981e794c39f875faa037a9ad2","id":"objects:239d0422055c3dca","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:15de48842307e82551064607b85a311b","id":"objects:3ed5eeac6d5fe5b1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:84563487b90c2eb760eaf91032e1b927","id":"objects:defbd576c1dce24a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e33c08564e962ed402c0a6755579971b","id":"objects:6e455824e9d711e0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f4a6d59256fbd0016bf60daff4151d73","id":"objects:e8b3217c76e4c442","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:eae8cb14f24a35af0cfbe9ce602029f8","id":"objects:842e79a7204fc326","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7c094d11c21d69bbd887268d75a87e52","id":"objects:1a508328e338cc9d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:675669cc81d37c70dd0344c9303ed333","id":"objects:3236b68f5b78042a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f43d55beff9b85ab977c07c3ca631c2c","id":"objects:9b12c154ec59f710","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa0ec01106a264f277293b85ec93c13a","id":"objects:063d5711813f07ec","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c3ba5045d1b35aa3e8dcce34c18721e0","id":"objects:4376daf411c88500","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7991c14489ead9aea89c19b0bc81ef07","id":"objects:d007e47ef59f9df3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7991c14489ead9aea89c19b0bc81ef07","id":"objects:1ff5d77678841562","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c243ce79008a729b73dbf4e49d4a02b3","id":"objects:30f1589faa8dc330","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d1173377ad0384d3b03e194e13a8931e","id":"objects:79e2e2f4085f47e0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5a78233c1e7a2122e59f1aba7d0c055a","id":"objects:ac6e6c2d6fd285f5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:eb91cf23037f3da07c6140ec32a775e0","id":"objects:a38998f9138c3f02","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2ae53058713feb6f658f8d05ce04aa3b","id":"objects:c90e7bfcb39ccfd6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2be096cfcd74fbc8d29404e3dd74d9fe","id":"objects:cdf02c275221fc9c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6ab4f1813f1aa51949581ed9ae69cbab","id":"objects:b689c383872477e6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9eead9df4d2a3f366f7b7609e78a285","id":"objects:9852784dbc06e8e8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:42aba19eb85ffb8e401f1622c5302e83","id":"objects:58c5314e4bc7ef1e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6e0a7952d1cd3b7874fbc591a733321e","id":"objects:994b750678f5be47","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0c3827bfb5efb61e18f1cd6fe3d38988","id":"objects:58ff6f44bf6956ca","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:dfd1f9e9f76fb96eb02484d849f6dc22","id":"objects:3f09d3f2bf5094dd","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6ef5a0a7deb31a8d2c665017bcf73ca0","id":"objects:d1b84dcc48915049","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:acaa359073ddcbd6f24d7956578db0ac","id":"objects:bbe2445d1fba22a4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cce0ad947d03d725ab7129d067739b8d","id":"objects:b764a439d0a14b51","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ccabaf42509d8ce9080880ca895e9d2d","id":"objects:33295c8eb0c46c07","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c12d0120233a2d4e65b9d170a8daad7b","id":"objects:741ab0b8dad8001f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2b1e85d7d11af4b3c66731ef2446d9a4","id":"objects:a1f88d319ecb18df","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d2c902ac2cd793d3c188c75fd04dfd7e","id":"objects:76e5195034f62050","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e82527ac4ca5dfbced66fd8ed5510ab7","id":"objects:af604a67709e6dee","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e9a2fdd06d2409d921e869737d2ac87c","id":"objects:459363ac333aa822","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5aa3bd17236746f05bb77be05d018af1","id":"objects:c7365c38c15cdaae","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5aa3bd17236746f05bb77be05d018af1","id":"objects:4b3f2264b808dc22","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d179a50f6636825f1a64cc7c22704267","id":"objects:2207df6c4c827c87","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c25612e4d23f8e9553c8bb56a5b15d48","id":"objects:da40fe2730e766a5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c25612e4d23f8e9553c8bb56a5b15d48","id":"objects:76c96638e64ee388","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cd8c3399c901c54d672674592719edd5","id":"objects:a7b6aec090bd8293","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6b43c6e9489dba36808f57726ece89cb","id":"objects:e1243d4d3d335365","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f4a6d59256fbd0016bf60daff4151d73","id":"objects:acd81d8450d07331","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3a3444472ade5be66560bb5b90fee75b","id":"objects:b9fa98fe8571b787","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ad95409f74980b02d75dbfe6aac037ab","id":"objects:a692baacebf62261","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:811bd44d22c42243","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f31d069bd58988dd6cf1ae398efb9699","id":"objects:4a0b6ecc0c98d0ed","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:3cf8589b39caf0035eb1f4d566c5e6e3","id":"objects:cd6beb745de8de7a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:f7c864e9f5cf2fcb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb3bc958949b896828ffb5623026efc3","id":"objects:e162f3e108d8630e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ed20556cd318c47064c048fde59bfdb3","id":"objects:eafe3115aefb78fd","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a8199f9a9bce2a67de667d0149c3faa","id":"objects:b6a608cc5fd978cd","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2f27f0a39395713e1939b2277feaf5f9","id":"objects:3aa526824220d46d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f68658adf67aca5a0ad561606923d533","id":"objects:a1f48ea313a28d90","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:fa0f3714250e97e5","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:9d3983398dd53bba","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:4680f201384fa457a624320a0166ff23","id":"objects:27cf7c464ac9c5fa","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6266282b2bb813196b176135e8d87090","id":"objects:b2f9190d4391e35c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:66eafb651d3b6c31078c05e07f43c2a9","id":"objects:26d0dc815f531957","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:62108c5e28ffc30c2c3148eaf1993d65","id":"objects:62a283c9496c13e0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:79e143408d2df542980b3fbe34ff9acc","id":"objects:20b43b585990db2b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fdaab9a91c8f9d006dfef215ec86a166","id":"objects:96853df023391c0d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a2a5645eae7fb5dbd801124b3e03f5aa","id":"objects:1dd43a61d70d31bb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3aa18a110d01df88dc59a7e65fce3c14","id":"objects:4471d66daf0b7368","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1bd3424c142118fd340fa31e7d394d85","id":"objects:3f0fb5bb44ff8bfa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6541f0ddfda8e2f33babd58e24177f73","id":"objects:7bb82ac15cb7431a","source":"frozen Python a512c901, unmeasured"}
@@ -559,8 +149,6 @@
 {"digest":"sha256:b47d6c84c2d43c1e025e386895ec2118","id":"objects:ddb5c3c4f51664b2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1fd1e03077d10188a36d6cbb9cb23bcb","id":"objects:1c7325a607d0820d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7b1d8e5eece241139335db8a01a5ad22","id":"objects:05b5754d2eb58ef8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:63d9bde98da562eff676337764bd067b","id":"objects:32a14ddac7248806","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb1b76a10f226c9c49e061bdba58cb4f","id":"objects:05450ae005c46917","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a7c702a9cc4d2f30ceb5900d6eb0d4f6","id":"objects:73041746f7157c9b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7e0e0aa880821ac95ea256da348dbaad","id":"objects:422973a4c27aea8d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c946d9002bfc2bebe25342eb69a23034","id":"objects:2702ddd9cd12490a","source":"frozen Python a512c901, unmeasured"}
@@ -594,9 +182,6 @@
 {"digest":"sha256:5ffb03b58f63f9a5fa43443e782a79ed","id":"objects:6dc919b88ea865f4","source":"frozen Python a512c901, unmeasured"}
 {"id":"objects:343a7972d1adca0e","not_supported":"word_drawings ref","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:91b9cce368b34777d31b38cb992f13ef","id":"objects:f5ed35b705086cb9","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:a3f8f5fab3205a3aea7bd2928727ec31","id":"objects:aa0c591c51558bf1","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:f813c0a17db1deb1ffe3a34b9bc3c4ff","id":"objects:689eaaed76dd7857","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5c591cf4864f3903675f964eae76ddd5","id":"objects:cee8342529261011","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5e72cb3de11c47e4a7136bfe6411bd03","id":"objects:2afc51b03b653dda","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7f93557341dbd81216f099ebdca421e7","id":"objects:d308eb923879e6d9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d29db789c980939d9807c2ec75c616ea","id":"objects:61f2d6bf4b67bae2","source":"frozen Python a512c901, unmeasured"}
@@ -627,9 +212,6 @@
 {"digest":"sha256:5ffb03b58f63f9a5fa43443e782a79ed","id":"objects:97e1df3d61538212","source":"frozen Python a512c901, unmeasured"}
 {"id":"objects:302de4a0ee62c42e","not_supported":"word_drawings ref","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ef652d31309420c07caf783ed3f1e6a0","id":"objects:96c182c8b357e3fb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:20985daec8435997885defd2376c16bd","id":"objects:5bfdf5e21d7fc9ce","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:d9e5ce076deb28fcef9cb7c838f3087a","id":"objects:001bbfb1e325db81","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5c591cf4864f3903675f964eae76ddd5","id":"objects:188e0db741b9f084","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0aad79a407cf6b45edf7623928f059a9","id":"ops:96b7fec178852ee2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:17dc3869761a0f1b02bff2be51e16931","id":"ops:8bc51452e117e128","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:00f44adff29732000122d8e102ee1017","id":"ops:117de0179cafd79f","source":"frozen Python a512c901, unmeasured"}
@@ -774,10 +356,6 @@
 {"digest":"sha256:3a2550c541f566a4ab1c7d1323300490","id":"paragraphs:797313d3f31139e7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:076fd8e08b0ff001b3cafb953ed5afbc","id":"paragraphs:2fb42c3c708ffe27","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:50be644e12dc9e26cc1ec01d8495593e","id":"paragraphs:c5a8501dff47a092","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:977a246fe07af6b85fc51199ee937332","id":"paragraphs:e740b9e6636293a0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0bc8713e8fb8bd9483b594399073a894","id":"paragraphs:9ed1614c3d8ae354","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:419495f63c474f960052e90b1cf5eed8","id":"paragraphs:daaed4ba7ee3dd81","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ab0845fb788a765240016f08c234808d","id":"paragraphs:1473270cd51b8050","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ff07778d5df52e7079e65381a3039ad5","id":"set_text:e5f99d12b6e9b581","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bfc5df5b85423e95ac99f3d49afc2b6d","id":"set_text:709dd2a5fbfaf369","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bb9d5526d777762e175cddb7128e4132","id":"set_text:13285590b1cf606c","source":"frozen Python a512c901, unmeasured"}
@@ -936,8 +514,6 @@
 {"digest":"sha256:a4aaa1af12bb0e27623a96a2847870ea","id":"spacing:d28f3dd22acd0de8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e0d7ee3529992dc89b0c3d08b47925b7","id":"spacing:c25cfb498236b7fc","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7f870765629e60d7c5fa432c038b5e6e","id":"spacing:57d6abab481a587e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cbcba6404510db09e2446abda4c84552","id":"spacing:0b0dd5b55c1b630d","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
-{"digest":"sha256:244e3327e8801358c4c564c5b293b810","id":"spacing:2ec71fa02f590dab","source":"Word 16.106: crates/ooxml-oracle/word/observations/paraid-durability.json#tools (paragraph and row ids) and #drawings (Word keeps every paraId only when drawings carry wp14 ids; it never adds them)"}
 {"digest":"sha256:19b234bf7ae5a8cd28b010112db5978c","id":"structure:b7a968c452a93b8b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5a875079124a1fc2ae18ae856b5d0f31","id":"structure:d34e9b6c035a73bc","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:74964b536eb36e6f73fe135891ecf8a8","id":"structure:eb4b2dfb152e5eb2","source":"frozen Python a512c901, unmeasured"}
@@ -1076,7 +652,6 @@
 {"digest":"sha256:9197128df99da7f5adba45d5c80f228c","id":"structure:2a782e35b02073f5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:833d98593b08e945bb6cba8b23dba831","id":"structure:50d39cc65aa77eeb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f509a397aa7a7d4ba0cebff043c74bcc","id":"structure:805d6989591cad9f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:32da4a060c35b9bd6e315b05337944ff","id":"structure:b1a3d0cd34c8af8c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:8aadefcb8b18b351fbbff0e02ec2a45f","id":"structure:c8d11d78b8732ac5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b3a6b5106bc8b3dc2948749fd5315635","id":"structure:e538114ebb3d6d00","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a5b3a71c5f1e11fc90c17cd0f8039a89","id":"structure:28a3291deecb2523","source":"frozen Python a512c901, unmeasured"}
@@ -1097,7 +672,6 @@
 {"digest":"sha256:09b30f8821add8dd0bed783e015e845d","id":"structure:634cd29c7e97013b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ef3f2df890c5b2d7a4e42c125ef0613e","id":"structure:be96db734c0a96fb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f509a397aa7a7d4ba0cebff043c74bcc","id":"structure:858ff2f0b24b16ad","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e84bf4569ff53b10a1708d698eccc3b7","id":"structure:848831d02ed61dd3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:16e4df99dcec668d21c105c1235f0ef1","id":"structure:f7e0d1f602ed5cbe","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3d945dbad0aad9238eb7a96a93e4a22e","id":"structure:207a8b446411a88e","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bfc47f003a17cd9e8f5d24b7d9d8730a","id":"structure:c35eb502d278296b","source":"frozen Python a512c901, unmeasured"}
@@ -1845,12 +1419,9 @@
 {"digest":"sha256:4c91a703ad7324cb96cdf62a73617346","id":"style:ab098ad04c6fbb12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:365d539ee67a69ef85213d7be7a19573","id":"style:c9daf4df219ad569","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:365d539ee67a69ef85213d7be7a19573","id":"style:779c3a34348bb8bf","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c3f2320317a4af983bb58b3ea780fdcd","id":"style:a57a5683f14b1dbf","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:c3f2320317a4af983bb58b3ea780fdcd","id":"style:d47fcf50704881e6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:478264912c6bff96c6c5e90f8803a176","id":"style:132a93f087106819","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:485b48d6e6d73c42aeb0afefb648e3ce","id":"style:ea2d5fe0c422e5f6","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:46eeb6b4a9b4ac949101a097054e4d7a","id":"style:46a3fd61262152e2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:231a969c3504741afd15d28317e6574d","id":"style:fce7e8e9fadb93a1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3259b65472d0cb6a3eecf87e50a0a586","id":"style:5e64f87110bc3add","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ff004d8d5ecbbdf995352f10acc904f6","id":"style:938b43c7f44d330a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9db1a62851026d4d84b69f7ceb680c04","id":"style:c5c138e51e901ce6","source":"frozen Python a512c901, unmeasured"}
@@ -1858,12 +1429,6 @@
 {"digest":"sha256:8083b2d48c9673e9587dc2ee40524bad","id":"style:57dc1e8f789d3694","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b2f5e8c9445febace84cc2deaa6a8a04","id":"style:d83922763d1db6ba","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4c072b0b7fd40229ae4595e2ba08e3e6","id":"style:3e5d41059748f510","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:1540726603f9e044333e8ebe84759ad3","id":"style:44263ef8a9a6fcc8","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:70ee58c9222ecbaac88b47210834bdea","id":"style:1736d29630b097e6","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b5b68f0a8f319bd1796e9ebb2ae09bf2","id":"style:113e4a29930e997e","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:b5b68f0a8f319bd1796e9ebb2ae09bf2","id":"style:ba7d42881da8b5f4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:049e1e2031e3fa332bf2f1b5ff5d17f0","id":"style:2214f12ef9376949","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:049e1e2031e3fa332bf2f1b5ff5d17f0","id":"style:bb93b25e9dea458e","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:acf41da10cb5e716c33a94135494b3b8","id":"style:a691167c9c90676b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:aa3b5133bb35bd3fec2360d14aa491e8","id":"style:15eba8c9936109aa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:eaa52e32f5128cb98f8e16c83a823e58","id":"style:91b67848efb6d624","source":"frozen Python a512c901, unmeasured"}
@@ -1917,10 +1482,6 @@
 {"digest":"sha256:51946a7bab445ce9e03d5bfe3360f16c","id":"styled:d4611c0765898ae0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9f30fe29837b992c6550acfa30999fd7","id":"styled:3c03eb8ea37c15be","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c8861770ac665f6e4b5bc0be06ecd9b1","id":"styled:77cd2b1403e36eeb","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cf11b2bd791a63d2560d8ee6cfaccd52","id":"styled:e9a099c1d84c8b0a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:ffbe1912409caca9fa116ebdf5afc035","id":"styled:9c8ea39ba773a6b0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:497380dc6480211538ab2b78a00c4508","id":"styled:78589c032bbfe507","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:39789e08a38e0aac36526c85dba675e1","id":"styled:ec8fc478ae13aa07","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f0e47bf7f0efa43ca99d80b62c0d2c13","id":"text:496cb8ce27e15ca3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:cb0a94c53122e4c08a2e0436cd6d5cdf","id":"text:576170ff86669ccf","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ed4c6713de54d756456068c84fd8bf8b","id":"text:6f162720462bc286","source":"frozen Python a512c901, unmeasured"}
@@ -1975,11 +1536,6 @@
 {"digest":"sha256:79a47c658f69693b6ce9909f55c34a6e","id":"text:e17b4e2cde41eeea","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:ddd688a11e4053c0f2f9856505240a9c","id":"text:72cfe4d8fceba675","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:efd8d0b9267c65c23068ce468a4424b8","id":"text:694822594bae430d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e26893b1982d505962cde53bd02fb5ee","id":"text:ad85ea60e1121ec4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:8ce9e98719b22151cd15281a140d2f46","id":"text:14a15c569f754155","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:289f7241d90e4cd1fb7c1592fcdac36e","id":"text:136da50396c81f9c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:dbed7136d75cd110c6a0a1937877363b","id":"text:eb7464434ebdc7d4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fb16d9417efff79f5b78a1318b9da4b6","id":"text:b7c860171cb9ec7c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:59cb9614c82767f1ea426feb74038550","id":"text:5f7fab071db382ff","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:79158ce6383e7a9486d591a025d07836","id":"text:50207d8d98914915","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d33c7d717151e1c8de0c18fb773ed053","id":"text:7d3f8d6d6c2a9f5e","source":"frozen Python a512c901, unmeasured"}
@@ -2108,7 +1664,6 @@
 {"digest":"sha256:a5f206fc4ebbc6ab4a9fad2abb76df56","id":"text:497396dc2a3b65e0","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:ee8359c6fcebc62384185a0aa573dd52","id":"text:84836ae529dd2218","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden)"}
 {"digest":"sha256:8585ec263311df4b85f07ea3e124f86e","id":"text:4cd0d2d3af1566bb","source":"docx-agent 0.1's answer (frozen Python a512c901, its pending golden), equal field by field; word_insert_markdown at replace: served (round 60, R141)"}
-{"digest":"sha256:10123a7b80b2168a66b2764fdd67615b","id":"text:4181fdf957677ceb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a3b0889a2af01a8efab82413262a0daa","id":"tools:1324e32a5bfc3e12","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a1f1955eaf777bbd1a77bf4245ea6070","id":"tools:70733c238ba24e67","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:089bae8951dc8a8d394fe42b2ec46947","id":"tools:3e3b183ece5a1e3a","source":"frozen Python a512c901, unmeasured"}
@@ -2171,10 +1726,6 @@
 {"digest":"sha256:801862dce0ddf508fd4d8a4fd68e621c","id":"inspect:60013310306686fb","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bf2a0478530708ad32c686dea695ec7d","id":"inspect:f85701515838e950","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:71d7929baf3c77f55aa291cc1a3d2b4b","id":"inspect:54a3359bedd5714a","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6c5e4faf8c2a982611540a923d6683ce","id":"inspect:e2c1c89246df2b16","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0a2c6057617372b9c6a77aa0cfc84690","id":"inspect:01429fb12675c39b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:6286e7553b7bade50aa49c42d7570fcd","id":"inspect:77549af933eaf47d","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:0245c1334aabf87e73e17b22b472c843","id":"inspect:472a54213e8e8266","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:473ef986fdb4f90da7518dd12b8a150e","id":"inspect:02f6e7dd29a55ced","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d56a1496e38c89c942202bcfa624a443","id":"inspect:682a66c585c51d4d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2328517c39ae1a30c4eaf8b56b295c4d","id":"inspect:28100047baaa39d1","source":"frozen Python a512c901, unmeasured"}
@@ -2184,10 +1735,6 @@
 {"digest":"sha256:f3025f3657567b2765cfb2b53dc9ff8f","id":"ranges:d7641135660a5952","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6baa9d3e5cfa9e17dbfa373dfdeeedb7","id":"ranges:bdb7873c9a5b1572","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f81a67dbf23d9942bd4a9b176037f0f7","id":"ranges:f3c822a719914ae4","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:384662577c74809f7c16e65795a63eef","id":"ranges:18244a8daef29617","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:cd41e153b33ca22d1ff588a6c2f85945","id":"ranges:2693a4b5385484f0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:76f608d0439b00e0225ccda90b65ebce","id":"ranges:8f78d234cf55a1a0","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e45e5099edffafb022453f62891f80a3","id":"ranges:e80ebbae5d2437b4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2b2d8bd5a40432d6c074d46ed74a83f1","id":"ranges:b55731dcb3bb6397","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:92d058b0593dcb9f09c6c4142bce5336","id":"ranges:836223382f3ca698","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f7e3bd33cd3be8b97642e7f6a7d36ff3","id":"ranges:49bd5a1e7f1ef082","source":"frozen Python a512c901, unmeasured"}
@@ -2199,4 +1746,3 @@
 {"digest":"sha256:a55709a5c930cf72414525eb05838991","id":"laid:12c6c9ee998e7ae7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c179f32cc4d455b22b7d6cf2f44fbb39","id":"laid:e4b6143ad84c9aa3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c179f32cc4d455b22b7d6cf2f44fbb39","id":"laid:dcc5aa32af0dbc1b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:e8b3f9cc40f3b6687442d504c4e3e490","id":"laid:e15c4a8e87dfaf1a","source":"frozen Python a512c901, unmeasured"}
