@@ -4,15 +4,18 @@
 //! records), which of them a paragraph differs in, and each one it differs in taken whole
 //! ([`take`]: the paragraph's own removed, the sample's copied in schema order); the look
 //! of an item a level deeper in the sample's list, as Word demotes one
-//! ([`ParagraphLook::deeper`]).
+//! ([`ParagraphLook::deeper`]), or, in a one-level list, moved as Word's list indent moves it
+//! ([`ParagraphLook::indented`], the rule [`super::list_indent`]'s).
 //!
 //! Must not: write but on the work it is given, or take anything else of the sample (run
 //! formatting, spacing, alignment and tabs stay the paragraph's own).
 
+use super::list_indent::{default_tab, ListIndent};
 use crate::marks::insert_in_order;
 use crate::names::W;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
+use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::numbering::{membership, Lists, Membership};
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::{Attribute, Element, Name, Node, QName};
@@ -44,6 +47,10 @@ pub struct ParagraphLook {
     pub sample: String,
     /// Per part of [`PARTS`], in order: its `w:pPr` child, or `None` where it has none.
     pub parts: Vec<Option<Arc<Element>>>,
+    /// The `w:tabs` Word gives an item it moves in a one-level list (its `num` stop), taken
+    /// with the look ([`ParagraphLook::indented`]; `None` for a sample's own look, whose tabs
+    /// stay each paragraph's own).
+    pub list_tab: Option<Arc<Element>>,
 }
 
 impl ParagraphLook {
@@ -58,6 +65,7 @@ impl ParagraphLook {
         ParagraphLook {
             sample: id.to_owned(),
             parts,
+            list_tab: None,
         }
     }
 
@@ -76,20 +84,24 @@ impl ParagraphLook {
     /// none.
     #[must_use]
     pub fn membership(&self, docx: &Docx, lists: &Lists) -> Option<Membership> {
-        // a stand-in paragraph: what the list is read from, its style and its own numbering
-        let stated: Vec<Node> = ["style", "list"]
+        membership(docx, lists, &self.stand_in(&["style", "list"]))
+    }
+
+    /// A paragraph with the parts `names` of the look alone (what its list or position is
+    /// read from).
+    fn stand_in(&self, names: &[&str]) -> Element {
+        let stated: Vec<Node> = names
             .iter()
             .filter_map(|name| self.part(name))
             .map(|e| Node::Element(Arc::clone(e)))
             .collect();
         let properties = Element::new(word("pPr"), Vec::new(), Vec::new(), stated);
-        let paragraph = Element::new(
+        Element::new(
             word("p"),
             Vec::new(),
             Vec::new(),
             vec![Node::Element(Arc::new(properties))],
-        );
-        membership(docx, lists, &paragraph)
+        )
     }
 
     /// The look of an item `levels` deeper in the sample's list, as Word demotes an item
@@ -130,6 +142,58 @@ impl ParagraphLook {
             }
         }
         Some(deeper)
+    }
+
+    /// The look of an item `levels` deeper in a one-level list (a single-level definition),
+    /// as Word's list indent moves one there ([`super::list_indent`]): the same style, list
+    /// and page settings, the item moved to its new position (`w:ind` `left`, the level's
+    /// hanging kept) with a `num` tab stop there. `next` is the position of the paragraph
+    /// after the new items. `None` where the sample is in no list, its
+    /// list is not a one-level one, or it has an indent of its own (not measured).
+    #[must_use]
+    pub(crate) fn indented(
+        &self,
+        docx: &Docx,
+        lists: &Lists,
+        levels: i64,
+        next: Option<ListIndent>,
+    ) -> Option<ParagraphLook> {
+        if self.part("indent").is_some() {
+            return None;
+        }
+        let found = self.membership(docx, lists)?;
+        if !lists.single_level(docx, found.num_id) {
+            return None;
+        }
+        let formatting = Formatting::read(docx);
+        let at = ListIndent::of(&formatting.paragraph(&self.stand_in(&["style", "list"]), None));
+        let tab = default_tab(formatting.context().settings.default_tab_stop);
+        let left = at.deeper(levels, tab, next).left().to_string();
+        let attribute = |local: &str, value: &str| Attribute {
+            name: word(local),
+            value: Arc::from(value),
+        };
+        let indent = Element::new(word("ind"), Vec::new(), vec![attribute("left", &left)], Vec::new());
+        let stop = Element::new(
+            word("tab"),
+            Vec::new(),
+            vec![attribute("val", "num"), attribute("pos", &left)],
+            Vec::new(),
+        );
+        let tabs = Element::new(
+            word("tabs"),
+            Vec::new(),
+            Vec::new(),
+            vec![Node::Element(Arc::new(stop))],
+        );
+        let mut moved = self.clone();
+        for ((name, _), part) in PARTS.iter().zip(&mut moved.parts) {
+            if *name == "indent" {
+                *part = Some(Arc::new(indent.clone()));
+            }
+        }
+        moved.list_tab = Some(Arc::new(tabs));
+        Some(moved)
     }
 
     /// The part `name` of [`PARTS`], where the sample has it.
@@ -227,8 +291,8 @@ pub fn differs(paragraph: &Element, look: &ParagraphLook, skip: &[&str]) -> Vec<
 }
 
 /// Give `paragraph` (in `work`) the parts of `look` named in `changed`: its own
-/// removed, the sample's copied in schema order; its `w:pPr` made, and removed when left
-/// empty.
+/// removed, the sample's copied in schema order; and the look's list tab, where it has
+/// one, in place of the paragraph's tabs; its `w:pPr` made, and removed when left empty.
 pub(crate) fn take(work: &mut Work, paragraph: Id, look: &ParagraphLook, changed: &[&str], orders: &Orders) {
     if changed.is_empty() {
         return;
@@ -246,6 +310,14 @@ pub(crate) fn take(work: &mut Work, paragraph: Id, look: &ParagraphLook, changed
             work.remove(own);
         }
         if let Some(copy) = wanted.as_ref().and_then(|w| work.adopt(w)) {
+            insert_in_order(work, properties, copy, orders);
+        }
+    }
+    if let Some(tabs) = &look.list_tab {
+        if let Some(own) = work.find(properties, W, "tabs") {
+            work.remove(own);
+        }
+        if let Some(copy) = work.adopt(tabs) {
             insert_in_order(work, properties, copy, orders);
         }
     }

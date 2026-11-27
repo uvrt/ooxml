@@ -2,22 +2,24 @@
 ``observations/like-markdown-word.json``, Word 16.106 for Mac; round 60, R141): Word opens the
 tools' items, gives them the settings it gives items a person adds to the sample's list (Enter
 at the end of the list, list indent for an item a level down), numbers them on as it numbers
-its own after Accept All, and its Reject All gives the lists as they were."""
+its own after Accept All, and its Reject All gives the lists as they were. In a one-level list
+(F-2c, user decision 2026-11-27: follow Word) an item a level down keeps the style and moves
+as Word's list indent moves it (``word-indents``: the rule is
+crates/ooxml-word-edit/src/format/list_indent.rs's)."""
 
 from __future__ import annotations
 
 from recorded import observed  # noqa: I001  (puts the probes on the path)
 
 import like_markdown_probe  # noqa: E402
-from like_markdown_cases import CASES, REJECTED  # noqa: E402
+from like_markdown_cases import CASES, INDENT_NEW, INDENTS, REJECTED  # noqa: E402
 
 OBSERVED = observed("like-markdown-word.json")
 #: The observation's cases these tests compare with (index.py lists why the others are not).
-READS = {"word-added", "tools-opened", "word-labels", "tools-labels", "tools-reject"}
+READS = {"word-added", "tools-opened", "word-labels", "tools-labels", "tools-reject", "word-indents"}
 
-#: The cases the tools add to as Word does, and the one-level list where 0.1's rule differs.
-ALIKE = ("count-on", "level-deeper")
-ONE_LEVEL = "one-level"
+#: The cases the tools add to as Word does (all of them).
+ALIKE = tuple(CASES)
 
 _TOOLS: dict = {}
 
@@ -39,7 +41,7 @@ def _named(settings: dict) -> dict:
     """Settings with the style named by id: Word saves its Dutch interface's ids
     (``Lijstnummering``), the tools Word's own English ones (``ListNumber``)."""
     ids = {"Lijstnummering": "ListNumber", "Lijstopsomteken": "ListBullet", "Lijstalinea": "ListParagraph",
-           "Lijstopsomteken2": "ListBullet2"}
+           "Lijstopsomteken2": "ListBullet2", "Lijstopsomteken3": "ListBullet3"}
     out = dict(settings)
     if "pStyle" in out:
         out["pStyle"] = {"val": ids.get(out["pStyle"]["val"], out["pStyle"]["val"])}
@@ -84,14 +86,45 @@ def test_each_new_item_is_recorded_inserted_whole():
             assert ours[key]["runs"][0][0] == "ins" and ours[key]["mark"] == "ins", key
 
 
-def test_a_level_below_a_one_level_list_is_written_without_like_and_said():
-    """A deliberate difference (docx-agent 0.1's rule, round 42): Word's built-in List Bullet is
-    a one-level list, so it has no level below the sample's. Word's list indent then indents the
-    item in the same style (``ind`` 720, a ``num`` tab); the tools write the item as without
-    like -- the Markdown's own List Bullet 2 -- and say so."""
+def test_a_level_below_a_one_level_list_is_moved_as_word_moves_it_and_nothing_is_said():
+    """Word's built-in List Bullet and List Number are one-level lists: Word's list indent keeps
+    the item's style and moves it (``ind`` left, a ``num`` tab there, no ``numPr``). The tools
+    do the same, and say nothing (docx-agent 0.1 wrote the Markdown's List Bullet 2 and warned)."""
     word, ours = OBSERVED["word-added"]["paragraphs"], tools()["paragraphs"]
-    detail = CASES[ONE_LEVEL]["new"][1][0].split()[0]
-    assert _named(word[detail]["settings"])["pStyle"] == {"val": "ListBullet"}
-    assert "numPr" not in word[detail]["settings"] and word[detail]["settings"]["ind"] == {"left": "720"}
-    assert _named(ours[detail]["settings"])["pStyle"] == {"val": "ListBullet2"}
-    assert any("has no level 1 below" in w and "written as without like" in w for w in tools()["said"])
+    for case in ("one-level", "one-level-number", "one-level-indented"):
+        for text, depth in CASES[case]["new"][1:]:
+            key = text.split()[0]
+            assert "numPr" not in word[key]["settings"] and word[key]["settings"]["ind"]["left"], (case, key)
+            assert _named(ours[key]["settings"]) == _named(word[key]["settings"]), (case, key)
+    assert not any("has no level" in w for w in tools()["said"]), tools()["said"]
+
+
+def _indented(name: str) -> dict:
+    case = INDENTS[name]
+    said: list[str] = []
+    return {"paragraphs": like_markdown_probe.keyed(like_markdown_probe.tools_indent_document(case, said)),
+            "said": said}
+
+
+def test_new_items_in_a_one_level_list_move_to_where_word_moves_them():
+    """Each ``new`` case of ``word-indents`` (a document of its own: one-level lists alone, a
+    default tab stop of 567, what follows the new items): the tools' items, written ``like``
+    the list's first item, have the settings Word gives the items it types and list-indents,
+    at every level."""
+    for name, case in INDENTS.items():
+        if case["mode"] != "new":
+            continue
+        word, ours = OBSERVED["word-indents"][name], _indented(name)
+        for text, _ in INDENT_NEW:
+            key = text.split()[0]
+            assert _named(ours["paragraphs"][key]["settings"]) == _named(word[key]), (name, key)
+        assert not ours["said"], (name, ours["said"])
+
+
+def test_an_existing_item_moved_where_it_stands_is_known_and_not_followed():
+    """Known, not followed (no tool moves an existing item of a one-level list): Word's list
+    indent of an item where it stands stops at the paragraph before it (its first line), not at
+    the one after it -- unlike new items, which stop at the paragraph after them."""
+    lefts = {name: OBSERVED["word-indents"][name]["Alpha"]["ind"]["left"]
+             for name in ("existing-alone", "existing-after-list", "existing-before-list")}
+    assert lefts == {"existing-alone": "1068", "existing-after-list": "926", "existing-before-list": "1068"}
