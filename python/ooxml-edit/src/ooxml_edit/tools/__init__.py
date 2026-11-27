@@ -85,7 +85,7 @@ from .scales import Scale, ScaleValue, Step
 from .prompts import SYSTEM, system_prompt
 from .registry import (ACCEPT, ANY_ROLE, CORE, EDIT, RESOLVE, REVIEW, ROLES, AliasWhen, Param, Tool,
                        ToolGroup, array, boolean, build_schema, free_object, integer, names_as,
-                       number, obj, role_set, string, tool)
+                       number, obj, offered_by, role_set, string, tool)
 from .results import (ERROR_CODES, Image, Result, ToolError, anthropic_image_tokens,
                       openai_image_tokens, page_list, page_text, truncate)
 from .schema import CallError, SubsetError, canonical, check_subset, validate_call
@@ -115,6 +115,6 @@ __all__ = [
     "loose_key",
     "row_range",
     "names_as", "number", "obj", "openai_image_tokens",
-    "page_list", "page_text", "part_entries", "hints", "numbers", "scales", "shared", "textfacts", "tiles", "strict_problems", "string", "system_prompt", "tool", "truncate", "validate_call",
+    "page_list", "page_text", "part_entries", "hints", "numbers", "scales", "shared", "textfacts", "tiles", "strict_problems", "string", "system_prompt", "tool", "offered_by", "truncate", "validate_call",
     "worker_task",
 ]

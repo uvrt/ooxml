@@ -4,9 +4,9 @@
 //! documents resolve to rows; [`HeldElsewhere`], the stand-in of one such document -- its
 //! kind, size and state number, as the application's host says them -- in the session's one
 //! table of documents, so ids come from one counter, the room is counted once, and a
-//! source's address qualifies with it; and [`Answering`], the stand-in as one call reads it,
+//! source's address qualifies with it; and [`answering`], the stand-in as one call reads it,
 //! answering with the values the application resolved for that call
-//! ([`ooxml_tools::written::HeldValues`]).
+//! ([`ooxml_tools::written::HeldValues`]), noting what it was not handed.
 //!
 //! Every operation of a format on a stand-in -- a tool, a save, a change, an undo, a batch
 //! -- is refused with an internal error naming it: the document is not here.
@@ -23,7 +23,7 @@ use crate::{DocKind, Registry, SessionError};
 use ooxml_opc::Package;
 use ooxml_store::{AttemptState, Caller, LockTimes, OpTxn, StoreStats, TxnMark, TxnOwner};
 use ooxml_tools::datasets::Dataset;
-use ooxml_tools::written::HeldValues;
+use ooxml_tools::written::{CallValues, HeldValues, Missed};
 use ooxml_tools::{Tool, ToolError, ToolResult};
 use serde_json::{Map, Value};
 use std::any::Any;
@@ -125,16 +125,6 @@ impl HeldElsewhere {
         if self.number.swap(number, Ordering::AcqRel) != number {
             self.seq.fetch_add(1, Ordering::AcqRel);
         }
-    }
-
-    /// It as one call reads it: answering with `values`, what the application resolved of
-    /// it for that call.
-    #[must_use]
-    pub fn answering(self: &Arc<Self>, values: HeldValues) -> Arc<dyn FormatDoc> {
-        Arc::new(Answering {
-            held: Arc::clone(self),
-            values,
-        })
     }
 
     fn refused(&self, what: &str) -> String {
@@ -316,23 +306,47 @@ impl FormatDoc for HeldElsewhere {
     }
 }
 
+/// `doc`, the open document `handle`, as one call reads it: a stand-in answering with what
+/// the application resolved of it for the call (`values`), what it was not handed noted
+/// there; any other document as it is.
+#[must_use]
+pub fn answering(doc: Arc<dyn FormatDoc>, handle: &str, values: &CallValues) -> Arc<dyn FormatDoc> {
+    if !doc.as_any().is::<HeldElsewhere>() {
+        return doc;
+    }
+    let held = values
+        .held
+        .iter()
+        .find(|v| v.doc == handle)
+        .cloned()
+        .unwrap_or_default();
+    Arc::new(Answering {
+        held: doc,
+        handle: handle.to_owned(),
+        values: held,
+        missed: values.missed.clone(),
+    })
+}
+
 /// A stand-in as one call reads it: its rows and the tables it lists, as the application
 /// resolved them for the call; everything else the stand-in's (refused).
 pub struct Answering {
-    held: Arc<HeldElsewhere>,
+    held: Arc<dyn FormatDoc>,
+    handle: String,
     values: HeldValues,
+    missed: Missed,
 }
 
 impl FormatDoc for Answering {
     fn stored(&self) -> &dyn crate::StoredDoc {
-        &*self.held
+        self.held.stored()
     }
 
     fn source(&self, at: &AnyVersion, address: &str) -> Option<Result<Dataset, ToolError>> {
         match self.values.answers.iter().find(|(given, _)| given == address) {
             Some((_, answer)) => Some(answer.clone()),
             None => {
-                self.values.missed.note(address);
+                self.missed.note(&self.handle, address);
                 self.held.source(at, address)
             }
         }

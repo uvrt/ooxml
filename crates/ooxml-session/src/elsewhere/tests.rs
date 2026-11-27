@@ -9,6 +9,15 @@ fn stand_in() -> Arc<HeldElsewhere> {
     Arc::new(HeldElsewhere::new(DocKind::Xlsx, 1200, 3).unwrap())
 }
 
+/// A stand-in is read through what the call was handed, even where it was handed nothing.
+#[test]
+fn a_stand_in_is_read_through_what_the_call_was_handed() {
+    let held: Arc<dyn FormatDoc> = stand_in();
+    assert!(answering(Arc::clone(&held), "d2", &CallValues::default())
+        .as_any()
+        .is::<Answering>());
+}
+
 fn names_the_stand_in(message: &str) {
     assert!(
         message.contains("xlsx document the application's own host holds (a stand-in here)"),
@@ -64,21 +73,31 @@ fn every_operation_of_a_format_on_it_is_refused_naming_it() {
 fn as_a_call_reads_it_it_answers_what_the_application_resolved_and_nothing_else() {
     let held = stand_in();
     let rows = Dataset::from_json(&serde_json::json!({"columns": ["Region"], "rows": [["North"]]})).unwrap();
-    let values = HeldValues {
-        doc: "d2".into(),
-        answers: vec![("t:Sales".into(), Ok(rows.clone()))],
-        value_sources: Some(vec!["t:Sales".into()]),
-        ..HeldValues::default()
+    let values = CallValues {
+        held: vec![HeldValues {
+            doc: "d2".into(),
+            answers: vec![("t:Sales".into(), Ok(rows.clone()))],
+            value_sources: Some(vec!["t:Sales".into()]),
+        }],
+        missed: Missed::noting(),
+        ..CallValues::default()
     };
     let missed = values.missed.clone();
-    let read = held.answering(values);
+    let read = answering(Arc::clone(&held) as Arc<dyn FormatDoc>, "d2", &values);
+    let other_doc: Arc<dyn FormatDoc> = Arc::new(HeldElsewhere::new(DocKind::Pptx, 1, 0).unwrap());
+    assert!(
+        answering(other_doc, "d3", &values)
+            .value_sources(&held.head())
+            .is_none(),
+        "nothing handed of d3"
+    );
     let at = read.stored().head();
     assert_eq!(read.source(&at, "t:Sales").unwrap().unwrap(), rows);
     let other = read.source(&at, "t:Notes").unwrap().unwrap_err();
     names_the_stand_in(other.message());
     assert_eq!(
-        missed.addresses(),
-        vec!["t:Notes".to_owned()],
+        missed.noted(),
+        vec![("d2".to_owned(), "t:Notes".to_owned())],
         "noted for the application to resolve"
     );
     assert_eq!(read.value_sources(&at), Some(vec!["t:Sales".to_owned()]));

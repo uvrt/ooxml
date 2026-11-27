@@ -55,10 +55,12 @@ import json
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, Mapping, Sequence
 
 from ..errors import ArgumentError
 from .hosted_data import HostDatasets, tool_error
+from .hosted_values import held_values
 from . import sources
 from .limits import LimitError, Limits
 from .logs import CallRecord, log_call, log_internal, logger
@@ -99,11 +101,27 @@ def held_kinds(toolbox: "Toolbox") -> list[str]:
 
 def own_tools(toolbox: "Toolbox") -> list[str]:
     """The tools of ``toolbox`` the application registered itself: none of its formats'
-    host's catalogue, and none of a format the Python host holds."""
+    host's catalogue, and none a format the Python host holds offers (:func:`format_tools`)."""
     hosted = set(_hosting(toolbox).catalogue())
-    kinds = set(held_kinds(toolbox))
-    return [name for name, tool in toolbox.tools.items()
-            if name not in hosted and not kinds & {k for k in tool.handlers if k is not None}]
+    held = format_tools(toolbox)
+    return [name for name in toolbox.tools if name not in hosted and name not in held]
+
+
+def format_tools(toolbox: "Toolbox") -> dict[str, str]:
+    """The tools of ``toolbox`` a format the Python host holds offers, outside the host's
+    catalogue, each with that format's kind: its library's (:attr:`~.registry.Tool.library`),
+    or one whose handlers serve that kind."""
+    hosted = set(_hosting(toolbox).catalogue())
+    kinds = held_kinds(toolbox)
+    out: dict[str, str] = {}
+    for name, tool in toolbox.tools.items():
+        if name in hosted:
+            continue
+        kind = tool.library if tool.library in kinds else next(
+            (k for k in tool.handlers if k in kinds), None)
+        if kind is not None:
+            out[name] = kind
+    return out
 
 
 def _hosting(toolbox: "Toolbox") -> Any:
@@ -121,6 +139,7 @@ def _settings(toolbox: "Toolbox", limits: Limits, own: Sequence[str]) -> str:
              "log_arguments": bool(toolbox.log_arguments),
              "allow_new_problems": bool(toolbox.allow_new_problems),
              "numbers": _rules(toolbox.numbers), "own_tools": list(own),
+             "format_tools": format_tools(toolbox),
              "held": [{"kind": kind, "prefixes": sources.prefixes(toolbox.formats).get(kind, [])}
                       for kind in held_kinds(toolbox)]}
     return json.dumps(given)
@@ -156,10 +175,22 @@ class Hosting:
         self.maker = _hosting(toolbox)
         #: The application's own tools, which run here (decision D1).
         self.own = frozenset(own_tools(toolbox))
-        #: The kinds whose documents the Python host holds (until Phase 4).
-        self.kinds = frozenset(held_kinds(toolbox))
         #: The host's tools.
         self.catalogue = frozenset(self.maker.catalogue())
+        #: The tools that may read the Python host's documents' rows or values: those
+        #: declaring sources, datasets, references or reads of every document's values, and
+        #: batches (:mod:`.hosted_values`).
+        self.reading = frozenset(
+            name for name, found in toolbox.tools.items()
+            if found.composite or found.sources or found.facts or found.datasets or found.value_reads is not None)
+        #: The host's tools that name one document, by ``doc``, and are no batch.
+        self.one_doc = frozenset(
+            name for name, found in toolbox.tools.items()
+            if name in self.catalogue and not found.composite and found.documents == ("doc",))
+        #: The tools of the formats the Python host holds, outside the host's catalogue.
+        self.formats = frozenset(format_tools(toolbox))
+        #: The kinds whose documents the Python host holds (until Phase 4).
+        self.kinds = frozenset(held_kinds(toolbox))
         self._hosts: dict[tuple[str, Any, str], Any] = {}
         self._lock = threading.Lock()
 
@@ -189,6 +220,10 @@ class Hosting:
         the Rust host's documents a Rust call; a ``batch`` of both is refused (decision D2)."""
         if not self.own and not self.kinds:
             return "rust"                       # (every tool the host's: an unknown one too)
+        if name in self.one_doc and type(arguments) is dict:
+            doc = arguments.get("doc")          # (the common call: a host tool naming its one document)
+            if isinstance(doc, str):
+                return "python" if doc in session._held else "rust"
         tool = self._tool(name)
         if tool is None:
             return "rust"
@@ -203,7 +238,10 @@ class Hosting:
             side = self._side(session, tool, parsed)
             return side or ("rust" if tool.name in self.catalogue else "python")
         ops = [op for op in parsed.get("ops") or () if isinstance(op, Mapping)]
-        sides = [self._side(session, self._tool(op.get("tool")), op.get("arguments")) for op in ops]
+        tools = [self._tool(op.get("tool")) for op in ops]
+        sides = [self._side(session, found, op.get("arguments")) for found, op in zip(tools, ops)]
+        if "rust" not in sides and any(found is not None and found.name in self.formats for found in tools):
+            return "python"                 # (a Python-held format's tools alone: its host's batch)
         if "python" not in sides:
             return "rust"
         if "rust" not in sides or tool.name == "read_batch":
@@ -227,10 +265,13 @@ class Hosting:
         format's, an application's own) in Python; one naming none by its tool (the host's
         catalogue, the kind a ``new_document`` makes or an ``open_document`` opens) -- ``None``
         for a tool outside the catalogue naming none, or no tool: it goes with the batch's
-        other ops (inside a Rust batch an application's own tool is refused: D1)."""
+        other ops (inside a Rust batch an application's own tool is refused, "call it alone":
+        D1; a Python-held format's, "send it as its own call or in its own batch")."""
         if tool is None:
             return None
         given = _parsed(arguments) or {}
+        if tool.name in self.one_doc and isinstance(given.get("doc"), str):
+            return "python" if given["doc"] in session._held else "rust"
         try:
             docs = [doc for doc in tool.doc_ids(given) if isinstance(doc, str)]
         except Exception:  # noqa: BLE001 -- arguments a dispatcher refuses in its words
@@ -257,7 +298,6 @@ class Hosting:
 
         base, found, caller = _caller(session, roles, context)
         assert isinstance(base, HostedSession), "a session of the toolbox's host"
-        base.sync_held()
         where = self.route(base, name, arguments)
         if where == "python":
             try:
@@ -273,26 +313,35 @@ class Hosting:
         """A call the Rust host runs, with what it reads of the documents the Python host
         holds (:mod:`.hosted_values`); ``logged``: its record kept in the session's log (not
         for a ``read_batch``'s op, which the batch's record is)."""
-        from .hosted_values import held_values
-
         comments: list[dict[str, Any]] = []
         text = _arguments_text(arguments, comments)
         narrowed = list(roles) if tuple(roles) != tuple(base.roles) else None
-        held = held_values(self.toolbox, base, name, arguments)
-        for _round in range(MISSED_ROUNDS + 1):
-            reply, files, app = base.rust.call(
-                name if isinstance(name, str) else json.dumps(name), text, roles=narrowed,
-                context=json.dumps(dict(caller), default=str) if caller else None,
-                date=_call_date(base.clock), held=held.json() if held is not None else None)
-            result = HostResult.of(reply, files, app)
-            # What the call asked of a Python-held document that was not resolved: resolved now,
-            # and the call made again -- where it changed nothing (a read, a refusal).
-            if not result.missed or held is None or result.changed_parts or not held.add(result.missed):
-                break
+        given_name = name if isinstance(name, str) else json.dumps(name)
+        context = json.dumps(dict(caller), default=str) if caller else None
+        if not base._held:                  # (the common session: no document the Python host holds)
+            result = HostResult.of(*base.rust.call(given_name, text, roles=narrowed, context=context,
+                                                   date=_call_date(base.clock)))
+        else:
+            result = self._held_call(base, given_name, name, arguments, text, narrowed, context)
         if result.ok and result.tool == "describe" and result.doc is not None:
             result.memory = base.memory_now(result.doc)
         if logged:
             base.kept(result, comments)
+        return result
+
+    def _held_call(self, base: "HostedSession", given_name: str, name: Any, arguments: Any, text: str,
+                   narrowed: list[str] | None, context: str | None) -> "HostResult":
+        """:meth:`call` in a session holding documents of the Python host: with what the call
+        reads of them (:mod:`.hosted_values`; none for a tool that reads no sources,
+        datasets, references or values, a refusal of its arguments among them), what it
+        missed noted, and made again with that resolved -- where it changed nothing."""
+        held = held_values(self.toolbox, base, name, arguments) if name in self.reading else None
+        for _round in range(MISSED_ROUNDS + 1):
+            result = HostResult.of(*base.rust.call(
+                given_name, text, roles=narrowed, context=context, date=_call_date(base.clock),
+                held=held.json() if held is not None else None, holding=True))
+            if not result.missed or held is None or result.changed_parts or not held.add(result.missed):
+                break
         return result
 
     def read_op(self, session: "HostedSession", op: Any, roles: Sequence[str],
@@ -436,7 +485,7 @@ class HostResult(Result):
     record: tuple | None = dataclasses.field(default=None, repr=False)
     #: What the call asked of the documents the Python host holds that was not resolved for
     #: it (``[{"doc", "address"}]``; :mod:`.hosted_values`).
-    missed: list[dict[str, str]] = dataclasses.field(default_factory=list, repr=False)
+    missed: list[dict[str, str]] | None = dataclasses.field(default=None, repr=False)
 
     @classmethod
     def of(cls, text: str, files: Sequence[tuple[str, str, bytes]], app: tuple) -> "HostResult":
@@ -642,12 +691,32 @@ class HostedSession(Session):
     # The Python host's documents' state numbers, as the Rust session was last told them.
     def sync_held(self) -> None:
         """Tell the Rust session the state each document the Python host holds is at now:
-        what its datasets' staleness and the rows read of it compare with."""
+        what its datasets' staleness and the rows read of it compare with.  Told wherever such
+        a document's state can move -- after a call the Python dispatcher runs, as
+        :meth:`lock` lets go, at :meth:`commit`, undo, redo and close -- so a call the Rust
+        host runs needs no telling first."""
         for doc, entry in list(self._held.items()):
             version = entry.version
             if self._told.get(doc) != version:
                 self.rust.held_moved(doc, version)
                 self._told[doc] = version
+
+    @contextmanager
+    def lock(self, doc_ids: Iterable[str]) -> Iterator[list[Any]]:
+        """:meth:`Session.lock` of documents the Python host holds: what the application or a
+        call changed under it told the Rust session as the locks go (:meth:`sync_held`)."""
+        try:
+            with super().lock(doc_ids) as entries:
+                yield entries
+        finally:
+            self.sync_held()
+
+    def commit(self, doc_id: str) -> int:
+        """:meth:`Session.commit`, the version told the Rust session (:meth:`sync_held`)."""
+        try:
+            return super().commit(doc_id)
+        finally:
+            self.sync_held()
 
     def _free_id(self, doc_id: str) -> None:
         """(The Rust session gave the id, the one counter.)"""

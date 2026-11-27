@@ -18,13 +18,14 @@
 use crate::catalogue::Entry;
 use crate::session::HostSession;
 use ooxml_session::datasets::{CallDatasets, DatasetStore};
+use ooxml_session::elsewhere::answering;
 use ooxml_session::facts::{expand_arguments, known_prefixes, one_value, qualify_text, walk_texts, FactEnv};
 use ooxml_session::sources::{offered, CallSources, FormatOpen, FormatSources, SourceHost};
 use ooxml_session::{AnyVersion, DocId, Format, FormatDoc};
 use ooxml_tools::datasets::{dataset_id, row_range, DATASET_PREFIX};
 use ooxml_tools::sources::qualify;
 use ooxml_tools::sources::{SourceRefused, SourceRows};
-use ooxml_tools::written::{CallValues, HeldTable, HeldValues, OneValue, Written};
+use ooxml_tools::written::{CallValues, HeldTable, OneValue, Written};
 use ooxml_tools::{ErrorCode, Holding, Refusal, ToolError, TryCall, WayOut};
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -85,7 +86,7 @@ impl HostSession {
         arguments: Map<String, Value>,
         retry: &TryCall,
         datasets: &mut CallDatasets,
-        held: &[HeldValues],
+        given: &CallValues,
     ) -> Result<WithValues, Refused> {
         let sources = entry.spec.paths(Holding::Sources);
         let named = entry.spec.paths(Holding::Datasets);
@@ -97,7 +98,7 @@ impl HostSession {
                 held: Vec::new(),
             });
         }
-        let opens = self.opens(held);
+        let opens = self.opens(given);
         let host = sources_of(&self.host.formats, &opens, retry);
         // (the session's datasets as they stand: read without the stores' lock held)
         let store: DatasetStore = self.stores().datasets.clone();
@@ -173,10 +174,10 @@ impl HostSession {
     pub(crate) fn with_facts<R>(
         &self,
         retry: &TryCall,
-        held: &[HeldValues],
+        given: &CallValues,
         read: impl FnOnce(&dyn Fn(&str) -> Result<String, String>) -> R,
     ) -> R {
-        let opens = self.opens(held);
+        let opens = self.opens(given);
         let host = sources_of(&self.host.formats, &opens, retry);
         let store: DatasetStore = self.stores().datasets.clone();
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
@@ -221,20 +222,20 @@ impl HostSession {
     /// # Errors
     /// `limit`: the session would keep over its limit.
     pub(crate) fn finish_datasets(&self, datasets: CallDatasets) -> Result<Vec<String>, ToolError> {
-        let opens = self.opens(&[]);
+        let opens = self.opens(&CallValues::default());
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
         datasets.finish(&mut self.stores().datasets, &heads)
     }
 
     /// The open documents, each at its head; one the application's own host holds as the
-    /// call reads it, with what the application resolved of it (`held`).
-    fn opens(&self, held: &[HeldValues]) -> Vec<Open> {
+    /// call reads it, with what the application resolved of it (`given`).
+    fn opens(&self, given: &CallValues) -> Vec<Open> {
         let mut out = Vec::new();
         for id in self.session.documents() {
             let (Ok(opened), Ok(doc)) = (self.session.snapshot(&id), self.session.format_doc(&id)) else {
                 continue;
             };
-            let doc = self.answering(&id, doc, held);
+            let doc = answering(doc, &id.to_string(), given);
             let Some(format) = self.host.formats.iter().find(|f| f.kind() == opened.kind()) else {
                 continue;
             };
@@ -247,27 +248,6 @@ impl HostSession {
             });
         }
         out
-    }
-}
-
-impl HostSession {
-    /// `doc`, the open document `id`, as the call reads it: a stand-in of a document the
-    /// application's own host holds answering with what the application resolved of it for
-    /// the call (`held`; nothing resolved: every read refused; no values handed at all, as it
-    /// is); any other as it is.
-    pub(crate) fn answering(&self, id: &DocId, doc: Arc<dyn FormatDoc>, held: &[HeldValues]) -> Arc<dyn FormatDoc> {
-        if held.is_empty() {
-            return doc; // (no document is held elsewhere: the session's lock not taken)
-        }
-        let handle = id.to_string();
-        let Some(stand_in) = self.stores().held.get(&handle).cloned() else {
-            return doc;
-        };
-        let values = held.iter().find(|v| v.doc == handle).cloned().unwrap_or(HeldValues {
-            doc: handle,
-            ..HeldValues::default()
-        });
-        stand_in.answering(values)
     }
 }
 

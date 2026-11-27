@@ -886,7 +886,7 @@ impl Run<'_> {
             .map_err(|error| Failed { error, own: false })?;
         // 6.-8. its sources, the datasets it names, its references (as the call alone)
         let valued = host
-            .with_values(entry, doc, with.arguments, retry, datasets, &self.values.held)
+            .with_values(entry, doc, with.arguments, retry, datasets, &self.values)
             .map_err(|refused| Failed {
                 error: refused.error,
                 own: false,

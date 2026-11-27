@@ -10,7 +10,9 @@ documents it names.
 - A Word tool aimed at the workbook is refused as on any document of another kind; a workbook's
   tool runs on the Python host.
 - A ``read_batch`` of both runs each op where its document is held; a ``batch`` of both is
-  refused with the way out, two batches.
+  refused with the way out, two batches.  In a Word batch, a workbook library's tool naming no
+  document is refused "send it as its own call or in its own batch", and an application's own
+  tool "call it alone" (D1).
 - A toolbox with a Python format of a kind the Rust session cannot name stays on the Python host.
 
 Made-up documents and values only.
@@ -21,7 +23,8 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from ooxml_edit.tools import Dataset, DocumentFormat, Result, Session, Toolbox, integer, string, tool
+from ooxml_edit.tools import (Dataset, DocumentFormat, Result, Session, Toolbox, integer, offered_by, string,
+                              tool)
 from ooxml_edit.tools.hosted import HostDocument, HostedSession
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
@@ -68,9 +71,24 @@ def grid_items(call, doc):
     return Result(summary="items", data=[row[0] for row in call.entry.document.tables["stock"][1]])
 
 
+@tool("grid_hint", "Test only: a made-up workbook library's tool that names no document.",
+      {"text": string("A hint.")}, documents=())
+def grid_hint(call, text):
+    return Result(summary=f"hint: {text}")
+
+
+@tool("app_note", "Test only: the application's own tool.", {"text": string("A note.")}, documents=())
+def app_note(call, text):
+    return Result(summary=f"noted: {text}")
+
+
+#: The made-up workbook library's tools, as it offers them (``offered_by``).
+GRID_TOOLS = offered_by("xlsx", [grid_count, grid_items, grid_hint])
+
+
 @pytest.fixture(scope="module")
 def box():
-    with Toolbox([*TOOLS, grid_count, grid_items], formats=[FORMAT, GRID], groups=GROUPS, workers=0) as toolbox:
+    with Toolbox([*TOOLS, *GRID_TOOLS, app_note], formats=[FORMAT, GRID], groups=GROUPS, workers=0) as toolbox:
         yield toolbox
 
 
@@ -165,6 +183,22 @@ def test_a_batch_changing_both_is_refused_with_the_way_out_two_batches(box):
     assert ok(box, session, "batch", ops=[ops[0]]).doc == doc
     assert ok(box, session, "batch", ops=[ops[1]]).doc == grid
     assert session.entry(grid).document.tables["stock"][1][1] == ("nuts", 1)
+
+
+def test_in_a_word_batch_a_workbook_tool_and_an_application_tool_are_refused_each_in_its_words(box):
+    session, doc, _grid = opened(box)
+    word = {"tool": "word_insert_markdown", "arguments": {"doc": doc, "at": "end", "markdown": "Kept."}}
+    batch = ok(box, session, "batch", ops=[word, {"tool": "grid_hint", "arguments": {"text": "x"}},
+                                           {"tool": "app_note", "arguments": {"text": "y"}}])
+    ops = batch.data["ops"]
+    assert ops[1]["error"]["message"] == (
+        "grid_hint is a tool of xlsx documents, which another host runs, so it cannot run inside this batch: "
+        "send it as its own call or in its own batch"), batch.to_json()
+    assert ops[2]["error"]["message"] == (
+        "app_note is the application's own tool, which cannot run inside a batch: call it alone")
+    assert "error" not in ops[0]
+    assert ok(box, session, "grid_hint", text="x").summary == "hint: x"
+    assert ok(box, session, "batch", ops=[{"tool": "grid_hint", "arguments": {"text": "x"}}]).ok
 
 
 def test_a_python_format_of_a_kind_the_rust_session_cannot_name_stays_on_the_python_host():

@@ -113,7 +113,9 @@ impl PyHost {
     /// names), `log_arguments`, `allow_new_problems`, `numbers` (the rules of `check`'s
     /// numbers), `own_tools` (the application's own tools, which its facade runs: refused
     /// inside a batch), `held` (the kinds the application's own host holds, each with the
-    /// address prefixes its documents resolve to rows: `[{"kind": "xlsx", "prefixes": ["t:"]}]`) -- laying its Word documents out with `pages` (a `PageSetup`), docx-agent's
+    /// address prefixes its documents resolve to rows: `[{"kind": "xlsx", "prefixes": ["t:"]}]`),
+    /// `format_tools` (the tools of those kinds' formats, `{tool: kind}`: refused inside a
+    /// batch with the way out "its own call or its own batch") -- laying its Word documents out with `pages` (a `PageSetup`), docx-agent's
     /// `min_text_size` (JSON text: points, or points by kind) and `typography`.
     ///
     /// # Errors
@@ -142,6 +144,17 @@ impl PyHost {
                 "allow_new_problems" => host.allow_new_problems = value.as_bool().unwrap_or(false),
                 "numbers" => host.numbers = NumberRules::from_json(value).map_err(PyValueError::new_err)?,
                 "held" => held = held_formats(value)?,
+                "format_tools" => {
+                    host.format_tools = value
+                        .as_object()
+                        .map(|tools| {
+                            tools
+                                .iter()
+                                .filter_map(|(name, kind)| Some((name.clone(), kind.as_str()?.to_owned())))
+                                .collect()
+                        })
+                        .ok_or_else(|| PyValueError::new_err("settings.format_tools: {tool: kind}"))?;
+                }
                 "own_tools" => {
                     host.own_tools = value
                         .as_array()
@@ -600,11 +613,12 @@ impl PyHostSession {
     /// session's) for `context` (JSON text: the caller's), its writes dated `date`
     /// (`2026-11-20T09:30:15Z`, the application's clock; `None`: the system's), with what the
     /// application resolved of the documents its own host holds (`held`: JSON text, as
-    /// `HeldValues::list_from_json` reads it; the values channel).
+    /// `HeldValues::list_from_json` reads it; the values channel; `holding`: the session holds
+    /// such documents, and what the call asks of them that was not resolved is noted).
     ///
     /// # Errors
     /// `ValueError` for roles the session does not hold (the application's mistake).
-    #[pyo3(signature = (name, arguments, *, roles = None, context = None, date = None, held = None))]
+    #[pyo3(signature = (name, arguments, *, roles = None, context = None, date = None, held = None, holding = false))]
     #[allow(clippy::too_many_arguments)] // (a call's keywords, as Python passes them)
     fn call(
         &self,
@@ -615,29 +629,25 @@ impl PyHostSession {
         context: Option<&str>,
         date: Option<String>,
         held: Option<&str>,
+        holding: bool,
     ) -> PyResult<Reply> {
-        let mut held = match held {
+        let held = match held {
             Some(text) => HeldValues::list_from_json(&json_of(text, "held")?).map_err(PyValueError::new_err)?,
             None => Vec::new(),
         };
-        // (every document the application's own host holds, so what the call asks of one is
-        // noted even where nothing of it was resolved)
-        let holding: Vec<String> = self.inner.stores().held.keys().cloned().collect();
-        for doc in holding {
-            if !held.iter().any(|v| v.doc == doc) {
-                held.push(HeldValues {
-                    doc,
-                    ..HeldValues::default()
-                });
-            }
-        }
-        let missed: Vec<(String, ooxml_tools::written::Missed)> =
-            held.iter().map(|v| (v.doc.clone(), v.missed.clone())).collect();
+        // (what the call misses of them noted where the session holds documents the
+        // application's own host holds: `holding`)
+        let missed = if holding {
+            ooxml_tools::written::Missed::noting()
+        } else {
+            ooxml_tools::written::Missed::default()
+        };
         let how = CallAs {
             roles: roles.map(roles_of).transpose()?,
             context: Some(object_of(context, "context")?).filter(|c| !c.is_empty()),
             values: ooxml_tools::written::CallValues {
                 held,
+                missed: missed.clone(),
                 ..ooxml_tools::written::CallValues::default()
             },
             date,
@@ -825,15 +835,12 @@ impl PyHostSession {
 fn app_part(
     result: &ooxml_tools::ToolResult<Value>,
     record: ooxml_host::CallRecord,
-    missed: &[(String, ooxml_tools::written::Missed)],
+    missed: &ooxml_tools::written::Missed,
 ) -> AppPart {
     let missed: Vec<Value> = missed
-        .iter()
-        .flat_map(|(doc, m)| {
-            m.addresses()
-                .into_iter()
-                .map(move |address| serde_json::json!({"doc": doc, "address": address}))
-        })
+        .noted()
+        .into_iter()
+        .map(|(doc, address)| serde_json::json!({"doc": doc, "address": address}))
         .collect();
     let app = &result.app;
     let listed = |items: &[Value]| (!items.is_empty()).then(|| compact(&Value::from(items.to_vec())));

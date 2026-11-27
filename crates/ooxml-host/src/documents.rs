@@ -196,7 +196,6 @@ impl HostSession {
                 size,
             },
         );
-        stores.held.insert(id.to_string(), held);
         Ok(id)
     }
 
@@ -208,9 +207,11 @@ impl HostSession {
     /// [`SessionError::NotOpen`]; [`SessionError::Kind`] for a document the session holds
     /// itself.
     pub fn held_moved(&self, doc: &DocId, version: u64) -> Result<(), SessionError> {
-        self.session.kind_of(doc)?;
-        let held = self.stores().held.get(&doc.to_string()).cloned();
-        let held = held.ok_or_else(|| SessionError::Kind(format!("{doc} is held by the session itself")))?;
+        let format = self.session.format_doc(doc)?;
+        let held = format
+            .as_any()
+            .downcast_ref::<HeldElsewhere>()
+            .ok_or_else(|| SessionError::Kind(format!("{doc} is held by the session itself")))?;
         held.moved(version);
         Ok(())
     }

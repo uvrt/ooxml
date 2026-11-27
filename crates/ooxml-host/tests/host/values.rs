@@ -199,7 +199,6 @@ mod held_elsewhere {
             doc: "d2".into(),
             answers: vec![("t:Sales".into(), Ok(sales()))],
             value_sources: Some(vec!["t:Sales".into()]),
-            ..HeldValues::default()
         };
         let reply = Value::Object(
             s.call("toy_fill", json!({"doc": "d1", "from": "t:Sales"}), &with(vec![values]))

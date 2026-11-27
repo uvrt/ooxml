@@ -66,6 +66,10 @@ pub struct HostSettings {
     /// decision D1): an op of a `batch` or a `read_batch` naming one is refused with the way
     /// out "call it alone" ([`HostSettings::own_tool_refused`]).
     pub own_tools: Vec<String>,
+    /// The tools of formats the application's own host holds (Phase 3, until Phase 4), each
+    /// with its format's kind: inside a `batch` or `read_batch` an op naming one is refused
+    /// with the way out "send it as its own call or in its own batch".
+    pub format_tools: Vec<(String, String)>,
 }
 
 impl Default for HostSettings {
@@ -86,6 +90,7 @@ impl Default for HostSettings {
             read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
             numbers: NumberRules::default(),
             own_tools: Vec::new(),
+            format_tools: Vec::new(),
         }
     }
 }
@@ -155,7 +160,6 @@ impl Host {
                 datasets: DatasetStore::new(settings.datasets),
                 refs: BTreeMap::new(),
                 docs: BTreeMap::new(),
-                held: BTreeMap::new(),
                 keys: RetryKeys::default(),
                 log: Vec::new(),
                 numbers: None,
@@ -225,8 +229,6 @@ pub struct Stores {
     pub refs: BTreeMap<String, RefTable>,
     /// What the session keeps of each open document beside its versions, by its id.
     pub docs: BTreeMap<String, crate::documents::Held>,
-    /// The stand-ins of the open documents the application's own host holds, by id.
-    pub held: BTreeMap<String, Arc<ooxml_session::elsewhere::HeldElsewhere>>,
     /// The retry keys.
     pub keys: RetryKeys,
     /// Every call's record, in order.
@@ -322,7 +324,6 @@ impl HostSession {
         self.session.close(doc)?;
         let mut stores = self.stores();
         stores.docs.remove(&doc.to_string());
-        stores.held.remove(&doc.to_string());
         stores.keys.forget(&doc.to_string());
         Ok(stores.datasets.document_closed(&doc.to_string(), Some(head)))
     }

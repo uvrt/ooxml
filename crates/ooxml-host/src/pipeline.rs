@@ -334,7 +334,7 @@ impl HostSession {
         served: bool,
     ) -> Result<(WithValues, bool), Box<ToolResult<Value>>> {
         let other = |held: &[String]| held.iter().any(|h| h != doc);
-        match self.with_values(entry, doc, arguments, retry, datasets, &given.held) {
+        match self.with_values(entry, doc, arguments, retry, datasets, given) {
             Ok(found) => {
                 let served = served && !other(&found.held);
                 Ok((found, served))

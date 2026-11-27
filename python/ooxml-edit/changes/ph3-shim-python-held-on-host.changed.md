@@ -8,3 +8,7 @@
     channel).
   - `Session.documents` maps each id to the entry of a document the Python host holds, or to a
     `HostDocument` (id, kind, name) of one the Rust host holds.
+- **`Tool.library` names the format library that offers a tool** (`None` for an application's
+  own tool). `offered_by(kind, tools)` returns copies of `tools` with it set. xlsx-agent's and
+  pptx-agent's `TOOLS` are wrapped in it, so a hosted toolbox can tell a format's tool from the
+  application's and refuse each in a Rust batch in its own words.

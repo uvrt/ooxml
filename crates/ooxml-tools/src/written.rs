@@ -99,6 +99,8 @@ pub struct CallValues {
     /// What the application resolved for the call of each document its own host holds
     /// (design phase 3, the values channel; Phase 4 deletes it).
     pub held: Vec<HeldValues>,
+    /// What the call asked of those documents that was not in [`Self::held`].
+    pub missed: Missed,
 }
 
 /// What the application resolved for one call of a document its own host holds: the rows
@@ -112,29 +114,41 @@ pub struct HeldValues {
     pub answers: Vec<(String, Result<Dataset, ToolError>)>,
     /// The tables it lists, `None` where its format lists none.
     pub value_sources: Option<Vec<String>>,
-    /// The addresses the call asked of it that the application did not resolve, as asked
-    /// (shared by every copy: the application resolves them and makes the call again).
-    pub missed: Missed,
 }
 
-/// The addresses a call asked of a document its own host holds that were not resolved for
-/// it, in the order asked, each once; every copy shares them.
+/// What a call asked of the documents the application's own host holds that was not
+/// resolved for it: `(doc, address)`, in the order asked, each once; every copy shares them
+/// (the application resolves them and makes the call again). The default notes nothing: a
+/// call of a session holding no such document ([`Missed::noting`] notes).
 #[derive(Debug, Clone, Default)]
-pub struct Missed(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+pub struct Missed(Option<Noted>);
+
+/// What a [`Missed`] noted, shared by its copies.
+type Noted = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 impl Missed {
-    /// The call asked for `address`, not resolved.
-    pub fn note(&self, address: &str) {
-        let mut found = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if !found.iter().any(|a| a == address) {
-            found.push(address.to_owned());
+    /// One that notes what the call misses.
+    #[must_use]
+    pub fn noting() -> Missed {
+        Missed(Some(std::sync::Arc::default()))
+    }
+
+    /// The call asked for `address` of `doc`, not resolved.
+    pub fn note(&self, doc: &str, address: &str) {
+        let Some(found) = &self.0 else { return };
+        let mut found = found.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !found.iter().any(|(d, a)| d == doc && a == address) {
+            found.push((doc.to_owned(), address.to_owned()));
         }
     }
 
-    /// The addresses noted so far.
+    /// What was noted so far.
     #[must_use]
-    pub fn addresses(&self) -> Vec<String> {
-        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    pub fn noted(&self) -> Vec<(String, String)> {
+        self.0
+            .as_ref()
+            .map(|found| found.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone())
+            .unwrap_or_default()
     }
 }
 
@@ -186,7 +200,6 @@ impl HeldValues {
             doc: doc.to_owned(),
             answers,
             value_sources,
-            missed: Missed::default(),
         })
     }
 }
@@ -255,7 +268,8 @@ pub struct HeldTable {
 }
 
 impl CallValues {
-    /// These with `other`'s added (the application's beside the host's).
+    /// These with `other`'s added (the application's beside the host's); what the call
+    /// missed noted where `other` notes it.
     pub fn merge(&mut self, other: CallValues) {
         self.written.extend(other.written);
         self.sources.rows.extend(other.sources.rows);
@@ -263,6 +277,8 @@ impl CallValues {
         self.one_values.extend(other.one_values);
         self.tables.extend(other.tables);
         self.held.extend(other.held);
+        // (the application's notes what the call missed: what it hands, the call's)
+        self.missed = other.missed;
     }
 }
 

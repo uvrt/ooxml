@@ -11,3 +11,7 @@
     `not_found`, naming the sources there are, where before it was refused as not supported yet
     (until R138).
   - a workbook's refusal of the one value a `from` names is said at its argument (`field: "from"`).
+- **A workbook's or deck's own tool inside a Word batch is refused, naming its format**: "`xlsx_query`
+  is a tool of xlsx documents, which another host runs, so it cannot run inside this batch: send it
+  as its own call or in its own batch". An application's own tool there is still refused with "call
+  it alone". A batch of only a workbook's or deck's tools runs on the Python host, as before.
