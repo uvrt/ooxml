@@ -5,6 +5,74 @@ docx-agent has not been released to PyPI. Each version that reaches `main` is ta
 snapshot commit; the development history before it is summarised here.
 [`ROADMAP.md`](ROADMAP.md) has the detail of every phase.
 
+## 0.2.4 -- v2026.11.27
+
+### Added
+
+- `replace_text` takes `range` and `regex` again (round 60, R139), alone or together:
+  - `range` replaces only in the paragraphs the range holds: a block or a span (`p:A..t:B`, `p:A..`,
+    `..t:B`), a table cell (`t:X/c1,1`), a row, a section (`s:2`, `s:body`), a bookmark, a text range, the
+    same forms as the other Word tools. `expect: "one"` counts the matches in the range alone. A range
+    that names nothing, or a reversed span, is refused as the block tools refuse it.
+  - `regex` is Python's regular expression, as `find_text`'s: a pattern whose meaning here could differ
+    from Python's `re` is refused with the call that finds the text as written. In `replace`, `\1` and
+    `\g<name>` are the match's groups.
+  - Tracked, each match is recorded as Word's own Find and Replace records one: the match deleted and
+    the replacement inserted after it, the rest of the paragraph untouched (measured in Word 16.106).
+    With `regex`, the match is deleted whole and its expansion inserted whole. Accept All then gives
+    the text Word's own replace by wildcards gives untracked. Word 16.106 for Mac records a tracked
+    wildcard replace piece by piece, and those pieces accepted do not read as the replacement.
+  - Still refused as not supported: an empty `find`, and styled text in `replace` (`**`, `*`,
+    `[text]{Style}`, escapes).
+
+- `word_insert_markdown` takes `at: "replace:<id>"` and `"replace:<id>..<id>"` again (round 60, R141): the
+  blocks named are replaced in one call and one version.
+  - Untracked, they are deleted. Tracked, each is a tracked deletion and the new blocks are tracked
+    insertions after them, in Word's form for a paragraph deleted whole and one inserted whole (measured in
+    Word 16.106; its Accept All gives the new text, its Reject All the old).
+  - The new paragraphs keep the replaced ones' paragraph settings, as docx-agent 0.1 did (round 42): by
+    kind (heading of its level, bullet or numbered item at its level, paragraph) and position. Kept are the
+    style, the list (items join the replaced list and count on in it), indents, spacing, alignment, keeps,
+    the page break (once), widow control, tabs, borders, shading and the mark's formatting. A numbered list
+    starting past 1, or a construct the style map names a style for, keeps Markdown's style and numbering
+    and takes only the keeps, page break and widow control. The list instances the Markdown made that no
+    paragraph names any more are removed.
+  - The result says what each new paragraph kept (`data.kept`: `block`, `from`, `settings`; at most 30,
+    the rest counted in `kept_left_out`), and the summary counts them.
+
+- `word_insert_markdown` takes `like` for list items again (round 60, R141), as docx-agent 0.1 did
+  (round 42):
+  - `like` gives a paragraph per Markdown list level (`like: ["p:A", "p:B"]`, the first for the top level;
+    `""` gives a level none). The items at that level take the paragraph's style, its list at its level
+    (they count on from it, with its marker), its own indents and its keeps, page break and widow control.
+    Their text and run formatting are the Markdown's.
+  - A level below the given ones is the nearest given level's list one level deeper per level, as Word's
+    Tab demotes an item: the same style, the next level and that level's own indent.
+  - A style map whose list role (`bullet`, `bullet2`, `number`...) names a paragraph instead of a style is
+    read as `like` for that role, with a note.
+  - The result warns where a sample is in no list (the items get no marker), is a list of the other kind,
+    has no level that deep, or where a numbered list starting past 1 continues the sample's numbering.
+  - Each `like` names one paragraph; an address holding several is refused with them.
+  - At `replace:`, items given a look take it, not the replaced paragraphs' settings.
+  - Still refused as not supported: `like` naming a table, whose frame new tables would take.
+
+### Changed
+
+- `word_insert_markdown` `like`: an item a level below the sample in a one-level list (Word's built-in
+  List Bullet, List Number and the like: a single-level definition) now follows Word, not docx-agent 0.1.
+  It keeps the sample's style and list and is moved as Word's list indent moves it: its number to the next
+  stop -- the next default tab stop, its own text position, or the first line of the paragraph after the
+  new items, whichever comes first -- the text at the level's hanging, with a `num` tab stop there.
+  0.1 wrote the Markdown's List Bullet 2 (or List Number 2) and warned "has no level 1 below"; that
+  warning stays only for a list whose definition has several levels but not that one, and for a sample
+  with an indent of its own.
+
+### Fixed
+
+- The first edit of a large document whose paragraphs had no ids no longer takes minutes: ids are drawn in
+  bulk. An 80,922-block document's first `set_text` went from over 20 minutes to about 4 s; the saved bytes
+  are unchanged.
+
 ## 0.2.3 -- v2026.11.26
 
 ### Fixed

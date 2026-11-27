@@ -15,6 +15,6 @@ and the live view of a session's document (``docx_agent.liveview``). The Python 
 API of 0.1 is gone (CHANGELOG.md, 0.2.0).
 """
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 __all__ = ["__version__"]

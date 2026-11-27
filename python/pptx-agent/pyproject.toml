@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: XML",
 ]
 # Why each dependency, and why at its version: CONTRIBUTING.md, "Dependencies".
-dependencies = ["lxml>=4.9", "ooxml-common>=0.45.1", "ooxml-edit>=0.129.0", "markdown-it-py>=3.0",
+dependencies = ["lxml>=4.9", "ooxml-common>=0.45.2", "ooxml-edit>=0.129.1", "markdown-it-py>=3.0",
                 "mdit-py-plugins>=0.4"]
 
 [project.optional-dependencies]
