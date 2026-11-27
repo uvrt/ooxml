@@ -62,10 +62,11 @@ def runs_on_host(toolbox: "Toolbox") -> bool:
     holds (:attr:`~.session.DocumentFormat.host`).  The application's own tools run beside
     it, in the facade (decision D1), their datasets, outputs and images the Rust session's.
 
-    A toolbox with no format the Rust host holds (pptx-agent's, xlsx-agent's alone) keeps the
+    A toolbox with no format the Rust host holds (the format libraries held in Python alone) keeps the
     plain :class:`~.session.Session` and its stores until Phase 4 deletes them.  Until Phase 3
     E1b-2, a toolbox with any such Python-held format keeps every format on the Python host
-    (a docx call reading a workbook's rows needs the values channel E1b-2 brings).
+    (a call of the host's reading a Python-held document's rows needs the values channel E1b-2
+    brings).
     """
     return bool(toolbox.formats) and all(fmt.host is not None for fmt in toolbox.formats.values())
 

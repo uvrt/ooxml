@@ -1,6 +1,7 @@
 """The datasets of a session on the Rust host (Phase 3, decision D3): the Rust ``HostSession``
 keeps them, and the application's own host -- its tools (decision D1), and until Phase 4 the
-Python host of pptx and xlsx -- writes and reads them through the binding.
+Python host of the formats the Rust host does not hold yet -- writes and reads them through the
+binding.
 
 - :func:`entry_json`: a :class:`~.datasets.DatasetEntry` a call (or the application) keeps,
   as the session's store reads it: its values (:func:`dataset_json`), its id, origin and
