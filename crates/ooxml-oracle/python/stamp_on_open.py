@@ -81,13 +81,20 @@ def resolved(path: str) -> str:
     return str(Path(goldens.local(path)).resolve())
 
 
+def portable(path: str) -> str:
+    """``path`` as the maps name it: ``$HOST/...`` below host/, else goldens' portable form."""
+    host = str(HOST.resolve()) + "/"
+    real = str(Path(path).resolve())
+    return "$HOST/" + real[len(host):] if real.startswith(host) else goldens.portable(real)
+
+
 def read_maps(path: Path) -> dict[str, dict[str, str]]:
     maps = {}
     for line in path.read_text().splitlines():
         row = json.loads(line)
         if "error" in (row.get("renamed") or {}):
             raise SystemExit(f"{row['file']}: {row['renamed']['error']}")
-        maps[str(Path(row["file"]).resolve())] = row.get("renamed") or {}
+        maps[resolved(row["file"])] = row.get("renamed") or {}
     return maps
 
 
@@ -98,7 +105,9 @@ def cmd_maps(args) -> int:
     for at in range(0, len(files), 200):
         done = subprocess.run([args.rust, "--renamed", *files[at:at + 200]], capture_output=True, text=True,
                               check=True)
-        out += done.stdout.splitlines()
+        # each file as a portable path: the maps hold in any checkout
+        out += [goldens.canonical({**row, "file": portable(row["file"])})
+                for row in map(json.loads, done.stdout.splitlines())]
     Path(args.out).write_text("".join(line + "\n" for line in out))
     print(f"{len(out)} documents mapped")
     return 0
