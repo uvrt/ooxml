@@ -2,7 +2,8 @@
 //! their markup as `svg._float` writes it, one line each: a path with its paint, an image
 //! in its box (cropped as pptx2svg crops, turned by its transform), a stand-in box,
 //! markup a renderer wrote whole (an arrowhead, a chart), and the groups that carry a
-//! shape's effects.
+//! shape's effects. For the changes feed ([`PageDefs::feed`]), written without paths and
+//! with pictures by content address.
 //!
 //! Must not: decide what is drawn (the painter has), or read a part other than through the
 //! `Pictures` port.
@@ -10,7 +11,7 @@
 use ooxml_base::Q;
 use ooxml_scene::exact::{quote, write, Element, Value};
 use ooxml_scene::markup::{Attr, Element as Markup, Tag};
-use ooxml_word_layout::paint::svg::{number, Pictures};
+use ooxml_word_layout::paint::svg::{number, PageDefs, Pictures};
 use ooxml_word_layout::px::Px;
 
 /// A box in device px, exact.
@@ -122,8 +123,8 @@ fn line(element: &Element) -> String {
     text
 }
 
-/// A stand-in box of a box's extent (`_placeholder`).
-pub fn stand_in(at: &PxBox, path: &str, what: &str) -> String {
+/// A stand-in box of a box's extent (`_placeholder`), with its path where given.
+pub fn stand_in(at: &PxBox, path: Option<&str>, what: &str) -> String {
     let rect = Element::new("rect")
         .attr("x", n(at.x))
         .attr("y", n(at.y))
@@ -135,8 +136,10 @@ pub fn stand_in(at: &PxBox, path: &str, what: &str) -> String {
         .attr("stroke-dasharray", Value::Plain("12 8".into()));
     let mut g = Element::new("g")
         .inline()
-        .attr("data-docx-unsupported", Value::Plain(what.into()))
-        .attr("data-docx-path", Value::Text(path.into()));
+        .attr("data-docx-unsupported", Value::Plain(what.into()));
+    if let Some(path) = path {
+        g = g.attr("data-docx-path", Value::Text(path.into()));
+    }
     g.children.push(rect);
     line(&g)
 }
@@ -152,13 +155,15 @@ pub struct ImageSource<'a> {
 }
 
 /// A picture in its box, or a stand-in box (`_picture`); `None` beside the markup, or what
-/// is said of a picture that cannot be carried.
+/// is said of a picture that cannot be carried. Its `href` and whether it is written with
+/// its path come from `defs` (a page's or a feed group's).
 fn image(
     (path, relationship, at): (&str, Option<&str>, &PxBox),
-    transform: Option<&str>,
-    crop: Option<&[Q; 4]>,
+    (transform, crop): (Option<&str>, Option<&[Q; 4]>),
     source: &ImageSource<'_>,
+    defs: &mut PageDefs,
 ) -> (String, Option<(String, String)>) {
+    let written = defs.writes_paths().then_some(path);
     let found = relationship.and_then(|r| source.pictures.picture(r, source.part));
     let Some((mime, bytes)) = found.clone().filter(|(mime, _)| IMAGE_TYPES.contains(&mime.as_str())) else {
         let said = relationship.map(|_| {
@@ -173,12 +178,15 @@ fn image(
         } else {
             "picture format"
         };
-        return (stand_in(at, path, what), said);
+        return (stand_in(at, written, what), said);
     };
-    let href = Value::Data { mime, bytes };
+    let href = defs.picture(mime, bytes);
+    let with_path = |e: Element| match written {
+        Some(path) => e.attr("data-docx-path", Value::Text(path.into())),
+        None => e,
+    };
     let Some([left, top, right, bottom]) = crop else {
-        let mut e = Element::new("image")
-            .attr("data-docx-path", Value::Text(path.into()))
+        let mut e = with_path(Element::new("image"))
             .attr("x", n(at.x))
             .attr("y", n(at.y))
             .attr("width", n(at.width))
@@ -200,9 +208,7 @@ fn image(
         .attr("height", q(scaled_h))
         .attr("preserveAspectRatio", Value::Plain("none".into()))
         .attr("href", href);
-    let mut svg = Element::new("svg")
-        .inline()
-        .attr("data-docx-path", Value::Text(path.into()))
+    let mut svg = with_path(Element::new("svg").inline())
         .attr("x", n(at.x))
         .attr("y", n(at.y))
         .attr("width", n(at.width))
@@ -224,12 +230,25 @@ fn image(
     }
 }
 
-/// A drawing's primitives as `_float` writes them, one line each; beside them, what is
-/// said of pictures that could not be carried (`(code, message)`).
-pub fn lines(primitives: &[Primitive], source: &ImageSource<'_>) -> (Vec<String>, Vec<(String, String)>) {
+/// A drawing's primitives as `_float` writes them, one line each, their pictures' `href`
+/// and their paths as `defs` says (a page's or a feed group's); beside them, what is said
+/// of pictures that could not be carried (`(code, message)`).
+pub fn lines(
+    primitives: &[Primitive],
+    source: &ImageSource<'_>,
+    defs: &mut PageDefs,
+) -> (Vec<String>, Vec<(String, String)>) {
     let mut out = Vec::with_capacity(primitives.len());
     let mut said = Vec::new();
+    let paths = defs.writes_paths();
     let with = |t: &Option<String>| t.as_ref().map(|t| format!(" transform=\"{t}\"")).unwrap_or_default();
+    let path_of = |path: &str| {
+        if paths {
+            format!(" data-docx-path={}", quote(path))
+        } else {
+            String::new()
+        }
+    };
     for p in primitives {
         out.push(match p {
             Primitive::Path {
@@ -237,18 +256,13 @@ pub fn lines(primitives: &[Primitive], source: &ImageSource<'_>) -> (Vec<String>
                 d,
                 attrs,
                 transform,
-            } => format!(
-                "<path data-docx-path={} d={} {attrs}{}/>",
-                quote(path),
-                quote(d),
-                with(transform)
-            ),
+            } => format!("<path{} d={} {attrs}{}/>", path_of(path), quote(d), with(transform)),
             Primitive::Markup {
                 path,
                 markup,
                 transform,
-            } => format!("<g data-docx-path={}{}>{markup}</g>", quote(path), with(transform)),
-            Primitive::Begin { path, attrs } => format!("<g data-docx-path={} {attrs}>", quote(path)),
+            } => format!("<g{}{}>{markup}</g>", path_of(path), with(transform)),
+            Primitive::Begin { path, attrs } => format!("<g{} {attrs}>", path_of(path)),
             Primitive::End => "</g>".to_owned(),
             Primitive::Image {
                 path,
@@ -259,14 +273,14 @@ pub fn lines(primitives: &[Primitive], source: &ImageSource<'_>) -> (Vec<String>
             } => {
                 let (text, warned) = image(
                     (path, relationship.as_deref(), at),
-                    transform.as_deref(),
-                    crop.as_ref(),
+                    (transform.as_deref(), crop.as_ref()),
                     source,
+                    defs,
                 );
                 said.extend(warned);
                 text
             }
-            Primitive::StandIn { path, at, what } => stand_in(at, path, what),
+            Primitive::StandIn { path, at, what } => stand_in(at, paths.then_some(path.as_str()), what),
         });
     }
     (out, said)

@@ -8,6 +8,8 @@ mod block_pages;
 mod check_bench;
 mod editing;
 mod fallback_text_box;
+mod feed;
+mod feed_bench;
 mod host_reads;
 mod inspect_joins;
 mod live_view;

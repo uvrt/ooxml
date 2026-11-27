@@ -181,6 +181,17 @@ impl LiveViews {
         }
     }
 
+    /// Let the least recently used go for another's room (the changes feed's, design
+    /// section 4: older views' layouts go first), never the most recent; `false` where
+    /// there is no older one.
+    pub(crate) fn let_go_older(&self) -> bool {
+        let mut list = self.list();
+        if list.len() < 2 {
+            return false;
+        }
+        self.let_go(&mut list, None)
+    }
+
     /// Let the least recently used go but `keep`; `false` where there is none.
     fn let_go(&self, list: &mut VecDeque<Arc<Kept>>, keep: Option<&Arc<Kept>>) -> bool {
         let at = list.iter().position(|k| keep.is_none_or(|keep| !Arc::ptr_eq(k, keep)));

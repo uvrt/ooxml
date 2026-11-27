@@ -259,6 +259,17 @@ fn write_element(out: &mut String, e: &Element, flow: Flow) {
     out.push('>');
 }
 
+/// `elements` as a block element writes its children: each on a line of its own, a line
+/// end before each (a group's content written apart from the group).
+pub fn write_lines(elements: &[Element]) -> String {
+    let mut out = String::new();
+    for e in elements {
+        out.push('\n');
+        write_element(&mut out, e, Flow::Block);
+    }
+    out
+}
+
 /// `root` as an SVG document's text: its children each on a line of their own, ending with
 /// a line end.
 pub fn write(root: &Element) -> String {
