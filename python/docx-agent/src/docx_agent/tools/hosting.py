@@ -77,6 +77,14 @@ class WordHosting:
             return "state", str(exc)
         return None
 
+    @staticmethod
+    def held_kinds() -> tuple[str, ...]:
+        """The kinds whose documents the host's sessions name while the Python host holds them
+        (until Phase 4 moves each to Rust)."""
+        import ooxml_core
+
+        return tuple(ooxml_core.Host.held_kinds())
+
     def catalogue(self) -> tuple[str, ...]:
         """The names of the host's tools (Word's and the session's own)."""
         with WordHosting._catalogue_lock:

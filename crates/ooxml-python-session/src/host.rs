@@ -64,6 +64,10 @@ fn object_of(text: Option<&str>, what: &str) -> PyResult<Map<String, Value>> {
     }
 }
 
+/// The kinds a host holds as packages, or names while the application's own host holds their
+/// documents (until Phase 4 gives each its Rust format).
+const HELD_KINDS: [DocKind; 2] = [DocKind::Pptx, DocKind::Xlsx];
+
 /// The formats whose documents the application's own host holds (`settings.held`: a list
 /// of `{"kind", "prefixes"}`).
 fn held_formats(value: &Value) -> PyResult<Vec<ElsewhereFormat>> {
@@ -159,7 +163,7 @@ impl PyHost {
             as_given: !typography,
         };
         let mut formats: Vec<Arc<dyn Format>> = vec![Arc::new(word)];
-        for kind in [DocKind::Pptx, DocKind::Xlsx] {
+        for kind in HELD_KINDS {
             formats.push(match held.iter().find(|f| f.kind == kind) {
                 Some(found) => Arc::new(found.clone()),
                 None => Arc::new(PackageFormat(kind)),
@@ -190,6 +194,13 @@ impl PyHost {
             inner: Arc::new(inner),
             stop,
         })
+    }
+
+    /// The kinds whose documents the host's sessions name while the application's own host
+    /// holds them (`settings.held`; the stand-ins of `ooxml_session::elsewhere`).
+    #[staticmethod]
+    fn held_kinds() -> Vec<&'static str> {
+        HELD_KINDS.iter().map(|k| k.as_str()).collect()
     }
 
     /// The tools' names, in the host's catalogue order.

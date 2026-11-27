@@ -511,7 +511,7 @@ fn read_source(
         .and_then(|(rows, row, column)| Ok((ooxml_session::facts::fact(value, field, env, call)?, rows, row, column)));
     match (read, rows_refused) {
         (Ok(((text, record), rows, row, column)), _) => {
-            let markdown = dataset_markdown(value, store, &rows, row, column);
+            let markdown = value_markdown(value, store, &rows, (row, column), call);
             values.written.push(as_written(value, field, text, record, &markdown));
             values.one_values.push(OneValue {
                 given: value.to_owned(),
@@ -532,9 +532,10 @@ fn read_source(
     Ok(())
 }
 
-/// The Markdown of the one value a reference writes (`{{d:notes/Roof/body}}`), where its dataset
-/// holds one apart from its text (docx-agent's `written_json`: a reference standing alone as a
-/// paragraph writes it as blocks); `None` for any other.
+/// The Markdown of the one value a reference writes (`{{d:notes/Roof/body}}`,
+/// `{{t:Notes/#2/Body}}`), where its source holds one apart from its text (docx-agent's
+/// `written_json`: a reference standing alone as a paragraph writes it as blocks); `None` for
+/// any other.
 fn fact_markdown(
     address: &str,
     field: &str,
@@ -542,11 +543,26 @@ fn fact_markdown(
     env: &FactEnv<'_>,
     store: &DatasetStore,
 ) -> Option<String> {
-    if !address.starts_with(DATASET_PREFIX) {
-        return None;
-    }
     let (rows, row, column) = one_value(address, field, env, call).ok()?;
-    dataset_markdown(address, store, &rows, row, column)
+    value_markdown(address, store, &rows, (row, column), call)
+}
+
+/// The Markdown of the value at `(row, column)` of `rows`, which the source `address` names:
+/// a dataset's ([`dataset_markdown`]), or the rows its document's format gives
+/// (`Dataset::markdown_at`: a workbook cell's rich text).
+fn value_markdown(
+    address: &str,
+    store: &DatasetStore,
+    rows: &SourceRows,
+    (row, column): (usize, usize),
+    call: &CallSources<'_>,
+) -> Option<String> {
+    if address.starts_with(DATASET_PREFIX) {
+        return dataset_markdown(address, store, rows, row, column);
+    }
+    let doc = rows.doc.as_deref()?;
+    let read = rows.address.strip_prefix(doc)?.strip_prefix('/')?;
+    call.host.resolve(doc, read).ok()?.markdown_at(row, column)
 }
 
 /// A source address as a message shows it: without its document handle or format.

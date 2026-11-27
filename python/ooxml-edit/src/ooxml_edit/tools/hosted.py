@@ -9,6 +9,8 @@ A format whose documents the Rust host holds says so with :attr:`~.session.Docum
 - ``pages(font_dirs, locale) -> PageSetup``: what documents are laid out with for
   font folders and a locale (the toolbox's, or a session's own);
 - ``catalogue() -> Sequence[str]``: the names of the host's tools;
+- ``held_kinds() -> Sequence[str]``: the kinds whose documents the host's sessions name while
+  the Python host holds them (until Phase 4);
 - ``opened(session, doc)``: what the format says of a document the application opened (a
   warning), given the host's session and its id;
 - ``refused(exc) -> (why, message) | None``: an exception the host's session raised opening a
@@ -72,15 +74,11 @@ if TYPE_CHECKING:
 #: was not resolved before it (:mod:`.hosted_values`): one is enough for every call measured.
 MISSED_ROUNDS = 2
 
-#: The kinds whose documents the Rust session can name while the Python host holds them
-#: (``ooxml_session::elsewhere``), until Phase 4 moves each to Rust.
-HELD_KINDS = ("pptx", "xlsx")
-
 
 def runs_on_host(toolbox: "Toolbox") -> bool:
     """Whether ``toolbox``'s sessions run on the Rust host: a format of it is one the Rust
     host holds (:attr:`~.session.DocumentFormat.host`), and each other is of a kind the Rust
-    session names while the Python host holds its documents (:data:`HELD_KINDS`).  The
+    session names while the Python host holds its documents (its maker's ``held_kinds``).  The
     application's own tools run beside it, in the facade (decision D1), their datasets,
     outputs and images the Rust session's; so do the Python host's documents (D3).
 
@@ -88,8 +86,10 @@ def runs_on_host(toolbox: "Toolbox") -> bool:
     keeps the plain :class:`~.session.Session` and its stores until Phase 4 deletes them.
     """
     formats = list(toolbox.formats.values())
-    return any(fmt.host is not None for fmt in formats) and all(
-        fmt.host is not None or fmt.kind in HELD_KINDS for fmt in formats)
+    if not any(fmt.host is not None for fmt in formats):
+        return False
+    named = set(_hosting(toolbox).held_kinds())
+    return all(fmt.host is not None or fmt.kind in named for fmt in formats)
 
 
 def held_kinds(toolbox: "Toolbox") -> list[str]:
@@ -198,7 +198,8 @@ class Hosting:
         if parsed is None:
             return "rust" if tool.name in self.catalogue else "python"
         if not tool.composite:
-            return self._side(session, tool, parsed) or "rust"
+            side = self._side(session, tool, parsed)
+            return side or ("rust" if tool.name in self.catalogue else "python")
         ops = [op for op in parsed.get("ops") or () if isinstance(op, Mapping)]
         sides = [self._side(session, self._tool(op.get("tool")), op.get("arguments")) for op in ops]
         if "python" not in sides:
@@ -216,18 +217,21 @@ class Hosting:
             return None
 
     def _side(self, session: "HostedSession", tool: Any, arguments: Any) -> str | None:
-        """Where one call (or op) runs: by the documents it names; one naming none by its
-        tool (a Python-held format's, or the kind it opens or makes); ``None`` for an
-        application's own tool or no tool (either side reads it)."""
-        if tool is None or tool.name in self.own:
+        """Where one call (or op) runs: by the documents it names -- a tool of the host's
+        catalogue in Rust unless every one is the Python host's, any other tool (a Python-held
+        format's, an application's own) in Python; one naming none by its tool (the host's
+        catalogue, the kind a ``new_document`` makes or an ``open_document`` opens) -- ``None``
+        for a tool outside the catalogue naming none, or no tool: it goes with the batch's
+        other ops (inside a Rust batch an application's own tool is refused: D1)."""
+        if tool is None:
             return None
-        if tool.name not in self.catalogue:
-            return "python"                 # (a tool of a format the Python host holds)
         given = arguments if isinstance(arguments, Mapping) else {}
         try:
             docs = [doc for doc in tool.doc_ids(given) if isinstance(doc, str)]
         except Exception:  # noqa: BLE001 -- arguments a dispatcher refuses in its words
             docs = []
+        if tool.name not in self.catalogue:
+            return "python" if docs else None
         if docs:
             return "python" if all(doc in session._held for doc in docs) else "rust"
         if tool.name == "new_document":
@@ -378,12 +382,13 @@ def _two_batches(ops: Sequence[Mapping[str, Any]], sides: Sequence[str | None]) 
     D2): the way out, two batches -- the call with the first one's ops, the second's listed."""
     rust = [i for i, side in enumerate(sides) if side != "python"]
     python = [i for i, side in enumerate(sides) if side == "python"]
-    first = [dict(ops[i]) for i in rust]
+    first, second = (rust, python) if rust[0] < python[0] else (python, rust)
     return ToolError(
-        "refused", f"this batch changes documents two hosts hold (ops {_listed(rust)} and ops "
-        f"{_listed(python)}), and one batch is one host's: send them as two batches, the first with "
-        f"ops {_listed(rust)}, the second with ops {_listed(python)}", field="ops",
-        details={"batches": [rust, python]}, try_call={"tool": "batch", "arguments": {"ops": first}})
+        "refused", f"this batch changes documents two hosts hold (ops {_listed(first)} and ops "
+        f"{_listed(second)}), and one batch is one host's: send them as two batches, the first with "
+        f"ops {_listed(first)}, the second with ops {_listed(second)}", field="ops",
+        details={"batches": [first, second]},
+        try_call={"tool": "batch", "arguments": {"ops": [dict(ops[i]) for i in first]}})
 
 
 def _listed(indexes: Sequence[int]) -> str:
