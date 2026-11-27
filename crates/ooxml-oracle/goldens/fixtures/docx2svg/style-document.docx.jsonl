@@ -1560,6 +1560,16 @@
 {"digest":"sha256:f4f880cb3295361e5eb58e3545902284","id":"check:e675f5705917d84b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:1317371a603cd4355f450ee0713edf37","id":"check:bfe99cc124fc08c8","source":"stamp-on-open-2026-11-26 (user decision 2026-11-26; lane ph3-st1): every block has a durable id from the first read; Word keeps every id written (crates/ooxml-oracle/word/observations/paraid-durability.json#decided)"}
 {"digest":"sha256:13515fe9f6466db1106c3ae5b218a162","id":"check:3f649dd37edf9874","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:24e6798ac79064280049d57e7e0e26fb","id":"check:b52b31412d9d6e54","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:ccf2a580be39fce63a08e27c069a7557","id":"check:3e73f816ac70be44","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:89a55918348093a0445c56b497e36acd","id":"check:940751c20e04d230","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:d72ee9a5ef819aaca4cdc3de8500b489","id":"check:5ae17637f88526d3","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:c9b01c04e609d8996c948655ed87e27f","id":"check:d12049f5ba50d2f3","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:1f384084e6c9d78aefb8e37fc2e5d1fc","id":"check:31c84e555acddc35","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:0a86c8bf2aa67875d1b954497db71c5b","id":"check:27637024bbfe8369","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:81ec1ca35af1bb3ba7d82d98b65b8b13","id":"check:40303c75deabb04c","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:15fed5dc2287f4acd8346e1ed4455e75","id":"check:a9c8c3b8d6f97a8e","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
+{"digest":"sha256:003b0a8400c92bf7fc7bc9122c455db2","id":"check:07cec1842b78649d","source":"stamp-on-open-2026-11-26 with structured-problems-2026-11-25: check's problems in the one shape, repeated/invalid paragraph ids repaired at open"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:ac4a32bce1f4c209","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:f8d4bdcd8b803c75","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:c69e897e324f6c54827cb4a814f9c1bd","id":"facts:2cda3d3a313f1b5c","source":"frozen Python a512c901, unmeasured"}
