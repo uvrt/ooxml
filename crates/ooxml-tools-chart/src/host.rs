@@ -100,7 +100,8 @@ pub trait NewGraphic {
 pub trait FinishGraphic {
     /// The edit after the first `done`, of the chart part `chart` in `package` whose frame is
     /// `frame`; `None` when there is none.
-    fn next(&self, done: usize, package: &Package, chart: &str, frame: &str) -> Option<Result<ChartEdit, GraphicError>>;
+    fn next(&self, done: usize, package: &Package, chart: &str, frame: &str)
+        -> Option<Result<ChartEdit, GraphicError>>;
 }
 
 /// What [`GraphicWriter::insert`] made: the new frame's address, the block made to hold it

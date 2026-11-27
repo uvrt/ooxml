@@ -35,8 +35,8 @@ use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
 use crate::{EditError, Result};
 use item::{Draft, Fate};
-use ooxml_store::{Command, Txn};
 use ooxml_provenance::dumps;
+use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::provenance::{
     self as records, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry,
 };

@@ -482,9 +482,7 @@ mod sync {
 mod edit_chart {
     use super::*;
     use crate::objects::graphics::WordGraphics;
-    use ooxml_tools_chart::{
-        category_names, planned, planner, series_names, ChartDataEdit, DataAction, EditChart,
-    };
+    use ooxml_tools_chart::{category_names, planned, planner, series_names, ChartDataEdit, DataAction, EditChart};
     use ooxml_word_edit::EditGraphic;
     use ooxml_word_model::docx::drawings::graphics;
     use ooxml_word_model::docx::graphics::chart_part;

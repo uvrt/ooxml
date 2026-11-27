@@ -504,6 +504,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ooxml-provenance"
+version = "0.1.0"
+dependencies = [
+ "ooxml-base",
+ "serde_json",
+]
+
+[[package]]
 name = "ooxml-raster"
 version = "0.1.0"
 dependencies = [
@@ -578,6 +586,7 @@ dependencies = [
  "ooxml-derive",
  "ooxml-drawingml",
  "ooxml-opc",
+ "ooxml-provenance",
  "ooxml-xml",
  "serde",
  "serde_json",

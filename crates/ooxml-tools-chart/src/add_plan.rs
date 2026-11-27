@@ -10,13 +10,11 @@
 //! Must not: change the document, or plan what depends on the chart made (the scale's
 //! axis, the text's look): `add` does, on the new chart.
 
+use crate::{ChartAxis, ChartPosition, ChartType, EditChart, Gridlines, ScaleArg, SeriesType, StyleArg, TextPart};
 use ooxml_chart::edit::create::{Labels, Legend, NewChart, NewKind, NewSeries, WORD_LOOK};
 use ooxml_chart::edit::{Colour, DataError};
 use ooxml_sheets::{column_letters, NewBook, NewCell, NewValue};
 use ooxml_tools::{ArgEnum, Failure, Refusal, ToolError, TryCall, WayOut};
-use crate::{
-    ChartAxis, ChartPosition, ChartType, EditChart, Gridlines, ScaleArg, SeriesType, StyleArg, TextPart,
-};
 
 /// At most this many values (categories times series) in a chart `add` makes.
 const MAX_ADD_VALUES: usize = 10_000;

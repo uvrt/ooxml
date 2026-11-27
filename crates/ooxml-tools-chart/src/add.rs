@@ -13,11 +13,12 @@
 
 use crate::add_plan::{add_plan, workbook, Finish, Look};
 use crate::data::{ChartDataEdit, DataAction};
+use crate::edit_chart::read_call;
 use crate::host::{FinishGraphic, GraphicWriter, NewGraphic};
 use crate::keeper::{not_supported as chart_not_supported, refused as data_refused, sheets_error};
 use crate::read::chart_json;
 use crate::style::{add_scale, colour_given, text_look, ChartStyleEdit, StyleAction};
-use crate::{read_call, EditChart, ScaleArg, Warnings};
+use crate::{EditChart, ScaleArg, Warnings};
 use ooxml_chart::data::chart_data;
 use ooxml_chart::edit::create::NewChart;
 use ooxml_chart::edit::{GraphicEdit, GraphicError, GraphicParts, SeriesFormat};
@@ -135,9 +136,16 @@ impl Finishing {
             }),
         })
     }
+}
 
 impl FinishGraphic for Finishing {
-    fn next(&self, done: usize, package: &Package, chart: &str, frame: &str) -> Option<Result<ChartEdit, GraphicError>> {
+    fn next(
+        &self,
+        done: usize,
+        package: &Package,
+        chart: &str,
+        frame: &str,
+    ) -> Option<Result<ChartEdit, GraphicError>> {
         let step = self.steps().get(done).copied()?;
         let address = frame.to_owned();
         Some(self.planned(step, package, chart, frame).map(|edit| match edit {

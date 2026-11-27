@@ -136,7 +136,12 @@ impl<'p> Keeper<'p> {
     }
 
     /// Write point `index` of `source` into its cell (`_Editor.write`).
-    pub(crate) fn write(&mut self, source: Option<&SourceRef>, index: usize, value: &PointValue) -> Result<(), GraphicError> {
+    pub(crate) fn write(
+        &mut self,
+        source: Option<&SourceRef>,
+        index: usize,
+        value: &PointValue,
+    ) -> Result<(), GraphicError> {
         let Some(formula) = source.and_then(|s| s.formula.as_deref()) else {
             return Ok(()); // a literal: nothing in the workbook to keep in step
         };
@@ -174,7 +179,11 @@ impl<'p> Keeper<'p> {
 
     /// The workbook's bytes among `writes` where it changed (its part among `read` where it
     /// was opened); the reason the edit changed the cache only, if it did.
-    pub(crate) fn finish(self, writes: &mut Vec<PartWrite>, read: &mut Vec<String>) -> Result<Option<String>, GraphicError> {
+    pub(crate) fn finish(
+        self,
+        writes: &mut Vec<PartWrite>,
+        read: &mut Vec<String>,
+    ) -> Result<Option<String>, GraphicError> {
         if let Some((part, writer)) = self.workbook {
             read.push(part.clone());
             if let Some(bytes) = writer.finish().map_err(sheets_error)? {

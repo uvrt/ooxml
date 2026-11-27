@@ -12,14 +12,14 @@
 //! Must not: resolve a series or category by name (the handler does, `names`), or
 //! write but through the host's writer ([`crate::GraphicWriter`]).
 
+use crate::block::{all_sources, Block};
+use crate::keeper::{not_supported, refused, Keeper};
 use crate::record::kept;
+use crate::Warnings;
 use ooxml_chart::data::Point;
 use ooxml_chart::edit::{ChartTree, DataError, LabelLook, PointValue, TitleEdit, TitleLook, Which};
 use ooxml_chart::edit::{GraphicEdit, GraphicError, GraphicParts, PartWrite};
 use ooxml_opc::Package;
-use crate::block::{all_sources, Block};
-use crate::keeper::{not_supported, refused, Keeper};
-use crate::Warnings;
 use std::sync::Arc;
 
 /// The application whose Edit Data a warning names (`edit/charts.py`'s `APPLICATION`).
