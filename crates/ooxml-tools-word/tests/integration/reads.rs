@@ -9,7 +9,6 @@ use crate::common::{Never, R, W};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools_word::{find_text, word_inspect, FindStories, FindText, Version, WordInspect};
-use ooxml_word_model::docx::Versions;
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -64,20 +63,16 @@ fn sample() -> Package {
 }
 
 fn find(args: &FindText) -> Result<Value, Value> {
-    let versions = Versions::new();
-    let package = sample();
-    let package = crate::common::read(&package);
-    let version = Version::new("a.docx", &package, 1, &versions);
+    let doc = crate::common::doc(&sample());
+    let version = crate::common::version("a.docx", &doc);
     find_text(args, &version, &Never)
         .map(|d| json!({"summary": d.summary, "data": d.data, "next": d.next_cursor, "total": d.total}))
         .map_err(|e| e.to_json())
 }
 
 fn inspect(target: &str, layout: Option<bool>) -> Result<Value, Value> {
-    let versions = Versions::new();
-    let package = sample();
-    let package = crate::common::read(&package);
-    let version = Version::new("a.docx", &package, 1, &versions);
+    let doc = crate::common::doc(&sample());
+    let version = crate::common::version("a.docx", &doc);
     let args = WordInspect {
         doc: "d1".into(),
         target: target.into(),
@@ -171,4 +166,27 @@ fn inspect_refusals_carry_the_way_out() {
     let laid = inspect("body", Some(true)).unwrap_err();
     assert_eq!(laid["code"], "refused");
     assert_eq!(laid["try_call"]["arguments"], json!({"doc": "d1", "target": "body"}));
+}
+
+#[test]
+fn a_version_reads_its_documents_one_chain_and_a_package_alone_is_refused() {
+    let doc = crate::common::doc(&sample());
+    let version = crate::common::version("a.docx", &doc);
+    let (first, again) = (version.docx().unwrap(), version.docx().unwrap());
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &again),
+        "two reads of one version share its reading"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&first, &doc.docx().unwrap()),
+        "the editor's reading"
+    );
+    let package = crate::common::read(&sample());
+    let unheld = Version::new("b.docx", &package, 1);
+    let refused = unheld.docx().unwrap_err();
+    assert!(
+        refused.message().contains("not a Word document the session holds"),
+        "{}",
+        refused.message()
+    );
 }

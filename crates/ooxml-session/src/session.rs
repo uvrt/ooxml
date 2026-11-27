@@ -14,7 +14,7 @@ use crate::{CallContext, DocId, DocKind, Registry, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
-use std::any::Any;
+
 use std::collections::hash_map::RandomState;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{BuildHasher, Hash, Hasher};
@@ -40,8 +40,6 @@ pub struct Opened {
     pub(crate) kind: DocKind,
     name: Arc<str>,
     version: AnyVersion,
-    /// What its format keeps for reading its versions ([`FormatDoc::readings`]).
-    readings: Arc<dyn Any + Send + Sync>,
 }
 
 impl Opened {
@@ -86,12 +84,6 @@ impl Opened {
     #[must_use]
     pub fn any(&self) -> &AnyVersion {
         &self.version
-    }
-
-    /// What the document's format keeps for reading its versions.
-    #[must_use]
-    pub fn readings(&self) -> &(dyn Any + Send + Sync) {
-        &*self.readings
     }
 }
 
@@ -387,7 +379,6 @@ impl Session {
             kind: document.kind,
             name: Arc::from(document.name.as_str()),
             version,
-            readings: document.doc.readings(),
         }
     }
 

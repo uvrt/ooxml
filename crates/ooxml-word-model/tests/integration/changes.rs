@@ -85,7 +85,11 @@ fn document(seed: u64) -> Docx {
         body,
         ..Parts::default()
     };
-    Docx::open(&package(&parts)).unwrap()
+    Docx::open(
+        &package(&parts),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
+    .unwrap()
 }
 
 /// What grouping the whole part gives (`groups`): the first ids of the groups holding the

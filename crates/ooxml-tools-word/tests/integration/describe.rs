@@ -7,8 +7,7 @@ use crate::common::{Never, R};
 use ooxml_base::{Cancel, Limits};
 use ooxml_opc::Package;
 use ooxml_tools::{ToolArgs, ToolResult};
-use ooxml_tools_word::{describe, Describe, Version, DESCRIBED, KIND};
-use ooxml_word_model::docx::Versions;
+use ooxml_tools_word::{describe, Describe, DESCRIBED, KIND};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,7 +115,7 @@ fn args() -> Describe {
 fn describes_what_the_parts_say() {
     let done = describe(
         &args(),
-        &Version::new("plan.docx", &crate::common::read(&made_up()), 1, &Versions::new()),
+        &crate::common::version("plan.docx", &crate::common::doc(&made_up())),
         &Never,
     )
     .unwrap();
@@ -159,7 +158,7 @@ fn a_bare_package_has_the_defaults() {
     ]);
     let data = describe(
         &args(),
-        &Version::new("a.docx", &crate::common::read(&p), 1, &Versions::new()),
+        &crate::common::version("a.docx", &crate::common::doc(&p)),
         &Never,
     )
     .unwrap()
@@ -177,7 +176,7 @@ fn cancellation_stops_it_with_timeout() {
     // the first check passes, the next one stops it
     let error = describe(
         &args(),
-        &Version::new("plan.docx", &crate::common::read(&made_up()), 1, &Versions::new()),
+        &crate::common::version("plan.docx", &crate::common::doc(&made_up())),
         &After(AtomicBool::new(false)),
     )
     .unwrap_err();
@@ -189,12 +188,9 @@ fn cancellation_stops_it_with_timeout() {
 #[test]
 fn not_a_word_package_is_an_internal_error() {
     let p = package(&[("other.xml", "<a/>".into())]);
-    let error = describe(
-        &args(),
-        &Version::new("x.docx", &crate::common::read(&p), 1, &Versions::new()),
-        &Never,
-    )
-    .unwrap_err();
+    // (no session holds it as a Word document: a reading tool refuses it)
+    let package = crate::common::read(&p);
+    let error = describe(&args(), &ooxml_tools_word::Version::new("x.docx", &package, 1), &Never).unwrap_err();
     assert_eq!(error.code().as_str(), "internal");
 }
 

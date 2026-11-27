@@ -686,14 +686,15 @@ fn outside(runs: &[(Range<usize>, Range<usize>)], (old_c, new_c): (&Children, &C
     })
 }
 
-/// Whether `element` holds a paragraph or table (live, not under `mc:Fallback`).
+/// Whether `element` holds a paragraph or table (live: in the branch of an
+/// `mc:AlternateContent` the readers read, [`crate::mc::chosen`]).
 fn holds_block(element: &Element) -> bool {
     if element.name().namespace() == Some(W) && matches!(element.name().local(), "p" | "tbl") {
         return true;
     }
     element.children().iter().any(|n| {
         n.as_element()
-            .is_some_and(|e| !e.name().is(Some(crate::ids::MC), "Fallback") && holds_block(e))
+            .is_some_and(|e| !crate::mc::unchosen(element, e) && holds_block(e))
     })
 }
 

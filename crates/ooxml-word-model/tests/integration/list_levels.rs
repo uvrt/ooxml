@@ -27,7 +27,11 @@ fn parts(kind: &str) -> Parts {
 
 /// Each paragraph's level, format and text as the model reads them.
 fn read(kind: &str) -> Vec<(i64, Option<String>, Option<String>)> {
-    let docx = Docx::open(&package(&parts(kind))).unwrap();
+    let docx = Docx::open(
+        &package(&parts(kind)),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
+    .unwrap();
     let lists = Lists::read(&docx);
     let body = docx.part(&docx.main).unwrap();
     body.ids

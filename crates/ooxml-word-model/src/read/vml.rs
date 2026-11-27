@@ -1,4 +1,5 @@
-//! Owns: a run's VML object (`w:pict`, `w:object`, an `mc:AlternateContent`'s VML fallback)
+//! Owns: a run's VML object (`w:pict`, `w:object`, an `mc:AlternateContent`'s VML where
+//! its branch the readers read holds one)
 //! as far as layout takes it -- docx2svg's `parse.vml`: an absolutely positioned shape is a
 //! floating drawing ([`Anchor`]: its CSS `width`/`height`, `mso-position-*`, `margin-*`,
 //! `z-index`, `w10:wrap`); anything else a character of its line (`drawing:cx:cy:0:0:0:0`);
@@ -104,15 +105,16 @@ fn rotation(style: &BTreeMap<String, String>) -> i64 {
 }
 
 /// The first VML element a run's object (`w:pict`, `w:object`, or an
-/// `mc:AlternateContent` whose `mc:Fallback` holds one) draws -- `v:shape`, `v:rect`, ...;
+/// `mc:AlternateContent` whose branch the readers read holds one, [`crate::mc::chosen`]:
+/// its Fallback where they do not understand its Choice) draws -- `v:shape`, `v:rect`, ...;
 /// a `v:shapetype` only defines one -- and its path from the object (`v:shape[1]`).
 pub fn vml_shape(node: &Element) -> Option<(&Element, String)> {
     match local(node) {
         "AlternateContent" => {
-            let fallback = child(node, "Fallback")?;
-            let inner = elements(fallback).find(|c| matches!(local(c), "pict" | "object"))?;
+            let branch = crate::mc::chosen(node)?;
+            let inner = elements(branch).find(|c| matches!(local(c), "pict" | "object"))?;
             let (shape, path) = vml_shape(inner)?;
-            Some((shape, format!("mc:Fallback/w:{}[1]/{path}", local(inner))))
+            Some((shape, format!("mc:{}/w:{}[1]/{path}", local(branch), local(inner))))
         }
         "pict" | "object" => {
             let mut counts: BTreeMap<&str, usize> = BTreeMap::new();

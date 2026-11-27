@@ -53,6 +53,17 @@ pub enum EditError {
     /// What the edit would have to do is not ported yet.
     #[error("not supported yet: {0}")]
     Unsupported(String),
+    /// The edit changed a text box the readers read from its VML Fallback, its Choice
+    /// needing what they do not read (`requires`, its `Requires`; `drawing`, its drawing's
+    /// number): Word draws the Choice, which the edit cannot change ([`ooxml_word_model::mc`]).
+    /// Nothing changed.
+    #[error("the text box{} is read from its fallback: its newer content needs {requires}, which the tools do not read", .drawing.as_deref().map(|d| format!(" (drawing {d})")).unwrap_or_default())]
+    FallbackTextBox {
+        /// The Choice's `Requires`.
+        requires: String,
+        /// The drawing's number (`wp:docPr/@id`), where it has one.
+        drawing: Option<String>,
+    },
     /// Laying a version out for the edit was stopped: the call's limit on laying out (the
     /// duration, where it has one) passed, or it was cancelled. Nothing changed.
     #[error("laying the document out did not finish{}", .0.map_or_else(String::new, |t| format!(" within {} s", t.as_secs_f64())))]

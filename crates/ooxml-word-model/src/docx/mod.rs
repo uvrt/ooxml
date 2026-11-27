@@ -11,8 +11,8 @@
 //!
 //! Must not: edit or lay out. A [`Docx`] is one version's reading, shared by the calls on
 //! that version; the next version's reuses the story parts whose trees did not change
-//! ([`Docx::open_after`]), and [`Versions`] keeps the latest versions' readings for a
-//! document.
+//! ([`Docx::open_after`]). A document's readings are one chain, its editor's, on the
+//! document's memory budget ([`Kept`]).
 
 pub mod block_facts;
 pub mod cells;
@@ -39,14 +39,12 @@ pub mod statistics;
 pub mod tables;
 pub mod text;
 mod texts;
-mod versions;
 mod walk;
 
 pub use derived::Derived;
 pub use kept::Kept;
 pub use names::VersionNames;
 pub use texts::PartTexts;
-pub use versions::Versions;
 
 pub use walk::{at_path, live_paths, Found};
 
@@ -183,31 +181,24 @@ impl Docx {
         self.derived.relationships(self, source)
     }
 
-    /// Read `package`.
+    /// Read `package`, a document's first version: what its versions keep of its parts
+    /// ([`Kept`]) counted on `budget`, the document's memory budget (its later versions'
+    /// readings share it, [`Docx::open_after`]).
     ///
     /// # Errors
     /// [`WordError`] when the package has no main part or a part is not XML.
-    pub fn open(package: &WordPackage) -> Result<Docx, WordError> {
-        Docx::open_after(package, None)
+    pub fn open(package: &WordPackage, budget: Arc<dyn ooxml_derive::CacheBudget>) -> Result<Docx, WordError> {
+        Docx::read(package, None, Arc::new(Kept::new(budget)))
     }
 
-    /// [`Docx::open`], what its versions keep of its parts in `kept` (a document's first
-    /// version: its later ones share it).
+    /// Read `package`, a later version of the document `before` read (the document's one
+    /// chain of readings): every story part whose tree is the very same is taken from it,
+    /// its ids not found again, and what the document's versions keep is `before`'s.
     ///
     /// # Errors
     /// As [`Docx::open`].
-    pub fn open_keeping(package: &WordPackage, kept: Arc<Kept>) -> Result<Docx, WordError> {
-        Docx::read(package, None, kept)
-    }
-
-    /// Read `package`, taking from `before` (an earlier version's reading of the same
-    /// document) every story part whose tree is the very same: its ids are not found again.
-    ///
-    /// # Errors
-    /// As [`Docx::open`].
-    pub fn open_after(package: &WordPackage, before: Option<&Docx>) -> Result<Docx, WordError> {
-        let latest = before.map_or_else(|| Arc::new(Kept::default()), |b| Arc::clone(&b.kept));
-        Docx::read(package, before, latest)
+    pub fn open_after(package: &WordPackage, before: &Docx) -> Result<Docx, WordError> {
+        Docx::read(package, Some(before), Arc::clone(&before.kept))
     }
 
     /// What its versions keep of its tables' readings: entries and bytes.

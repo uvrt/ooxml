@@ -5,7 +5,7 @@
 //! [`WordDoc`], in a [`Stored`] through [`WordStore`], and what the host keeps of it beside
 //! its versions: the version it was opened as (what a session's own edits are told from),
 //! its tracking mode (each later edit's revision policy), the ids its versions retired, the
-//! rows its table calls wrote, its readings and its page engine where the session lays it
+//! rows its table calls wrote and its page engine where the session lays it
 //! out; how a tool call runs on it ([`crate::call`]) and what a changing call made
 //! ([`WordMade`]).
 //!
@@ -26,7 +26,6 @@ use ooxml_tools::{CallEnv, Outcome, Tool, ToolError, ToolResult};
 use ooxml_tools_word::{LayoutLimit, Made, MadeBy, RowsWritten, WordLayout};
 use ooxml_word_edit::validate::Delta;
 use ooxml_word_edit::{Change, EarlierIds, Editor, IdsChange, WordDoc};
-use ooxml_word_model::docx::Versions;
 use ooxml_word_model::ids::LoadedState;
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_xml::Tree;
@@ -270,9 +269,6 @@ pub struct Word {
     pub(crate) pages: crate::pages::DocPages,
     /// The versions its live views were given, kept within the session's memory budget.
     pub(crate) views: crate::live_view::LiveViews,
-    /// Its readings as a Word document, kept for its latest versions (design section 7:
-    /// caches belong to a document).
-    pub(crate) versions: Arc<Versions>,
     /// What the session lays it out with by default ([`WordFormat::pages`]).
     pub(crate) default_pages: Option<crate::SessionPages>,
     /// The application's minimum text size for its checks ([`WordFormat::min_text_size`]).
@@ -405,7 +401,6 @@ impl Word {
             made_by: MadeBy::default(),
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
-            versions: Arc::new(Versions::new()),
             default_pages: format.pages.clone(),
             min_text_size: format.min_text_size.clone(),
             as_given: format.as_given,
@@ -496,11 +491,13 @@ impl FormatDoc for Word {
         Ok((Self::any(version), changed, attempts))
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        Arc::clone(&self.versions) as Arc<dyn Any + Send + Sync>
-    }
-
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
+        // a strict Open XML document is only laid out and painted (ooxml_tools_word::strict)
+        let strict =
+            self.opened.doc().strict() || run.others.iter().any(|(_, o)| o.word().is_some_and(WordDoc::strict));
+        if strict && !ooxml_tools_word::strict::RENDERED.contains(&run.tool) {
+            return ToolResult::failed(ooxml_tools_word::strict::refused());
+        }
         let none = WordHost::default();
         let host = WordHost::of(run.context).unwrap_or(&none);
         let layout = self.layout(host);

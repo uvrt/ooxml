@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 /// One document's story parts as its versions read them: each version's names are made
 /// from the version before's.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct Names {
     /// Every story the document's versions named, by index.
     stories: StoryTable,
@@ -39,6 +39,16 @@ pub(super) struct Names {
 }
 
 impl Names {
+    /// None named yet; what a story part keeps beside its ids counted on `budget`.
+    pub(super) fn new(budget: Arc<dyn ooxml_derive::CacheBudget>) -> Names {
+        Names {
+            stories: StoryTable::default(),
+            last: HashMap::new(),
+            now: HashMap::new(),
+            kept: Arc::new(DocxKept::new(budget)),
+        }
+    }
+
     /// The part `part` of story `story` in this version, whose tree is `tree`: the last
     /// version's where it is the same tree, else found from it. `None` past the story
     /// table's limit.

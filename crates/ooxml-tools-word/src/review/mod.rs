@@ -257,6 +257,14 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
         EditError::LayoutStopped(limit) => laying_out_stopped(limit),
         // a form the edit core does not support yet: refused as such, the call as the way out
         EditError::Unsupported(what) => ToolError::not_supported(&what, WayOut::call(call)).at(field),
+        // a text box read from its fallback: the one refusal of an edit inside it
+        refused @ EditError::FallbackTextBox { .. } => {
+            let way_out = WayOut::one(serde_json::Value::from(
+                "edit it in Word, or remove the text box's newer content (its mc:Choice)",
+            ));
+            ToolError::not_supported("an edit inside a text box read from its fallback", way_out)
+                .with_detail("text_box", serde_json::Value::from(refused.to_string()))
+        }
         // the core's model and tree disagreeing is a bug, never the caller's refusal
         EditError::Internal(internal) => ToolError::internal(internal.to_string(), "word:edit"),
         other => ToolError::internal(other.to_string(), "word:edit"),

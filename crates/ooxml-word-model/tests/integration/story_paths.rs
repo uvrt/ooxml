@@ -87,7 +87,11 @@ fn every_run_the_model_reads_has_the_path_the_walk_gives_it() {
     let (_, document) = open(&parts);
     let mut runs = Vec::new();
     model_runs(&document.body, &document.names, &mut runs);
-    let docx = Docx::open(&package(&parts)).unwrap();
+    let docx = Docx::open(
+        &package(&parts),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
+    .unwrap();
     let root = docx.part(&docx.main).unwrap().root();
     let mut paths = HashSet::new();
     walked(root, root, &mut Vec::new(), &mut paths);
@@ -106,10 +110,13 @@ fn every_run_the_model_reads_has_the_path_the_walk_gives_it() {
 
 #[test]
 fn a_story_other_than_the_body_is_named_from_its_root() {
-    let docx = Docx::open(&package(&Parts {
-        body: "<w:p/>".into(),
-        ..Parts::default()
-    }))
+    let docx = Docx::open(
+        &package(&Parts {
+            body: "<w:p/>".into(),
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
     .unwrap();
     let root = docx.part(&docx.main).unwrap().root();
     // The main part: from the body (child 0 of the document).

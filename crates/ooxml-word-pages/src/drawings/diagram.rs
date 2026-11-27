@@ -57,7 +57,7 @@ fn related_of_type(package: &Package, owner: &str, kind: &str) -> Vec<String> {
         .relationships(owner)
         .map(|rels| {
             rels.iter()
-                .filter(|r| r.rel_type == kind)
+                .filter(|r| ooxml_word_model::parts::rel_type_is(&r.rel_type, kind))
                 .filter_map(|r| r.target_part.clone())
                 .collect()
         })

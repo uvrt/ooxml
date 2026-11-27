@@ -33,3 +33,12 @@ Not supported, in outline: macros (dropped on save), equations and ink beyond ke
 SmartArt (`edit_smartart` is out of the tools until the Rust session has it), values styled by a scale (`style_by_value`, likewise), an asset catalogue (`word_find_asset`, likewise; a call of any of the three is refused with what to use instead), in `word_insert_markdown` a table from a dataset's or another document's rows (`from`) and `like` naming a table, whose frame new tables would take (refused with a call that works; the release notes list every form refused), editing a template's styles from another file (`word_template` only
 upgrades the compatibility mode), and anything Word does on its own when it opens a file
 (updating fields, repaginating) beyond what `word_fields update` and the layout facts give.
+
+Known limits: a Strict Open XML document (Word's "Strict Open XML Document", ISO/IEC 29500
+Strict) is only drawn: `render` lays it out as it lays out the same document saved as a Word
+Document (strict's measures, `35.40pt`, read as Word reads them), and every other tool
+refuses it (`not_supported`), with the way on: save it as a Word Document
+(.docx) in Word first. Of a drawing Word writes twice (`mc:AlternateContent`: a text box, a
+group), the tools read and draw the DrawingML choice when it needs only what they read
+(WordprocessingML, Word's text boxes and groups) and else the VML fallback, where Word may draw
+the choice.

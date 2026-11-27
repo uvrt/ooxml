@@ -179,7 +179,10 @@ fn compare_step(before: &Snapshot<WordDoc>, after: &Snapshot<WordDoc>, stories: 
     let delta = after.changes().expect("a version after another has changes");
     let mut differences = Vec::new();
     // the same function on indexes built from scratch
-    let (fresh_old, fresh_new) = (Docx::open(old.package()).unwrap(), Docx::open(new.package()).unwrap());
+    let (fresh_old, fresh_new) = (
+        Docx::open(old.package(), std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap(),
+        Docx::open(new.package(), std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap(),
+    );
     let fresh = VersionDelta::between(&fresh_old, &fresh_new, &mut stories.clone());
     if *delta != fresh {
         differences.push(format!("delta {delta:?} != from scratch {fresh:?}"));

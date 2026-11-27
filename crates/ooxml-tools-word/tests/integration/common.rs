@@ -91,6 +91,16 @@ pub fn read(package: &ooxml_opc::Package) -> ooxml_word_model::WordPackage {
     ooxml_word_model::WordPackage::open(package.clone()).0
 }
 
+/// `package` opened as a session's editor opens it: its readings the document's one chain.
+pub fn doc(package: &ooxml_opc::Package) -> ooxml_word_edit::WordDoc {
+    ooxml_word_edit::WordDoc::open(package.clone(), Arc::new(Unlimited)).unwrap()
+}
+
+/// Version 1 of `doc` named `name`, as a reading tool is handed it.
+pub fn version<'a>(name: &'a str, doc: &'a ooxml_word_edit::WordDoc) -> ooxml_tools_word::Version<'a> {
+    ooxml_tools_word::Version::new(name, doc.package(), 1).with_word(Some(doc))
+}
+
 /// Each block id a reading of `package` by place gave ([`by_place`]) (positional `p@body/3`,
 /// `t@body/0`, a repeat) that the document opened -- every block stamped in memory -- names
 /// otherwise, the longest first.

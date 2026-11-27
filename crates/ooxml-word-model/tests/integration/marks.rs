@@ -46,10 +46,13 @@ fn one_name_found_as_all_find_it() {
         paragraph(&start("NoEnd", 6)),
     ]
     .concat();
-    let docx = Docx::open(&package(&Parts {
-        body,
-        ..Parts::default()
-    }))
+    let docx = Docx::open(
+        &package(&Parts {
+            body,
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
     .unwrap();
     let all = Bookmarks::of(&docx);
     for name in [

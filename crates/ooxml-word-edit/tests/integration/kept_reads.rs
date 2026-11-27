@@ -107,7 +107,7 @@ fn rows_of(docx: &Docx) -> TablesRows {
 /// them.
 fn rows_warm_and_cold(doc: &WordDoc) -> (TablesRows, TablesRows) {
     let warm = rows_of(&doc.docx().unwrap());
-    let cold = rows_of(&Docx::open(doc.package()).unwrap());
+    let cold = rows_of(&Docx::open(doc.package(), std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap());
     (warm, cold)
 }
 

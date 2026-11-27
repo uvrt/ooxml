@@ -17,6 +17,7 @@
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::{Package, PartIdentity};
 use ooxml_word_layout::paint::svg::Pictures;
+use ooxml_word_model::parts::rel_type_is;
 use std::sync::{Arc, Mutex, PoisonError};
 
 const OFFICE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
@@ -93,13 +94,13 @@ impl PackagePictures {
             .relationships("")
             .ok()?
             .iter()
-            .find(|r| r.rel_type == OFFICE)
+            .find(|r| rel_type_is(&r.rel_type, OFFICE))
             .and_then(|r| r.target_part.clone())?;
         let mut text: Vec<String> = package
             .relationships(&main)
             .map(|rels| {
                 rels.iter()
-                    .filter(|r| !r.external && TEXT_PARTS.contains(&r.rel_type.as_str()))
+                    .filter(|r| !r.external && TEXT_PARTS.iter().any(|t| rel_type_is(&r.rel_type, t)))
                     .filter_map(|r| r.target_part.clone())
                     .collect()
             })

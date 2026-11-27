@@ -274,10 +274,6 @@ impl FormatDoc for HeldElsewhere {
         Err(self.session_error("change it"))
     }
 
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        Arc::new(())
-    }
-
     fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
         ToolResult::failed(ToolError::internal(
             self.refused(&format!("run {} on it", run.tool)),
@@ -367,10 +363,6 @@ impl FormatDoc for Answering {
         update: &PartUpdate<'_>,
     ) -> Result<(AnyVersion, bool, u32), SessionError> {
         self.held.update(caller, tool, update)
-    }
-
-    fn readings(&self) -> Arc<dyn Any + Send + Sync> {
-        self.held.readings()
     }
 
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {

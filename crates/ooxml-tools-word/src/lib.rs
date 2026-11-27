@@ -33,6 +33,7 @@ mod registrar;
 mod review;
 mod sources;
 mod spaced_reply;
+pub mod strict;
 mod structure;
 mod style;
 mod table_read;

@@ -1,0 +1,775 @@
+{
+ "_about": "Word's Save As Strict of constructs.docx beside its Save As Word Document; universal measures as Word reads them (written, then saved by Word in twips); every line Word drew of each twin, [page, baseline px at 300 dpi, text]; whether Word opens the file the session wrote for an insert before RD1a (edited-before-rd1a.docx). Regenerate with crates/ooxml-oracle/word/probes/strict_probe.py.",
+ "word": "Word 16.106",
+ "units": [
+  {
+   "written": {
+    "top": "1in",
+    "right": "25.4mm",
+    "bottom": "2.54cm",
+    "left": "6pc",
+    "header": "3pi",
+    "footer": "35.4pt",
+    "gutter": "0.5in"
+   },
+   "word": {
+    "top": "1440",
+    "right": "1440",
+    "bottom": "1440",
+    "left": "1440",
+    "header": "720",
+    "footer": "708",
+    "gutter": "720"
+   }
+  },
+  {
+   "written": {
+    "top": "1.27cm",
+    "right": "12.7mm",
+    "bottom": "0.75in",
+    "left": "17.95pt",
+    "header": "1.5pc",
+    "footer": "2.25pi",
+    "gutter": "1mm"
+   },
+   "word": {
+    "top": "720",
+    "right": "720",
+    "bottom": "1080",
+    "left": "359",
+    "header": "360",
+    "footer": "540",
+    "gutter": "56"
+   }
+  },
+  {
+   "written": {
+    "top": "1.001in",
+    "right": "10.05mm",
+    "bottom": "3.333cm",
+    "left": "12.33pt",
+    "header": "0.1pc",
+    "footer": "7.7pi",
+    "gutter": "0.03in"
+   },
+   "word": {
+    "top": "1441",
+    "right": "569",
+    "bottom": "1889",
+    "left": "246",
+    "header": "24",
+    "footer": "1848",
+    "gutter": "43"
+   }
+  }
+ ],
+ "documents": {
+  "transitional.docx": [
+   [
+    0,
+    411,
+    "Markdown constructs"
+   ],
+   [
+    0,
+    567,
+    "Headings and text"
+   ],
+   [
+    0,
+    636,
+    "Plain, bold, italic, struck, strong, emphasised and inline code."
+   ],
+   [
+    0,
+    758,
+    "A second level"
+   ],
+   [
+    0,
+    877,
+    "A third level"
+   ],
+   [
+    0,
+    989,
+    "A seventh level"
+   ],
+   [
+    0,
+    1049,
+    "Stars * and _underscores_, a [bracket], <tag>, `ticks`, & an entity &copy;, a {++critic++} brace, a "
+   ],
+   [
+    0,
+    1110,
+    "back\\slash and a pipe |."
+   ],
+   [
+    0,
+    1203,
+    "# not a heading"
+   ],
+   [
+    0,
+    1297,
+    "1. not a list"
+   ],
+   [
+    0,
+    1391,
+    "indented by a tab"
+   ],
+   [
+    0,
+    1484,
+    "Line one"
+   ],
+   [
+    0,
+    1545,
+    "line two."
+   ],
+   [
+    0,
+    1638,
+    "A quotation."
+   ],
+   [
+    0,
+    1732,
+    "Its second paragraph."
+   ],
+   [
+    0,
+    1817,
+    "def answer():"
+   ],
+   [
+    0,
+    1864,
+    " return 42"
+   ],
+   [
+    0,
+    2057,
+    "Lists"
+   ],
+   [
+    0,
+    2129,
+    "• Bullet one"
+   ],
+   [
+    0,
+    2189,
+    "o Nested bullet"
+   ],
+   [
+    0,
+    2249,
+    "▪ Deeper bullet"
+   ],
+   [
+    0,
+    2312,
+    "• Bullet two"
+   ],
+   [
+    0,
+    2375,
+    "• Another list"
+   ],
+   [
+    0,
+    2437,
+    "• Its second item"
+   ],
+   [
+    0,
+    2531,
+    "Numbered:"
+   ],
+   [
+    0,
+    2625,
+    "1. Step one"
+   ],
+   [
+    0,
+    2685,
+    "2. Step two"
+   ],
+   [
+    0,
+    2746,
+    "a. Sub-step"
+   ],
+   [
+    0,
+    2806,
+    "3. Step three"
+   ],
+   [
+    0,
+    2900,
+    "Restarted at five:"
+   ],
+   [
+    0,
+    2993,
+    "5. Five"
+   ],
+   [
+    0,
+    3054,
+    "6. Six"
+   ],
+   [
+    0,
+    3150,
+    "• From the style"
+   ],
+   [
+    1,
+    363,
+    "Links, notes and pictures"
+   ],
+   [
+    1,
+    415,
+    "1 i"
+   ],
+   [
+    1,
+    432,
+    "An external link, an internal one and a note.Another."
+   ],
+   [
+    1,
+    509,
+    "2"
+   ],
+   [
+    1,
+    526,
+    "Notes are written at the end."
+   ],
+   [
+    1,
+    725,
+    "A picture inline."
+   ],
+   [
+    1,
+    819,
+    "Text beside a floating picture."
+   ],
+   [
+    1,
+    913,
+    "Text beside a text box."
+   ],
+   [
+    1,
+    928,
+    "Inside a text box."
+   ],
+   [
+    1,
+    1007,
+    "Page 2, see Notes are written at the end.."
+   ],
+   [
+    1,
+    1136,
+    "Tables"
+   ],
+   [
+    1,
+    1207,
+    "Item Count"
+   ],
+   [
+    1,
+    1265,
+    "Pens 12"
+   ],
+   [
+    1,
+    1323,
+    "a | b 500"
+   ],
+   [
+    1,
+    1381,
+    "A table GFM cannot hold:"
+   ],
+   [
+    1,
+    1477,
+    "Outer "
+   ],
+   [
+    1,
+    1479,
+    "Inner cells"
+   ],
+   [
+    1,
+    1539,
+    "TwoPlain"
+   ],
+   [
+    1,
+    1595,
+    "paragraphs"
+   ],
+   [
+    1,
+    1653,
+    "Content controls:"
+   ],
+   [
+    1,
+    1749,
+    "Name: Grace Hopper, agreed: ☒"
+   ],
+   [
+    1,
+    1844,
+    "A clause in a control."
+   ],
+   [
+    1,
+    1938,
+    "Its second paragraph."
+   ],
+   [
+    1,
+    2032,
+    "Before a section break."
+   ],
+   [
+    1,
+    3080,
+    "1 "
+   ],
+   [
+    1,
+    3095,
+    "A first footnote."
+   ],
+   [
+    1,
+    3131,
+    "2 "
+   ],
+   [
+    1,
+    3146,
+    "A second footnote,"
+   ],
+   [
+    1,
+    3197,
+    "in two paragraphs."
+   ],
+   [
+    2,
+    191,
+    "Constructs, the header"
+   ],
+   [
+    2,
+    3311,
+    "Page 3"
+   ],
+   [
+    3,
+    191,
+    "Constructs, the header"
+   ],
+   [
+    3,
+    344,
+    "After a page break."
+   ],
+   [
+    3,
+    438,
+    "The end."
+   ],
+   [
+    3,
+    606,
+    "i "
+   ],
+   [
+    3,
+    621,
+    "An endnote."
+   ],
+   [
+    3,
+    3311,
+    "Page 4"
+   ]
+  ],
+  "strict.docx": [
+   [
+    0,
+    411,
+    "Markdown constructs"
+   ],
+   [
+    0,
+    567,
+    "Headings and text"
+   ],
+   [
+    0,
+    636,
+    "Plain, bold, italic, struck, strong, emphasised and inline code."
+   ],
+   [
+    0,
+    758,
+    "A second level"
+   ],
+   [
+    0,
+    877,
+    "A third level"
+   ],
+   [
+    0,
+    989,
+    "A seventh level"
+   ],
+   [
+    0,
+    1049,
+    "Stars * and _underscores_, a [bracket], <tag>, `ticks`, & an entity &copy;, a {++critic++} brace, a "
+   ],
+   [
+    0,
+    1110,
+    "back\\slash and a pipe |."
+   ],
+   [
+    0,
+    1203,
+    "# not a heading"
+   ],
+   [
+    0,
+    1297,
+    "1. not a list"
+   ],
+   [
+    0,
+    1391,
+    "indented by a tab"
+   ],
+   [
+    0,
+    1484,
+    "Line one"
+   ],
+   [
+    0,
+    1545,
+    "line two."
+   ],
+   [
+    0,
+    1638,
+    "A quotation."
+   ],
+   [
+    0,
+    1732,
+    "Its second paragraph."
+   ],
+   [
+    0,
+    1817,
+    "def answer():"
+   ],
+   [
+    0,
+    1864,
+    " return 42"
+   ],
+   [
+    0,
+    2057,
+    "Lists"
+   ],
+   [
+    0,
+    2129,
+    "• Bullet one"
+   ],
+   [
+    0,
+    2189,
+    "o Nested bullet"
+   ],
+   [
+    0,
+    2249,
+    "▪ Deeper bullet"
+   ],
+   [
+    0,
+    2312,
+    "• Bullet two"
+   ],
+   [
+    0,
+    2375,
+    "• Another list"
+   ],
+   [
+    0,
+    2437,
+    "• Its second item"
+   ],
+   [
+    0,
+    2531,
+    "Numbered:"
+   ],
+   [
+    0,
+    2625,
+    "1. Step one"
+   ],
+   [
+    0,
+    2685,
+    "2. Step two"
+   ],
+   [
+    0,
+    2746,
+    "a. Sub-step"
+   ],
+   [
+    0,
+    2806,
+    "3. Step three"
+   ],
+   [
+    0,
+    2900,
+    "Restarted at five:"
+   ],
+   [
+    0,
+    2993,
+    "5. Five"
+   ],
+   [
+    0,
+    3054,
+    "6. Six"
+   ],
+   [
+    0,
+    3150,
+    "• From the style"
+   ],
+   [
+    1,
+    363,
+    "Links, notes and pictures"
+   ],
+   [
+    1,
+    415,
+    "1 i"
+   ],
+   [
+    1,
+    432,
+    "An external link, an internal one and a note.Another."
+   ],
+   [
+    1,
+    509,
+    "2"
+   ],
+   [
+    1,
+    526,
+    "Notes are written at the end."
+   ],
+   [
+    1,
+    725,
+    "A picture inline."
+   ],
+   [
+    1,
+    819,
+    "Text beside a floating picture."
+   ],
+   [
+    1,
+    913,
+    "Text beside a text box."
+   ],
+   [
+    1,
+    928,
+    "Inside a text box."
+   ],
+   [
+    1,
+    1007,
+    "Page 2, see Notes are written at the end.."
+   ],
+   [
+    1,
+    1136,
+    "Tables"
+   ],
+   [
+    1,
+    1207,
+    "Item Count"
+   ],
+   [
+    1,
+    1265,
+    "Pens 12"
+   ],
+   [
+    1,
+    1323,
+    "a | b 500"
+   ],
+   [
+    1,
+    1381,
+    "A table GFM cannot hold:"
+   ],
+   [
+    1,
+    1477,
+    "Outer "
+   ],
+   [
+    1,
+    1479,
+    "Inner cells"
+   ],
+   [
+    1,
+    1539,
+    "TwoPlain"
+   ],
+   [
+    1,
+    1595,
+    "paragraphs"
+   ],
+   [
+    1,
+    1653,
+    "Content controls:"
+   ],
+   [
+    1,
+    1749,
+    "Name: Grace Hopper, agreed: ☒"
+   ],
+   [
+    1,
+    1844,
+    "A clause in a control."
+   ],
+   [
+    1,
+    1938,
+    "Its second paragraph."
+   ],
+   [
+    1,
+    2032,
+    "Before a section break."
+   ],
+   [
+    1,
+    3080,
+    "1 "
+   ],
+   [
+    1,
+    3095,
+    "A first footnote."
+   ],
+   [
+    1,
+    3131,
+    "2 "
+   ],
+   [
+    1,
+    3146,
+    "A second footnote,"
+   ],
+   [
+    1,
+    3197,
+    "in two paragraphs."
+   ],
+   [
+    2,
+    191,
+    "Constructs, the header"
+   ],
+   [
+    2,
+    3311,
+    "Page 3"
+   ],
+   [
+    3,
+    191,
+    "Constructs, the header"
+   ],
+   [
+    3,
+    344,
+    "After a page break."
+   ],
+   [
+    3,
+    438,
+    "The end."
+   ],
+   [
+    3,
+    606,
+    "i "
+   ],
+   [
+    3,
+    621,
+    "An endnote."
+   ],
+   [
+    3,
+    3311,
+    "Page 4"
+   ]
+  ]
+ },
+ "edited": {
+  "edited-before-rd1a.docx": "rejected"
+ }
+}

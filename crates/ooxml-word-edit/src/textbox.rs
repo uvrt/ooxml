@@ -142,9 +142,18 @@ pub(crate) fn sync(sink: &mut EditSink<'_, '_>) -> Result<()> {
         let (before, now) = span_boxes(old.root(), new.root());
         let kept = unchanged_boxes(&before, &now);
         for ((path, holder), kept) in now.into_iter().zip(kept) {
-            if !kept {
-                sync_holder(sink, part, &path, &holder)?;
+            if kept {
+                continue;
             }
+            // a box read from its fallback, changed: Word draws its choice, which the edit
+            // cannot change, and a sync would put the choice back over the edit
+            if let Some(requires) = ooxml_word_model::mc::not_understood(&holder) {
+                return Err(EditError::FallbackTextBox {
+                    requires: requires.to_owned(),
+                    drawing: drawing_number(&holder),
+                });
+            }
+            sync_holder(sink, part, &path, &holder)?;
         }
     }
     Ok(())
@@ -232,6 +241,10 @@ pub(crate) fn sync_holder(
     path: &[u32],
     holder: &Arc<Element>,
 ) -> Result<bool> {
+    if ooxml_word_model::mc::not_understood(holder).is_some() {
+        // read from its fallback: the choice is Word's, and stays as written
+        return Ok(false);
+    }
     let (Some(choice), Some(fallback)) = (holder.find(Some(MC), "Choice"), holder.find(Some(MC), "Fallback")) else {
         return Ok(false);
     };
@@ -320,7 +333,8 @@ fn unchanged_box(was: &Arc<Element>, holder: &Arc<Element>) -> bool {
         .is_some_and(|(was, now)| same_but_ids(&was, &now))
 }
 
-/// A text box's content as Word reads it (its choice's `w:txbxContent`).
+/// A text box's content as the readers read it: its `w:txbxContent` in the branch they
+/// read ([`ooxml_word_model::mc::chosen`]: Word's choice, where they understand it).
 fn choice_content(holder: &Arc<Element>) -> Option<Arc<Element>> {
-    first_content(holder.find(Some(MC), "Choice")?)
+    first_content(ooxml_word_model::mc::chosen(holder)?)
 }

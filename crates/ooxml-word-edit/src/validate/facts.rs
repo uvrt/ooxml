@@ -8,7 +8,7 @@
 //! Must not: read anything outside the element, or decide a whole-document rule (the
 //! rules module folds the facts).
 
-use crate::names::{MC, R, W, W14, WP, WP14};
+use crate::names::{R, W, W14, WP, WP14};
 use crate::validate::order::Orders;
 use ooxml_word_model::ids::valid_long_hex;
 use ooxml_xml::{Element, Node};
@@ -380,10 +380,10 @@ fn visit<'e>(
 ) {
     head_facts(element, ancestors, hidden, facts);
     order_of(element, orders, &mut facts.order);
-    let hide = hidden || element.name().is(Some(MC), "Fallback");
     ancestors.push(element);
     for node in element.children().iter() {
         if let Node::Element(child) = node {
+            let hide = hidden || ooxml_word_model::mc::unchosen(element, child);
             visit(child, ancestors, hide, orders, facts);
         }
     }

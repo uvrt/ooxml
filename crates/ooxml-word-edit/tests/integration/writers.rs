@@ -429,7 +429,11 @@ fn each_version_reads_as_a_fresh_reading_does() {
             .run(&Caller::anonymous(), &command(&mut rng, &targets, k))
             .unwrap();
         let kept = done.version.doc().docx().unwrap();
-        let fresh = ooxml_word_model::docx::Docx::open(done.version.doc().package()).unwrap();
+        let fresh = ooxml_word_model::docx::Docx::open(
+            done.version.doc().package(),
+            std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+        )
+        .unwrap();
         for (a, b) in kept.parts.iter().zip(&fresh.parts) {
             let ids = |p: &ooxml_word_model::docx::StoryPart| -> Vec<(String, Vec<u32>)> {
                 p.ids

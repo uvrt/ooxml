@@ -99,7 +99,7 @@ impl WordDrawings {
             .ok()
             .and_then(|r| {
                 r.iter()
-                    .find(|r| r.rel_type == THEME)
+                    .find(|r| ooxml_word_model::parts::rel_type_is(&r.rel_type, THEME))
                     .and_then(|r| r.target_part.clone())
             })
             .and_then(|part| package.tree(&part).ok().flatten())
@@ -136,7 +136,7 @@ impl WordDrawings {
                 let rels = self.pictures.package().relationships(main).ok()?;
                 return rels
                     .iter()
-                    .find(|r| r.rel_type == kind)
+                    .find(|r| ooxml_word_model::parts::rel_type_is(&r.rel_type, kind))
                     .and_then(|r| r.target_part.clone());
             }
         }

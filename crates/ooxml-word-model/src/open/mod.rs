@@ -174,17 +174,19 @@ impl std::fmt::Debug for Model {
     }
 }
 
+/// The first part `rels` relates by the type `kind` (`styles`), transitional or strict.
 fn first_of_type(rels: &Relationships, kind: &str) -> Option<String> {
-    rels.targets_of_type(&format!("{OFFICE}/{kind}"))
-        .next()
-        .map(str::to_owned)
+    let wanted = format!("{OFFICE}/{kind}");
+    rels.iter()
+        .filter(|r| crate::parts::rel_type_is(&r.rel_type, &wanted))
+        .find_map(|r| r.target_part.clone())
 }
 
 fn main_part(package: &Package) -> Result<String, WordError> {
     let root = package.relationships("")?;
     let main = root
         .iter()
-        .filter(|r| r.rel_type == format!("{OFFICE}/officeDocument"))
+        .filter(|r| crate::parts::rel_type_is(&r.rel_type, &format!("{OFFICE}/officeDocument")))
         .find_map(|r| r.target_part.clone())
         .unwrap_or_else(|| "word/document.xml".to_owned());
     Ok(main)
@@ -247,7 +249,7 @@ impl Model {
             block_keys: labels::LabelKeys::default(),
             labels: MonoidTree::new(),
             label_memo: Memo::new(Arc::clone(&budget)),
-            names: keys::Names::default(),
+            names: keys::Names::new(Arc::clone(&budget)),
             stats: OpenStats::default(),
             budget,
         }

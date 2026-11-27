@@ -9,8 +9,7 @@ use crate::common::{Never, R, W};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_tools::ToolArgs;
-use ooxml_tools_word::{word_compare_blocks, FollowReport, Others, Version, WordCompareBlocks, WordFollowSample};
-use ooxml_word_model::docx::Versions;
+use ooxml_tools_word::{word_compare_blocks, FollowReport, Others, WordCompareBlocks, WordFollowSample};
 use ooxml_zip::{Method, NewEntry, Writer};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -43,12 +42,11 @@ fn package() -> Package {
 /// opened again.
 fn reply(arguments: Value) -> Value {
     let (mine, copy) = (package(), package());
-    let versions = (Versions::new(), Versions::new());
-    let copy = crate::common::read(&copy);
-    let other = Version::new("b.docx", &copy, 1, &versions.1);
+    let copy = crate::common::doc(&copy);
+    let other = crate::common::version("b.docx", &copy);
     let others = [("d2", other)];
-    let mine = crate::common::read(&mine);
-    let version = Version::new("a.docx", &mine, 1, &versions.0).with_others(Others::new(&others));
+    let mine = crate::common::doc(&mine);
+    let version = crate::common::version("a.docx", &mine).with_others(Others::new(&others));
     let (args, _) = WordCompareBlocks::accept(arguments, Some("docx")).unwrap();
     match word_compare_blocks(&args, &version, &Never) {
         Ok(done) => json!({"summary": done.summary, "data": done.data, "total": done.total}),
@@ -110,9 +108,8 @@ fn compare_on_a_long_document() {
     };
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
-    let versions = Versions::new();
-    let package = crate::common::read(&package);
-    let version = Version::new("long.docx", &package, 1, &versions);
+    let doc = crate::common::doc(&package);
+    let version = crate::common::version("long.docx", &doc);
     let start = std::time::Instant::now();
     let docx = version.docx().unwrap();
     println!("the version read: {:.1} ms", start.elapsed().as_secs_f64() * 1000.0);

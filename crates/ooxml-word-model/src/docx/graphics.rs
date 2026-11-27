@@ -11,12 +11,14 @@
 
 use crate::docx::drawings::{C, DGM};
 use crate::docx::Docx;
-use crate::w::NS_R;
 use ooxml_chart::data::{chart_data, point_json, points_json, ChartData};
 use ooxml_drawingml::diagram::{diagram_nodes, diagram_summary, DiagramNode};
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
 use std::sync::Arc;
+
+/// Relationships named from a part, as docx-agent reads them (transitional only).
+const NS_R: &str = crate::xmlread::Ns::R.uri();
 
 /// What a chart or SmartArt drawing holds.
 #[derive(Debug, Clone, PartialEq)]

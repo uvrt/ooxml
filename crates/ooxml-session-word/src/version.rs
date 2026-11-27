@@ -7,11 +7,9 @@
 use ooxml_session::{Opened, SessionError};
 use ooxml_tools_word::Version;
 use ooxml_word_edit::WordDoc;
-use ooxml_word_model::docx::Versions;
 use ooxml_word_model::WordPackage;
 use serde_json::{Map, Value};
 use std::cell::OnceCell;
-use std::sync::OnceLock;
 
 /// A version of a document as Word's code reads it.
 pub trait WordVersion {
@@ -19,8 +17,10 @@ pub trait WordVersion {
     fn word(&self) -> Option<&WordDoc>;
 
     /// This version as a Word reading tool is handed it: a document the session holds as a
-    /// Word document as its editor reads it, any other package read into `read` (its blocks
-    /// stamped as an open stamps them, `ooxml_word_model::WordPackage::open`).
+    /// Word document with its editor's reading (the document's one chain), any other
+    /// package read into `read` (its blocks stamped as an open stamps them,
+    /// `ooxml_word_model::WordPackage::open`) with no reading: a reading tool refuses it
+    /// ([`Version::docx`]).
     fn version_of<'a>(&'a self, read: &'a OnceCell<WordPackage>) -> Version<'a>;
 
     /// What changed from `before` to this version, as docx-agent's `Result.touched` says it:
@@ -40,17 +40,11 @@ impl WordVersion for Opened {
     }
 
     fn version_of<'a>(&'a self, read: &'a OnceCell<WordPackage>) -> Version<'a> {
-        // (a document Word does not keep readings of: none kept)
-        static NONE: OnceLock<Versions> = OnceLock::new();
-        let versions = self
-            .readings()
-            .downcast_ref::<Versions>()
-            .unwrap_or_else(|| NONE.get_or_init(Versions::new));
         let package = match self.word() {
             Some(word) => word.package(),
             None => read.get_or_init(|| WordPackage::open(self.package().clone()).0),
         };
-        Version::new(self.name(), package, self.version(), versions).with_word(self.word())
+        Version::new(self.name(), package, self.version()).with_word(self.word())
     }
 
     fn touched_since(&self, before: &Opened) -> Result<Vec<Value>, SessionError> {
