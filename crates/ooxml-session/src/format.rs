@@ -484,6 +484,19 @@ struct Of<D: DocModel> {
     package: fn(&D) -> &Package,
 }
 
+/// A version of a document held elsewhere ([`crate::elsewhere`]): its package says nothing.
+struct Elsewhere(Package);
+
+impl Erased for Elsewhere {
+    fn package(&self) -> &Package {
+        &self.0
+    }
+
+    fn snapshot(&self) -> &dyn Any {
+        &()
+    }
+}
+
 impl<D: DocModel> Erased for Of<D> {
     fn package(&self) -> &Package {
         (self.package)(self.snapshot.doc())
@@ -511,6 +524,17 @@ impl AnyVersion {
             seq: snapshot.seq().0,
             number: snapshot.number(),
             held: Arc::new(Of { snapshot, package }),
+        }
+    }
+
+    /// A version of a document the application's own host holds ([`crate::elsewhere`]):
+    /// numbered `seq` and `number` as that host says, `package` an empty one.
+    #[must_use]
+    pub fn elsewhere(seq: u64, number: u64, package: Package) -> Self {
+        Self {
+            seq,
+            number,
+            held: Arc::new(Elsewhere(package)),
         }
     }
 

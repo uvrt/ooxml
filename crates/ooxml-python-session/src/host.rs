@@ -17,6 +17,7 @@ use crate::pages::PyPageSetup;
 use crate::session::to_py;
 use crate::version::PyVersion;
 use ooxml_host::{CallAs, Host, HostSession, HostSettings, HostTools, Opening};
+use ooxml_session::elsewhere::ElsewhereFormat;
 use ooxml_session::numbers::NumberRules;
 use ooxml_session::{DocId, DocKind, Format, PackageFormat, SessionConfig};
 use ooxml_session_word::prelude::*;
@@ -24,6 +25,7 @@ use ooxml_session_word::WordFormat;
 use ooxml_store::StoreConfig;
 use ooxml_tools::compact;
 use ooxml_tools::roles::RoleSet;
+use ooxml_tools::written::HeldValues;
 use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
@@ -62,6 +64,32 @@ fn object_of(text: Option<&str>, what: &str) -> PyResult<Map<String, Value>> {
     }
 }
 
+/// The formats whose documents the application's own host holds (`settings.held`: a list
+/// of `{"kind", "prefixes"}`).
+fn held_formats(value: &Value) -> PyResult<Vec<ElsewhereFormat>> {
+    let wrong =
+        || PyValueError::new_err("settings.held: a list of {\"kind\": \"pptx\" | \"xlsx\", \"prefixes\": [...]}");
+    value
+        .as_array()
+        .ok_or_else(wrong)?
+        .iter()
+        .map(|given| {
+            let kind = given
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(DocKind::parse)
+                .filter(|k| *k != DocKind::Docx)
+                .ok_or_else(wrong)?;
+            let prefixes = given
+                .get("prefixes")
+                .and_then(Value::as_array)
+                .map(|p| p.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+                .unwrap_or_default();
+            Ok(ElsewhereFormat { kind, prefixes })
+        })
+        .collect()
+}
+
 fn roles_of(names: Vec<String>) -> PyResult<RoleSet> {
     RoleSet::parse(names.iter().map(String::as_str)).map_err(PyValueError::new_err)
 }
@@ -80,7 +108,8 @@ impl PyHost {
     /// the fields only the Python host reads are left to it), `roles` (a list of role
     /// names), `log_arguments`, `allow_new_problems`, `numbers` (the rules of `check`'s
     /// numbers), `own_tools` (the application's own tools, which its facade runs: refused
-    /// inside a batch) -- laying its Word documents out with `pages` (a `PageSetup`), docx-agent's
+    /// inside a batch), `held` (the kinds the application's own host holds, each with the
+    /// address prefixes its documents resolve to rows: `[{"kind": "xlsx", "prefixes": ["t:"]}]`) -- laying its Word documents out with `pages` (a `PageSetup`), docx-agent's
     /// `min_text_size` (JSON text: points, or points by kind) and `typography`.
     ///
     /// # Errors
@@ -95,6 +124,7 @@ impl PyHost {
     ) -> PyResult<Self> {
         let given = object_of(settings, "settings")?;
         let mut host = HostSettings::default();
+        let mut held: Vec<ElsewhereFormat> = Vec::new();
         for (key, value) in &given {
             match key.as_str() {
                 "limits" => {
@@ -107,6 +137,7 @@ impl PyHost {
                 "log_arguments" => host.log_arguments = value.as_bool().unwrap_or(false),
                 "allow_new_problems" => host.allow_new_problems = value.as_bool().unwrap_or(false),
                 "numbers" => host.numbers = NumberRules::from_json(value).map_err(PyValueError::new_err)?,
+                "held" => held = held_formats(value)?,
                 "own_tools" => {
                     host.own_tools = value
                         .as_array()
@@ -127,11 +158,13 @@ impl PyHost {
             min_text_size: minimum,
             as_given: !typography,
         };
-        let formats: Vec<Arc<dyn Format>> = vec![
-            Arc::new(word),
-            Arc::new(PackageFormat(DocKind::Pptx)),
-            Arc::new(PackageFormat(DocKind::Xlsx)),
-        ];
+        let mut formats: Vec<Arc<dyn Format>> = vec![Arc::new(word)];
+        for kind in [DocKind::Pptx, DocKind::Xlsx] {
+            formats.push(match held.iter().find(|f| f.kind == kind) {
+                Some(found) => Arc::new(found.clone()),
+                None => Arc::new(PackageFormat(kind)),
+            });
+        }
         Ok(Self {
             inner: Arc::new(Host::new(formats, host, Arc::new(HostTools))),
         })
@@ -175,8 +208,10 @@ impl PyHost {
 type Reply = (String, Vec<(String, String, Py<PyBytes>)>, AppPart);
 
 /// What only the application reads of a call, as plain values: `(touched, touched_by_op,
-/// changed_parts, timing, memory, budget, record)` -- the lists as JSON text, `None` where
-/// empty; `timing` `(total, lock_wait, work, held, cpu)` in seconds; the record ([`RecordRow`]).
+/// changed_parts, timing, memory, budget, record, missed)` -- the lists as JSON text, `None`
+/// where empty; `timing` `(total, lock_wait, work, held, cpu)` in seconds; the record
+/// ([`RecordRow`]); `missed`, what the call asked of the documents the application's own host
+/// holds that it did not resolve (`[{"doc", "address"}]`), for it to resolve and call again.
 type AppPart = (
     Option<String>,
     Option<String>,
@@ -185,6 +220,7 @@ type AppPart = (
     Option<String>,
     Option<usize>,
     RecordRow,
+    Option<String>,
 );
 
 /// A call's record: `(tool, docs, digest, shape, ok, code, summary, duration, version,
@@ -203,6 +239,10 @@ type RecordRow = (
     Option<Vec<String>>,
     Option<String>,
 );
+
+/// A kept dataset as the application reads it: `(serial, entry, values, stale, closed,
+/// source_version)` (`HostSession.dataset`).
+type KeptRow = (u64, String, Option<String>, bool, bool, Option<u64>);
 
 /// One saved document: `(doc, name, kind, version, bytes, state)`.
 type SavedRow = (String, String, &'static str, u64, Py<PyBytes>, Option<String>);
@@ -284,6 +324,48 @@ impl PyHostSession {
         py.detach(|| session.open_with(bytes, name, &how))
             .map(|id| id.to_string())
             .map_err(|e| refused(&e))
+    }
+
+    /// A document the application's own host opened (`kind`, its `size` in bytes, at state
+    /// `version`): its id (`d2`), from the session's one counter (`doc_id`: the
+    /// application's), the session's room counted.
+    ///
+    /// # Errors
+    /// `OpenRefused`, in today's words.
+    #[pyo3(signature = (kind, *, name, size, version = 0, source = None, doc_id = None))]
+    #[allow(clippy::too_many_arguments)] // (Session.open's keywords, as Python passes them)
+    fn hold(
+        &self,
+        kind: &str,
+        name: &str,
+        size: u64,
+        version: u64,
+        source: Option<&str>,
+        doc_id: Option<&str>,
+    ) -> PyResult<String> {
+        let kind = DocKind::parse(kind)
+            .ok_or_else(|| refused(&ooxml_host::OpenRefused::Argument(format!("no format {kind:?}"))))?;
+        let how = Opening {
+            kind: Some(kind),
+            source,
+            doc_id,
+            state: None,
+        };
+        self.inner
+            .hold(kind, name, size, version, &how)
+            .map(|id| id.to_string())
+            .map_err(|e| refused(&e))
+    }
+
+    /// The application's own host's document `doc` is at state `version` now.
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ValueError` for one the session holds itself.
+    fn held_moved(&self, doc: &str, version: u64) -> PyResult<()> {
+        let id = self.doc(doc)?;
+        self.inner
+            .held_moved(&id, version)
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// Register an input: its handle (`b1`).
@@ -487,11 +569,14 @@ impl PyHostSession {
 
     /// Run the tool `name` with `arguments` (JSON text) as `roles` (role names; `None`: the
     /// session's) for `context` (JSON text: the caller's), its writes dated `date`
-    /// (`2026-11-20T09:30:15Z`, the application's clock; `None`: the system's).
+    /// (`2026-11-20T09:30:15Z`, the application's clock; `None`: the system's), with what the
+    /// application resolved of the documents its own host holds (`held`: JSON text, as
+    /// `HeldValues::list_from_json` reads it; the values channel).
     ///
     /// # Errors
     /// `ValueError` for roles the session does not hold (the application's mistake).
-    #[pyo3(signature = (name, arguments, *, roles = None, context = None, date = None))]
+    #[pyo3(signature = (name, arguments, *, roles = None, context = None, date = None, held = None))]
+    #[allow(clippy::too_many_arguments)] // (a call's keywords, as Python passes them)
     fn call(
         &self,
         py: Python<'_>,
@@ -500,12 +585,33 @@ impl PyHostSession {
         roles: Option<Vec<String>>,
         context: Option<&str>,
         date: Option<String>,
+        held: Option<&str>,
     ) -> PyResult<Reply> {
+        let mut held = match held {
+            Some(text) => HeldValues::list_from_json(&json_of(text, "held")?).map_err(PyValueError::new_err)?,
+            None => Vec::new(),
+        };
+        // (every document the application's own host holds, so what the call asks of one is
+        // noted even where nothing of it was resolved)
+        let holding: Vec<String> = self.inner.stores().held.keys().cloned().collect();
+        for doc in holding {
+            if !held.iter().any(|v| v.doc == doc) {
+                held.push(HeldValues {
+                    doc,
+                    ..HeldValues::default()
+                });
+            }
+        }
+        let missed: Vec<(String, ooxml_tools::written::Missed)> =
+            held.iter().map(|v| (v.doc.clone(), v.missed.clone())).collect();
         let how = CallAs {
             roles: roles.map(roles_of).transpose()?,
             context: Some(object_of(context, "context")?).filter(|c| !c.is_empty()),
+            values: ooxml_tools::written::CallValues {
+                held,
+                ..ooxml_tools::written::CallValues::default()
+            },
             date,
-            ..CallAs::default()
         };
         let session = &self.inner;
         let (text, files, app) = py
@@ -515,7 +621,7 @@ impl PyHostSession {
                 let given = serde_json::from_str(&arguments).unwrap_or(Value::String(arguments));
                 let (mut result, record) = session.call_recorded(name, given, &how)?;
                 let files = std::mem::take(&mut result.app.files);
-                let app = app_part(&result, record);
+                let app = app_part(&result, record, &missed);
                 Ok((compact(&Value::Object(result.to_json())), files, app))
             })
             .map_err(|ooxml_host::NotRun::Roles(why)| PyValueError::new_err(why))?;
@@ -575,7 +681,8 @@ impl PyHostSession {
     }
 
     /// The dataset `id` (no `d:`) as the application reads it: `(serial, entry, values,
-    /// stale, closed)` -- `entry` the JSON text of its id, origin, time and source; `values`
+    /// stale, closed, source_version)` -- `entry` the JSON text of its id, origin, time and
+    /// source; `source_version` its source document's version now; `values`
     /// the JSON text of its dataset, `None` where `have` is its serial already (the caller's
     /// copy is of this keeping); `None` where there is no such dataset.
     #[pyo3(signature = (id, have = None))]
@@ -584,7 +691,7 @@ impl PyHostSession {
         py: Python<'_>,
         id: &str,
         have: Option<u64>,
-    ) -> Option<(u64, String, Option<String>, bool, bool)> {
+    ) -> Option<KeptRow> {
         let session = &self.inner;
         py.detach(|| {
             let kept = session.kept_dataset(id)?;
@@ -595,6 +702,7 @@ impl PyHostSession {
                 values,
                 kept.stale,
                 kept.closed,
+                kept.source_version,
             ))
         })
     }
@@ -690,7 +798,19 @@ impl PyHostSession {
 }
 
 /// What only the application reads of `result`, with its `record`.
-fn app_part(result: &ooxml_tools::ToolResult<Value>, record: ooxml_host::CallRecord) -> AppPart {
+fn app_part(
+    result: &ooxml_tools::ToolResult<Value>,
+    record: ooxml_host::CallRecord,
+    missed: &[(String, ooxml_tools::written::Missed)],
+) -> AppPart {
+    let missed: Vec<Value> = missed
+        .iter()
+        .flat_map(|(doc, m)| {
+            m.addresses()
+                .into_iter()
+                .map(move |address| serde_json::json!({"doc": doc, "address": address}))
+        })
+        .collect();
     let app = &result.app;
     let listed = |items: &[Value]| (!items.is_empty()).then(|| compact(&Value::from(items.to_vec())));
     let by_op = (!app.touched_by_op.is_empty()).then(|| {
@@ -728,5 +848,6 @@ fn app_part(result: &ooxml_tools::ToolResult<Value>, record: ooxml_host::CallRec
         memory,
         app.budget,
         row,
+        (!missed.is_empty()).then(|| compact(&Value::from(missed))),
     )
 }

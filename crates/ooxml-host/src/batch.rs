@@ -886,7 +886,7 @@ impl Run<'_> {
             .map_err(|error| Failed { error, own: false })?;
         // 6.-8. its sources, the datasets it names, its references (as the call alone)
         let valued = host
-            .with_values(entry, doc, with.arguments, retry, datasets)
+            .with_values(entry, doc, with.arguments, retry, datasets, &self.values.held)
             .map_err(|refused| Failed {
                 error: refused.error,
                 own: false,
@@ -928,6 +928,7 @@ impl Run<'_> {
             retry,
             (edit, alone, |ran: &mut InBatch| &mut ran.result),
         );
+        crate::values::report_facts(&mut run.result, &context.values.written);
         // what the host adds to the tool's reply (check's validation), of the version it read
         let read = txn.zip(id.as_ref()).and_then(|(txn, id)| {
             let format = host.session.format_doc(id).ok()?;

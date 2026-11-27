@@ -141,17 +141,11 @@ DEFERRED: dict[str, str] = {
         "word_insert_markdown from data (from, blob)",
     "test_served_fields.py::test_rows_from_a_dataset_stay_the_hosts":
         "word_insert_markdown from data (from, blob)",
-    "test_sync_from_r56.py::test_other_froms_of_the_document_say_the_same[word_insert_markdown-arguments0]":
-        "word_insert_markdown from data (from, blob)",
-    "test_tables_from_data.py::test_a_dataset_named_like_nothing_drawn_gets_no_drawing_hint":
-        "word_insert_markdown from data (from, blob)",
     "test_tables_from_data.py::test_a_date_columns_iso_text_is_written_in_the_sessions_locale[None-due0]":
         "word_insert_markdown from data (from, blob)",
     "test_tables_from_data.py::test_a_date_columns_iso_text_is_written_in_the_sessions_locale[locale1-due1]":
         "word_insert_markdown from data (from, blob)",
     "test_tables_from_data.py::test_a_date_format_is_checked_for_a_table":
-        "word_insert_markdown from data (from, blob)",
-    "test_tables_from_data.py::test_a_drawings_id_as_from_is_named_a_drawing_not_a_dataset":
         "word_insert_markdown from data (from, blob)",
     "test_tables_from_data.py::test_a_header_given_or_none":
         "word_insert_markdown from data (from, blob)",

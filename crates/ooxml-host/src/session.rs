@@ -155,6 +155,7 @@ impl Host {
                 datasets: DatasetStore::new(settings.datasets),
                 refs: BTreeMap::new(),
                 docs: BTreeMap::new(),
+                held: BTreeMap::new(),
                 keys: RetryKeys::default(),
                 log: Vec::new(),
                 numbers: None,
@@ -224,6 +225,8 @@ pub struct Stores {
     pub refs: BTreeMap<String, RefTable>,
     /// What the session keeps of each open document beside its versions, by its id.
     pub docs: BTreeMap<String, crate::documents::Held>,
+    /// The stand-ins of the open documents the application's own host holds, by id.
+    pub held: BTreeMap<String, Arc<ooxml_session::elsewhere::HeldElsewhere>>,
     /// The retry keys.
     pub keys: RetryKeys,
     /// Every call's record, in order.
@@ -319,6 +322,7 @@ impl HostSession {
         self.session.close(doc)?;
         let mut stores = self.stores();
         stores.docs.remove(&doc.to_string());
+        stores.held.remove(&doc.to_string());
         stores.keys.forget(&doc.to_string());
         Ok(stores.datasets.document_closed(&doc.to_string(), Some(head)))
     }

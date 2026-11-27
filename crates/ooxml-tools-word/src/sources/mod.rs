@@ -61,15 +61,19 @@ pub(crate) fn refused_source(
 /// worded it, at its argument.
 pub(crate) fn value_refusal(refused: &SourceRefused, retry: &TryCall) -> ToolError {
     let field = refused.field.clone().unwrap_or_else(|| "from".to_owned());
-    match refused.code {
+    let error = match refused.code {
         ErrorCode::Refusal(code) => ToolError::refusal(
             code,
             refused.message.clone(),
             WayOut::names(refused.options.iter().cloned()).unwrap_or_else(|| WayOut::call(retry.clone())),
         ),
         ErrorCode::Failure(code) => ToolError::failure(code, refused.message.clone()),
-    }
-    .at(field)
+    };
+    refused
+        .details
+        .iter()
+        .fold(error, |error, (key, value)| error.with_detail(key, value.clone()))
+        .at(field)
 }
 
 /// The refusal of a source the host handed no rows for: a dataset as ooxml-edit's

@@ -23,6 +23,7 @@ use ooxml_session::{CallContext, CallRefs, DocId, RefOwner};
 use ooxml_store::Caller;
 use ooxml_tools::blobs::BlobList;
 use ooxml_tools::roles::RoleSet;
+use ooxml_tools::written::CallValues;
 use ooxml_tools::{Holding, OpEffects, Outcome, PlaceKind, ToolError, ToolResult, TryCall};
 use serde_json::{Map, Value};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -240,7 +241,7 @@ impl HostSession {
         // 6.-8. its sources, the datasets it names, its references
         let mut datasets = CallDatasets::new();
         let (WithValues { arguments, values, .. }, served) =
-            match self.values_of(entry, &doc, arguments, retry, &mut datasets, served) {
+            match self.values_of(entry, &doc, arguments, (retry, &going.values), &mut datasets, served) {
                 Ok(found) => found,
                 Err(refused) => return *refused,
             };
@@ -257,6 +258,7 @@ impl HostSession {
         context.values = values;
         context.values.merge(going.values.clone());
         let (mut result, made) = self.handler(entry, &doc, arguments, &context, retry);
+        crate::values::report_facts(&mut result, &context.values.written);
         if let Some(made) = &made {
             going.lock = made.lock;
         }
@@ -327,12 +329,12 @@ impl HostSession {
         entry: &Entry,
         doc: &str,
         arguments: Map<String, Value>,
-        retry: &TryCall,
+        (retry, given): (&TryCall, &CallValues),
         datasets: &mut CallDatasets,
         served: bool,
     ) -> Result<(WithValues, bool), Box<ToolResult<Value>>> {
         let other = |held: &[String]| held.iter().any(|h| h != doc);
-        match self.with_values(entry, doc, arguments, retry, datasets) {
+        match self.with_values(entry, doc, arguments, retry, datasets, &given.held) {
             Ok(found) => {
                 let served = served && !other(&found.held);
                 Ok((found, served))

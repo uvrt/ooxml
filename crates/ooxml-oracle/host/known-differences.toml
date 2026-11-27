@@ -134,6 +134,33 @@ Rust host names the first in the call's order (ph3-diff F2, found by F1 #396).""
 
 [[difference]]
 rule = 1
+stream = "mixed/features/datasets"
+case = "features/datasets::datasets_derived_and_written#1"
+tool = "word_insert_markdown"
+arguments = { from = "d:nothing" }
+fields = ["result.error", "result.doc", "result.version"]
+cause = "Phase 3 E1b-2 (the mixed stream through the facade, until R138): a from naming rows is checked and read as a declared source before word_insert_markdown refuses it as not supported yet; today's adapter never resolved it"
+
+[[difference]]
+rule = 1
+stream = "mixed/features/datasets"
+case = "features/datasets::sources_named_by_table_and_cell#1"
+tool = "word_insert_markdown"
+arguments = { from = "t:Nope" }
+fields = ["result.error", "result.doc", "result.version"]
+cause = "Phase 3 E1b-2 (the mixed stream through the facade, until R138): a from naming rows is checked and read as a declared source before word_insert_markdown refuses it as not supported yet; today's adapter never resolved it"
+
+[[difference]]
+rule = 1
+stream = "mixed/features/datasets"
+case = "features/datasets::sources_named_by_table_and_cell#1"
+tool = "word_insert_markdown"
+arguments = { from = "t:Notes/N-1/Body" }
+fields = ["result.error.field"]
+cause = "Phase 3 E1b-2 (ooxml-host, the values channel): a workbook's refusal of the one value a from names is said at the argument naming it (field from), as the Rust host says every refusal of a value a source names (rule 2); the Python host left it unnamed"
+
+[[difference]]
+rule = 1
 stream = "frozen/values"
 case = "*test_numbers.py::test_a_table_placed_from_a_source_and_a_range_narrow_what_is_read"
 tool = "word_insert_markdown"

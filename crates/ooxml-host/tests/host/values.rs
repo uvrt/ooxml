@@ -148,3 +148,110 @@ fn the_applications_images_and_outputs_are_the_sessions() {
     assert_eq!(taken[0].name, "notes.txt");
     assert!(s.take_outputs().is_empty());
 }
+
+mod held_elsewhere {
+    //! The values channel (design phase 3): a document the application's own host holds is a
+    //! stand-in in the session -- one id counter, one room -- whose rows a call reads only as
+    //! the application resolved them for it.
+
+    use super::*;
+    use crate::toy::session_holding_elsewhere;
+    use ooxml_host::{CallAs, Opening};
+    use ooxml_tools::written::{CallValues, HeldValues};
+    use serde_json::Value;
+
+    fn sales() -> Dataset {
+        let row = |region: &str, units: i64| vec![Cell::Text(region.into()), Cell::Int(units.to_string())];
+        Dataset::new(
+            vec!["Region".into(), "Units".into()],
+            vec![row("North", 3), row("South", 5)],
+        )
+        .unwrap()
+    }
+
+    fn holding() -> ooxml_host::HostSession {
+        let s = session_holding_elsewhere();
+        let how = Opening {
+            source: Some("app"),
+            ..Opening::default()
+        };
+        let id = s
+            .hold(ooxml_session::DocKind::Xlsx, "sales.xlsx", 2_000, 4, &how)
+            .unwrap();
+        assert_eq!(id.to_string(), "d2", "the next id of the session's one counter");
+        s
+    }
+
+    fn with(held: Vec<HeldValues>) -> CallAs {
+        CallAs {
+            values: CallValues {
+                held,
+                ..CallValues::default()
+            },
+            ..CallAs::default()
+        }
+    }
+
+    #[test]
+    fn a_held_documents_rows_are_read_as_the_application_resolved_them() {
+        let s = holding();
+        let values = HeldValues {
+            doc: "d2".into(),
+            answers: vec![("t:Sales".into(), Ok(sales()))],
+            value_sources: Some(vec!["t:Sales".into()]),
+            ..HeldValues::default()
+        };
+        let reply = Value::Object(
+            s.call("toy_fill", json!({"doc": "d1", "from": "t:Sales"}), &with(vec![values]))
+                .unwrap()
+                .to_json(),
+        );
+        assert_eq!(
+            reply["data"]["rows"],
+            json!([{"given": "d2/t:Sales", "address": "d2/t:Sales", "rows": 2}]),
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn rows_not_resolved_for_the_call_are_an_internal_error_naming_the_stand_in() {
+        let s = holding();
+        let reply = Value::Object(
+            s.call("toy_fill", json!({"doc": "d1", "from": "t:Sales"}), &CallAs::default())
+                .unwrap()
+                .to_json(),
+        );
+        assert_eq!(reply["error"]["code"], "internal", "{reply}");
+        let message = reply["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("the application's own host holds (a stand-in here)"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn a_held_documents_version_is_what_the_application_says_and_closing_frees_its_room() {
+        let s = holding();
+        let id = ooxml_session::DocId::parse("d2").unwrap();
+        assert_eq!(s.session().snapshot(&id).unwrap().number(), 4);
+        s.held_moved(&id, 7).unwrap();
+        assert_eq!(s.session().snapshot(&id).unwrap().number(), 7);
+        let d1 = ooxml_session::DocId::parse("d1").unwrap();
+        assert!(s.held_moved(&d1, 1).is_err(), "the session holds d1 itself");
+        assert!(s
+            .session()
+            .format_doc(&id)
+            .unwrap()
+            .save(&s.session().snapshot(&id).unwrap().any().clone(), false)
+            .is_err());
+        s.close(&id).unwrap();
+        assert!(s.held_moved(&id, 8).is_err());
+        let again = s
+            .hold(ooxml_session::DocKind::Xlsx, "other.xlsx", 10, 0, &Opening::default())
+            .unwrap();
+        assert_eq!(again.to_string(), "d3", "ids are never given twice");
+        assert!(s
+            .hold(ooxml_session::DocKind::Docx, "x.docx", 10, 0, &Opening::default())
+            .is_err());
+    }
+}

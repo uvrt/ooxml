@@ -24,7 +24,7 @@ use ooxml_session::{AnyVersion, DocId, Format, FormatDoc};
 use ooxml_tools::datasets::{dataset_id, row_range, DATASET_PREFIX};
 use ooxml_tools::sources::qualify;
 use ooxml_tools::sources::{SourceRefused, SourceRows};
-use ooxml_tools::written::{CallValues, HeldTable, OneValue, Written};
+use ooxml_tools::written::{CallValues, HeldTable, HeldValues, OneValue, Written};
 use ooxml_tools::{ErrorCode, Holding, Refusal, ToolError, TryCall, WayOut};
 use serde_json::{Map, Value};
 use std::cell::RefCell;
@@ -85,6 +85,7 @@ impl HostSession {
         arguments: Map<String, Value>,
         retry: &TryCall,
         datasets: &mut CallDatasets,
+        held: &[HeldValues],
     ) -> Result<WithValues, Refused> {
         let sources = entry.spec.paths(Holding::Sources);
         let named = entry.spec.paths(Holding::Datasets);
@@ -96,7 +97,7 @@ impl HostSession {
                 held: Vec::new(),
             });
         }
-        let opens = self.opens();
+        let opens = self.opens(held);
         let host = sources_of(&self.host.formats, &opens, retry);
         // (the session's datasets as they stand: read without the stores' lock held)
         let store: DatasetStore = self.stores().datasets.clone();
@@ -172,9 +173,10 @@ impl HostSession {
     pub(crate) fn with_facts<R>(
         &self,
         retry: &TryCall,
+        held: &[HeldValues],
         read: impl FnOnce(&dyn Fn(&str) -> Result<String, String>) -> R,
     ) -> R {
-        let opens = self.opens();
+        let opens = self.opens(held);
         let host = sources_of(&self.host.formats, &opens, retry);
         let store: DatasetStore = self.stores().datasets.clone();
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
@@ -219,18 +221,20 @@ impl HostSession {
     /// # Errors
     /// `limit`: the session would keep over its limit.
     pub(crate) fn finish_datasets(&self, datasets: CallDatasets) -> Result<Vec<String>, ToolError> {
-        let opens = self.opens();
+        let opens = self.opens(&[]);
         let heads = |d: &str| opens.iter().find(|o| o.handle == d).map(|o| o.at.number());
         datasets.finish(&mut self.stores().datasets, &heads)
     }
 
-    /// The open documents, each at its head.
-    fn opens(&self) -> Vec<Open> {
+    /// The open documents, each at its head; one the application's own host holds as the
+    /// call reads it, with what the application resolved of it (`held`).
+    fn opens(&self, held: &[HeldValues]) -> Vec<Open> {
         let mut out = Vec::new();
         for id in self.session.documents() {
             let (Ok(opened), Ok(doc)) = (self.session.snapshot(&id), self.session.format_doc(&id)) else {
                 continue;
             };
+            let doc = self.answering(&id, doc, held);
             let Some(format) = self.host.formats.iter().find(|f| f.kind() == opened.kind()) else {
                 continue;
             };
@@ -243,6 +247,47 @@ impl HostSession {
             });
         }
         out
+    }
+}
+
+impl HostSession {
+    /// `doc`, the open document `id`, as the call reads it: a stand-in of a document the
+    /// application's own host holds answering with what the application resolved of it for
+    /// the call (`held`; nothing resolved: every read refused); any other as it is.
+    pub(crate) fn answering(&self, id: &DocId, doc: Arc<dyn FormatDoc>, held: &[HeldValues]) -> Arc<dyn FormatDoc> {
+        let handle = id.to_string();
+        let Some(stand_in) = self.stores().held.get(&handle).cloned() else {
+            return doc;
+        };
+        let values = held.iter().find(|v| v.doc == handle).cloned().unwrap_or(HeldValues {
+            doc: handle,
+            ..HeldValues::default()
+        });
+        stand_in.answering(values)
+    }
+}
+
+/// The values a call wrote for references, in its reply's `data.facts` where its tool said
+/// none of its own (ooxml-edit's `_report_facts`): each reference, the text written and its
+/// sources.
+pub(crate) fn report_facts(result: &mut ooxml_tools::ToolResult<Value>, written: &[Written]) {
+    if written.is_empty() {
+        return;
+    }
+    let ooxml_tools::Outcome::Done(done) = &mut result.outcome else {
+        return;
+    };
+    let said: Vec<Value> = written.iter().map(|w| Value::Object(w.brief.clone())).collect();
+    match &mut done.data {
+        None => {
+            let mut data = Map::new();
+            data.insert("facts".into(), Value::from(said));
+            done.data = Some(Value::Object(data));
+        }
+        Some(Value::Object(data)) if !data.contains_key("facts") => {
+            data.insert("facts".into(), Value::from(said));
+        }
+        Some(_) => {}
     }
 }
 
@@ -330,7 +375,7 @@ fn read_values(
                 text: fact.text.clone(),
                 record: fact.record.clone(),
                 brief: fact.brief(),
-                markdown: None,
+                markdown: fact_markdown(&fact.address, &fact.field, call, env, store),
             })
             .collect(),
         ..CallValues::default()
@@ -487,6 +532,23 @@ fn read_source(
     Ok(())
 }
 
+/// The Markdown of the one value a reference writes (`{{d:notes/Roof/body}}`), where its dataset
+/// holds one apart from its text (docx-agent's `written_json`: a reference standing alone as a
+/// paragraph writes it as blocks); `None` for any other.
+fn fact_markdown(
+    address: &str,
+    field: &str,
+    call: &CallSources<'_>,
+    env: &FactEnv<'_>,
+    store: &DatasetStore,
+) -> Option<String> {
+    if !address.starts_with(DATASET_PREFIX) {
+        return None;
+    }
+    let (rows, row, column) = one_value(address, field, env, call).ok()?;
+    dataset_markdown(address, store, &rows, row, column)
+}
+
 /// A source address as a message shows it: without its document handle or format.
 fn shown(address: &str) -> &str {
     unhandled(ooxml_session::facts::strip_format(address))
@@ -509,6 +571,7 @@ fn refused(given: &str, field: Option<&str>, error: &ToolError) -> SourceRefused
             .collect(),
         field: field.map(str::to_owned),
         code: error.code(),
+        details: error.details().clone(),
     }
 }
 

@@ -158,7 +158,7 @@ class KeptEntry(DatasetEntry):
     the store keeps another dataset under its id)."""
 
     def __init__(self, store: "HostDatasets", serial: int, meta: Mapping[str, Any], dataset: Dataset,
-                 stale: bool, closed: bool) -> None:
+                 now: tuple[bool, bool, int | None]) -> None:
         source = meta["source"]
         super().__init__(meta["id"], dataset, doc=source.get("doc"), kind=source.get("kind"),
                          name=source.get("name"), version=source.get("version"),
@@ -167,9 +167,9 @@ class KeptEntry(DatasetEntry):
         #: Where its values came from, as the store said: what one derived from it inherits.
         self.store_source: dict[str, Any] = dict(source)
         self._store = store
-        self._now = (stale, closed)
+        self._now = now
 
-    def _state(self) -> tuple[bool, bool]:
+    def _state(self) -> tuple[bool, bool, int | None]:
         found = self._store.state(self.id, self.serial)
         if found is not None:
             self._now = found
@@ -185,7 +185,8 @@ class KeptEntry(DatasetEntry):
 
     @property
     def source_version(self) -> int | None:
-        return None if self.closed else self.version
+        """The source's version now; ``None`` once closed (or with no source)."""
+        return self._state()[2]
 
     def follow_live(self) -> None:
         """The store follows its source itself."""
@@ -212,8 +213,11 @@ class HostDatasets:
     """A session's datasets on the Rust host (its ``HostSession``, :attr:`rust`), as Python
     reads and keeps them."""
 
-    def __init__(self, rust: Any) -> None:
+    def __init__(self, rust: Any, *, before: Any = None) -> None:
         self.rust = rust
+        #: Called before the store is read: the Rust session told where the documents the
+        #: Python host holds are now (:meth:`~.hosted.HostedSession.sync_held`).
+        self._before = before or (lambda: None)
         self._lock = threading.Lock()
         #: By id: the serial of the keeping and its values, as Python has them.
         self._values: dict[str, tuple[int, Dataset]] = {}
@@ -248,30 +252,32 @@ class HostDatasets:
         """The dataset ``id`` (no ``d:``) as the store keeps it now; ``None`` for none."""
         with self._lock:
             have = self._values.get(id)
+        self._before()
         found = self.rust.dataset(id, have[0] if have is not None else None)
         with self._lock:
             if found is None:
                 self._values.pop(id, None)
                 self._views.pop(id, None)
                 return None
-            serial, meta, values, stale, closed = found
+            serial, meta, values, stale, closed, version = found
             view = self._views.get(id)
             if view is not None and view.serial == serial:
-                view._now = (stale, closed)
+                view._now = (stale, closed, version)
                 return view
             if values is not None:
                 self._values[id] = (serial, dataset_of(json.loads(values)))
-            view = KeptEntry(self, serial, json.loads(meta), self._values[id][1], stale, closed)
+            view = KeptEntry(self, serial, json.loads(meta), self._values[id][1], (stale, closed, version))
             self._views[id] = view
             return view
 
-    def state(self, id: str, serial: int) -> tuple[bool, bool] | None:
-        """Whether the dataset ``id``'s keeping ``serial`` is stale and closed now; ``None``
-        once another keeping has its id."""
+    def state(self, id: str, serial: int) -> tuple[bool, bool, int | None] | None:
+        """Whether the dataset ``id``'s keeping ``serial`` is stale and closed now, and its
+        source's version now; ``None`` once another keeping has its id."""
+        self._before()
         found = self.rust.dataset(id, serial)
         if found is None or found[0] != serial:
             return None
-        return found[3], found[4]
+        return found[3], found[4], found[5]
 
     def ids(self) -> list[str]:
         """Every dataset's address, in the order defined."""
