@@ -10,7 +10,7 @@ host (``ooxml_core.Host``, one per toolbox; ``HostSession``, one per session).
 - An application's own tool runs in the facade, and inside a Rust batch is refused with the way
   out "call it alone".
 - ``dispatch_many`` runs a turn over the facade, each result the one the order given has.
-- ``docx_format``'s settings reach the host's Word format.
+- ``docx_format``'s settings reach the host's Word format (a minimum text size, one number or by kind; typography).
 
 Every document is made up.
 """
@@ -172,22 +172,21 @@ def test_dispatch_many_answers_as_the_calls_in_the_order_given(box):
 # -- the format's settings -----------------------------------------------------------------------
 
 
-def test_docx_formats_min_text_size_is_checks_minimum_and_by_kind_is_refused_with_the_way_out():
+def test_docx_formats_min_text_size_reaches_check_as_one_number_or_by_kind():
     small = '<w:p><w:r><w:rPr><w:sz w:val="12"/></w:rPr><w:t>small print</w:t></w:r></w:p>'
     data = word_docs.with_body(small)
-    with Toolbox(TOOLS, formats=[docx_format(min_text_size=10)], groups=GROUPS, workers=0) as toolbox:
+    for minimum in (10, {"body": 10}):
+        with Toolbox(TOOLS, formats=[docx_format(min_text_size=minimum)], groups=GROUPS, workers=0) as toolbox:
+            session = toolbox.session(clock=clock)
+            doc = session.open(data, "small.docx")
+            checked = toolbox.dispatch(session, "check", {"doc": doc, "include": ["layout"]})
+            assert checked.ok, checked.to_json()
+            assert checked.data["layout"].get("small_text"), (minimum, checked.data)
+    with Toolbox(TOOLS, formats=[docx_format(min_text_size={"table": 10})], groups=GROUPS, workers=0) as toolbox:
         session = toolbox.session(clock=clock)
         doc = session.open(data, "small.docx")
         checked = toolbox.dispatch(session, "check", {"doc": doc, "include": ["layout"]})
-        assert checked.ok, checked.to_json()
-        assert "small_text" in str(checked.data)
-    with Toolbox(TOOLS, formats=[docx_format(min_text_size={"body": 10})], groups=GROUPS, workers=0) as toolbox:
-        session = toolbox.session(clock=clock)
-        doc = session.open(data, "small.docx")
-        refused = toolbox.dispatch(session, "check", {"doc": doc, "include": ["layout"]})
-        assert not refused.ok
-        assert refused.error.details["not_supported"] == "check: min_text_size by kind"
-        assert refused.error.try_call["arguments"]["min_size"] == 9
+        assert checked.ok and not checked.data["layout"].get("small_text"), "a kind left out is not checked"
 
 
 def test_docx_formats_typography_off_writes_text_as_given():
