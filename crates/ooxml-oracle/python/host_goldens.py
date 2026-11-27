@@ -100,6 +100,7 @@ import fnmatch
 import hashlib
 import io
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -654,21 +655,31 @@ class Recorder:
             return {"saved": {"doc": value.doc, "name": value.name, "kind": value.kind, "version": value.version,
                               "parts": part_digests(value.data), "state": plain(value.state)}}
 
+        from ooxml_edit.tools.hosted import HostedSession
+
         patch(Session, "__init__", init)
-        patch(Session, "open", lambda o: app_call("open", o, open_args, returned))
-        patch(Session, "add_blob", lambda o: app_call("blob", o, blob_args, returned))
-        patch(Session, "close", lambda o: app_call("close", o, lambda doc_id: {"doc": doc_id}, returned))
-        patch(Session, "save", lambda o: app_call("save", o, lambda doc_id: {"doc": doc_id}, saved))
-        patch(Session, "new_round", lambda o: app_call("new_round", o, lambda: {}, lambda _v: {}))
+        # (a session on the Rust host, Phase 3 E1, answers the application's calls itself)
+        sessions = (Session, HostedSession)
+
+        def patch_sessions(name: str, make: Callable[[Callable], Callable]) -> None:
+            for owner in sessions:
+                if name in owner.__dict__:
+                    patch(owner, name, make)
+
+        patch_sessions("open", lambda o: app_call("open", o, open_args, returned))
+        patch_sessions("add_blob", lambda o: app_call("blob", o, blob_args, returned))
+        patch_sessions("close", lambda o: app_call("close", o, lambda doc_id: {"doc": doc_id}, returned))
+        patch_sessions("save", lambda o: app_call("save", o, lambda doc_id: {"doc": doc_id}, saved))
+        patch_sessions("new_round", lambda o: app_call("new_round", o, lambda: {}, lambda _v: {}))
         for name in ("undo", "redo"):
-            patch(Session, name, lambda o, name=name: app_call(name, o, history_args, returned))
+            patch_sessions(name, lambda o, name=name: app_call(name, o, history_args, returned))
             patch(SessionView, name, lambda o, name=name: app_call(name, o, history_args, returned))
         for name, why in (("adopt", "a document adopted from Python objects"),
                           ("keep_datasets", "datasets kept by the application"),
                           ("drop_dataset", "a dataset dropped by the application"),
                           ("commit", "a commit by the application"),
                           ("owned_history", "history read by the application")):
-            patch(Session, name, lambda o, why=why: self._tainting(o, why))
+            patch_sessions(name, lambda o, why=why: self._tainting(o, why))
 
         def add_output(original):
             def wrapper(session, output):
@@ -1173,14 +1184,25 @@ def unlisted(stream: str, case: str, found: list[dict], entries: list[dict]) -> 
                 continue
             if "arguments" in entry and not _subset(difference.get("arguments"), entry["arguments"]):
                 continue
-            admitted = [p for p in paths if any(p == f or p.startswith(f + ".") or p.startswith(f + "[")
-                                                for f in entry["fields"])]
+            admitted = [p for p in paths if any(_under(q, f) for q in (p, _op_own(p)) for f in entry["fields"])]
             if admitted:
                 used.add(index)
                 paths = [p for p in paths if p not in admitted]
         if paths:
             left.append({**difference, "paths": paths})
     return left, used
+
+
+def _under(path: str, field: str) -> bool:
+    return path == field or path.startswith(field + ".") or path.startswith(field + "[")
+
+
+def _op_own(path: str) -> str:
+    """A ``read_batch`` op's path as its own call's would be (``result.data.ops[2].error.x``:
+    ``result.error.x``), so a known difference admits it there too, as the Rust replayer does
+    (``host_replay::op_path``); any other path as it is."""
+    found = re.match(r"result\.data\.ops\[\d+\]\.(.+)$", path)
+    return f"result.{found.group(1)}" if found else path
 
 
 def fnmatchcase_case(case: str, pattern: str) -> bool:

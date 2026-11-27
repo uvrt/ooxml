@@ -57,6 +57,7 @@ mod limits;
 mod not_supported;
 pub mod paging;
 mod places;
+pub mod problems;
 pub mod pyfmt;
 pub mod pyre;
 pub mod refs;

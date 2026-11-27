@@ -164,7 +164,7 @@ fn a_format_keeping_no_state_refuses_one_and_a_state_of_other_bytes_is_refused()
     };
     assert_eq!(
         s.open_with(package(), "book.xlsx", &workbook).unwrap_err(),
-        OpenRefused::Argument(
+        OpenRefused::State(
             "book.xlsx is a xlsx document, and that format keeps no state beside its bytes: open it without state"
                 .into()
         )
@@ -174,7 +174,7 @@ fn a_format_keeping_no_state_refuses_one_and_a_state_of_other_bytes_is_refused()
         .unwrap_err();
     assert_eq!(
         other,
-        OpenRefused::Argument("the state is another deck's: open these bytes without it".into())
+        OpenRefused::State("the state is another deck's: open these bytes without it".into())
     );
     assert!(s.session().documents().is_empty());
     // an empty state is none
@@ -353,9 +353,12 @@ fn the_save_gate_refuses_new_problems_unless_the_application_allows_them() {
         "saving would add 1 validation problem(s); fix them first"
     );
     assert_eq!(refused["error"]["valid_options"], json!([problem]));
+    // (what blocked it, in the one problems shape: user decision 2026-11-25)
+    let shaped = json!({"code": "odd", "part": "toy/problem-odd.xml", "element": "made up", "message": problem,
+        "severity": "problem"});
     assert_eq!(
         refused["error"]["details"]["validate"],
-        json!({"new": [problem], "fixed": [], "baseline": 0})
+        json!({"new": [shaped], "fixed": [], "baseline": 0})
     );
     assert_eq!(refused["version"], 1);
     assert!(s.take_outputs().is_empty());
@@ -366,7 +369,7 @@ fn the_save_gate_refuses_new_problems_unless_the_application_allows_them() {
     );
     assert_eq!(
         checked["data"],
-        json!({"ok": true, "include": null, "validation": {"new": [problem], "baseline": 0},
+        json!({"ok": true, "include": null, "validation": {"new": [shaped], "baseline": 0},
             "timing": {"total": 0.0, "validation": 0.0}})
     );
     let allowing = empty_session(HostSettings {
@@ -384,7 +387,7 @@ fn the_save_gate_refuses_new_problems_unless_the_application_allows_them() {
         "save_document",
         json!({"doc": "d1", "name": "out.pptx", "format": "pptx"}),
     );
-    assert_eq!(saved["data"]["validate"]["new"], json!([problem]), "{saved}");
+    assert_eq!(saved["data"]["validate"]["new"], json!([shaped]), "{saved}");
 }
 
 #[test]

@@ -27,6 +27,18 @@ fields = ["result.checks.validate.new", "result.checks.validate.fixed"]
 cause = "Phase 3 D1b (ooxml-host): an edit's checks.validate says each problem it added or fixed as {code, part, element, message, severity}, element the problem's detail and message today's text"
 
 [[difference]]
+decision = "structured-problems-2026-11-25"
+tool = "check"
+fields = ["result.data.validate.new", "result.data.validate.fixed", "result.data.validate.problems", "result.data.validate.warnings", "result.data.validation.new", "result.data.validation.fixed"]
+cause = "Phase 3 E1a (ooxml-tools-word, ooxml-host): check's validate (new, fixed, problems, warnings) and validation (new, fixed) say each problem as {code, part, element, message, severity}, element the problem's detail and message today's text; a warning (what Word repairs the same way each time) has severity warning"
+
+[[difference]]
+decision = "structured-problems-2026-11-25"
+tool = "save_document"
+fields = ["result.error.details.validate.new", "result.error.details.validate.fixed", "result.data.validate.new", "result.data.validate.fixed"]
+cause = "Phase 3 E1a (ooxml-host): a save the gate refuses says what blocked it in details.validate, and a save's validate says the problems, each as {code, part, element, message, severity}; valid_options still lists each new problem by its words"
+
+[[difference]]
 decision = "optimistic-batches-2026-11-25"
 tool = "batch"
 case = "test_session_checks::test_a_check_between_a_batch_s_changes_holds_the_document_and_says_so#*"

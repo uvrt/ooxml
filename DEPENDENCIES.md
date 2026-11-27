@@ -56,6 +56,7 @@ theirs until they are replaced.
 | `ooxml-raster` (workspace crate) | | ooxml-word-pages | A page's PNG (`png`): the page's SVG drawn by resvg in process, as docx2svg's `svg_to_png` draws it with resvg-py (lane L4d). |
 | `ooxml-raster` (workspace crate) | | ooxml-python-session | `PageRaster`: the faces a page's PNG is drawn with, built once, and their `Fit` and `Rgba`. |
 | `ooxml-numfmt` (workspace crate; no external crate) | | ooxml-python-session | `WordPages` takes the caller's number locale (separators, date order, list separator) for a chart's numbers, as docx2svg's `ConvertOptions.locale`. |
+| `ooxml-host` (workspace crate; no external crate) | | ooxml-python-session | `Host` and `HostSession` for Python (`ooxml_core.Host`, `ooxml_core.HostSession`): the Rust host the toolbox's facade runs docx-agent's calls on (Phase 3 E1). |
 | `ooxml-fonts` (workspace crate) | | ooxml-raster | Faces read through its `FontStore` port (`FontLoader::from_store`). |
 | `ooxml-raster`, `tiny-skia` (as above) | | ooxml-oracle (test support only) | The PNG differential (`raster-diff`, `python/raster_record.py`): each recorded resvg-py call drawn again, both PNGs decoded and compared pixel for pixel. |
 | `libfuzzer-sys` 0.4 (pulls `arbitrary`, `cc`) | MIT or Apache-2.0, NCSA | `fuzz/` only (its own workspace) | cargo-fuzz's harness for the fuzz targets section 11 asks for; never part of a shipped crate. |

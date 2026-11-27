@@ -45,6 +45,35 @@ pub struct CallRecord {
     pub panic: Option<String>,
 }
 
+impl CallRecord {
+    /// The record as ooxml-edit's `CallRecord.to_json` writes it: its fields in that order,
+    /// the duration in seconds to four places, the optional ones only where given.
+    #[must_use]
+    pub fn to_json(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        out.insert("tool".into(), Value::from(self.tool.clone()));
+        out.insert("docs".into(), Value::from(self.docs.clone()));
+        out.insert("digest".into(), Value::from(self.digest.clone()));
+        out.insert("shape".into(), self.shape.clone());
+        out.insert("ok".into(), Value::from(self.ok));
+        out.insert("code".into(), Value::from(self.code.clone()));
+        out.insert("summary".into(), Value::from(self.summary.clone()));
+        let seconds = (self.duration.as_secs_f64() * 10_000.0).round() / 10_000.0;
+        out.insert("duration".into(), Value::from(seconds));
+        out.insert("version".into(), Value::from(self.version));
+        if let Some(arguments) = &self.arguments {
+            out.insert("arguments".into(), Value::Object(arguments.clone()));
+        }
+        if let Some(roles) = &self.roles {
+            out.insert("roles".into(), Value::from(roles.clone()));
+        }
+        if let Some(context) = &self.context {
+            out.insert("context".into(), Value::Object(context.clone()));
+        }
+        out
+    }
+}
+
 /// A stable 16-hex-digit hash of `arguments`' canonical JSON (keys sorted, non-ASCII kept).
 #[must_use]
 pub fn digest(arguments: &Value) -> String {

@@ -69,7 +69,10 @@ pub mod prelude {
 #[must_use]
 pub fn formats(pages: Option<SessionPages>) -> Vec<Arc<dyn Format>> {
     vec![
-        Arc::new(WordFormat { pages }),
+        Arc::new(WordFormat {
+            pages,
+            ..WordFormat::default()
+        }),
         Arc::new(PackageFormat(ooxml_session::DocKind::Pptx)),
         Arc::new(PackageFormat(ooxml_session::DocKind::Xlsx)),
     ]

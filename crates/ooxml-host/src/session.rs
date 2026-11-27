@@ -62,6 +62,10 @@ pub struct HostSettings {
     /// The rules of a session's checks of numbers, unless the application sets its own
     /// ([`HostSession::set_number_rules`]).
     pub numbers: NumberRules,
+    /// The application's own tools, which its facade runs outside the host (design phase 3,
+    /// decision D1): an op of a `batch` or a `read_batch` naming one is refused with the way
+    /// out "call it alone" ([`HostSettings::own_tool_refused`]).
+    pub own_tools: Vec<String>,
 }
 
 impl Default for HostSettings {
@@ -81,6 +85,7 @@ impl Default for HostSettings {
             layout_timeout: Some(Duration::from_secs(30)),
             read_batch_chars: ooxml_session::MAX_READ_BATCH_CHARS,
             numbers: NumberRules::default(),
+            own_tools: Vec::new(),
         }
     }
 }
@@ -238,6 +243,10 @@ pub struct CallAs {
     /// What the application resolved for the call itself: the rows of sources in documents
     /// it holds (a workbook its own host holds), handed to the format beside the host's.
     pub values: ooxml_tools::written::CallValues,
+    /// The moment the application dates the call's writes by (a revision's, a comment's, a
+    /// new document's creation: `2026-11-20T09:30:15Z`), its own clock's as it read it for
+    /// the call; `None`: the session's clock.
+    pub date: Option<String>,
 }
 
 /// One application session of a host.

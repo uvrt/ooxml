@@ -60,6 +60,21 @@ pub struct WordFormat {
     /// What the session lays its Word documents out with, each document's engine its own
     /// (fonts and memory budget); `None`: only with the layout a call's host gives.
     pub pages: Option<crate::SessionPages>,
+    /// The application's minimum text size (docx-agent's `docx_format(min_text_size=...)`):
+    /// what `check` measures text against where the call gives no `min_size`; `None`: none.
+    pub min_text_size: Option<ooxml_word_pages::layout_facts::sizes::Minimum>,
+    /// The text calls write is written as given, none of the spacing its language wants
+    /// (docx-agent's `docx_format(typography=False)`); `false`: spaced by its language.
+    pub as_given: bool,
+}
+
+impl WordFormat {
+    /// `word` with the application's settings of the format, which its calls read.
+    fn settled(&self, mut word: Word) -> Word {
+        word.min_text_size.clone_from(&self.min_text_size);
+        word.as_given = self.as_given;
+        word
+    }
 }
 
 impl Format for WordFormat {
@@ -85,7 +100,7 @@ impl Format for WordFormat {
 
     fn open(&self, package: Package, env: &OpenEnv<'_>) -> Result<Arc<dyn FormatDoc>, SessionError> {
         let word = Word::open(package, env, &EarlierIds::default(), self.pages.clone())?;
-        Ok(Arc::new(word))
+        Ok(Arc::new(self.settled(word)))
     }
 
     fn open_with_state(
@@ -106,7 +121,7 @@ impl Format for WordFormat {
         })?;
         let number = |n: i64| u64::try_from(n).unwrap_or(0);
         Ok(ooxml_session::WithState {
-            doc: Arc::new(word),
+            doc: Arc::new(self.settled(word)),
             numbers: Some((number(numbers.0), number(numbers.1))),
         })
     }
@@ -265,9 +280,51 @@ pub struct Word {
     pub(crate) versions: Arc<Versions>,
     /// What the session lays it out with by default ([`WordFormat::pages`]).
     pub(crate) default_pages: Option<crate::SessionPages>,
+    /// The application's minimum text size ([`WordFormat::min_text_size`]).
+    pub(crate) min_text_size: Option<ooxml_word_pages::layout_facts::sizes::Minimum>,
+    /// Its calls write text as given ([`WordFormat::as_given`]).
+    pub(crate) as_given: bool,
 }
 
 impl Word {
+    /// A `check`'s arguments with the application's minimum text size as its `min_size`
+    /// where the call gives none (docx-agent's adapter's rule; `None`: the arguments as
+    /// they are). A minimum by kind is refused as not supported yet, with the call that
+    /// gives `min_size` as the way out.
+    ///
+    /// # Errors
+    /// That refusal.
+    fn with_minimum(&self, run: &FormatRun<'_>) -> Result<Option<serde_json::Map<String, Value>>, ToolError> {
+        use ooxml_word_pages::layout_facts::sizes::Minimum;
+        let given = run.arguments.get("min_size").is_some_and(|v| !v.is_null());
+        let Some(minimum) = self.min_text_size.as_ref().filter(|_| run.tool == "check" && !given) else {
+            return Ok(None);
+        };
+        let mut arguments = run.arguments.clone();
+        match minimum {
+            Minimum::One(points) => {
+                arguments.insert("min_size".into(), Value::from(*points));
+                Ok(Some(arguments))
+            }
+            Minimum::PerKind(_) => {
+                arguments.insert("doc".into(), Value::from(run.named));
+                arguments.insert("min_size".into(), Value::from(9));
+                let call = ooxml_tools::TryCall {
+                    tool: "check".into(),
+                    arguments,
+                    fill: vec!["min_size".into()],
+                };
+                Err(ToolError::refusal(
+                    ooxml_tools::Refusal::Refused,
+                    "a check with the application's min_text_size by kind is not supported yet; give min_size",
+                    ooxml_tools::WayOut::call(call),
+                )
+                .at("min_size")
+                .with_detail("not_supported", Value::from("check: min_text_size by kind")))
+            }
+        }
+    }
+
     /// `package` opened as a Word document: read, its ids (with those it had before it was
     /// saved, `earlier`) and the problems it opened with found, its caches within the
     /// context's budget.
@@ -393,6 +450,8 @@ impl Word {
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
             versions: Arc::new(Versions::new()),
             default_pages: pages,
+            min_text_size: None,
+            as_given: false,
         })
     }
 
@@ -516,7 +575,7 @@ impl FormatDoc for Word {
             cancel: run.cancel,
             date: run.date.to_owned(),
             setup: ooxml_word_edit::Setup {
-                as_given: host.as_given,
+                as_given: host.as_given || self.as_given,
             },
             locale: run.locale,
             made: &made,
@@ -551,8 +610,13 @@ impl FormatDoc for Word {
             format: &call,
             effects: &mut effects,
         };
+        let arguments = match self.with_minimum(run) {
+            Ok(arguments) => arguments,
+            Err(refused) => return ToolResult::failed(refused),
+        };
+        let arguments = arguments.as_ref().unwrap_or(run.arguments);
         // what its edits made is the call's even where the handler panics after them
-        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tool.run(run.arguments, &mut env)));
+        let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tool.run(arguments, &mut env)));
         let made = made.into_inner().unwrap_or_else(PoisonError::into_inner);
         if let Some(made) = made {
             *run.made.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(made));

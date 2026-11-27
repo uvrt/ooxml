@@ -567,22 +567,24 @@ fn internal(error: &ooxml_word_edit::EditError) -> ToolError {
 /// comparison), and the first of them; in `scope`'s blocks only where scoped (with how
 /// many are elsewhere, and only its new ones).
 fn validate(owned: Owned<'_>, scope: Option<&Scope>) -> Result<Value, ToolError> {
+    use crate::problems::listed;
     let now = problems(owned.doc).map_err(|e| internal(&e))?;
     let delta = Delta::of(owned.baseline, &now);
+    let warnings_now: Vec<_> = now
+        .iter()
+        .filter(|p| p.is_warning() && !owned.baseline.contains(p))
+        .collect();
     let mut out = Map::new();
     let Some(scope) = scope else {
-        out.insert("new".into(), Value::from(delta.new));
-        out.insert("fixed".into(), Value::from(delta.fixed));
+        out.insert("new".into(), listed(&delta.new_found));
+        out.insert("fixed".into(), listed(&delta.fixed_found));
         out.insert("baseline".into(), Value::from(delta.baseline));
-        let listed: Vec<String> = now
-            .iter()
-            .filter(|p| !p.is_warning())
-            .take(LISTED)
-            .map(ToString::to_string)
-            .collect();
-        out.insert("problems".into(), Value::from(listed));
-        if !delta.warnings.is_empty() {
-            out.insert("warnings".into(), Value::from(delta.warnings));
+        out.insert(
+            "problems".into(),
+            listed(now.iter().filter(|p| !p.is_warning()).take(LISTED)),
+        );
+        if !warnings_now.is_empty() {
+            out.insert("warnings".into(), listed(warnings_now));
         }
         return Ok(Value::Object(out));
     };
@@ -598,23 +600,18 @@ fn validate(owned: Owned<'_>, scope: Option<&Scope>) -> Result<Value, ToolError>
         })
         .unwrap_or_default();
     let scoped = problems_in(owned.doc, &now, &docx.main, &roots);
-    let inside: Vec<String> = scoped.inside.iter().map(ToString::to_string).collect();
-    let new: Vec<String> = delta.new.into_iter().filter(|p| inside.contains(p)).collect();
-    let warnings: Vec<String> = delta.warnings.into_iter().filter(|p| inside.contains(p)).collect();
-    out.insert("new".into(), Value::from(new));
+    let inside = |p: &&ooxml_word_edit::validate::Problem| scoped.inside.contains(p);
+    out.insert("new".into(), listed(delta.new_found.iter().filter(inside)));
+    let warnings: Vec<_> = warnings_now.into_iter().filter(inside).collect();
     if !warnings.is_empty() {
-        out.insert("warnings".into(), Value::from(warnings));
+        out.insert("warnings".into(), listed(warnings));
     }
-    out.insert("fixed".into(), Value::from(delta.fixed));
+    out.insert("fixed".into(), listed(&delta.fixed_found));
     out.insert("baseline".into(), Value::from(delta.baseline));
-    let listed: Vec<String> = scoped
-        .inside
-        .iter()
-        .filter(|p| !p.is_warning())
-        .take(LISTED)
-        .map(ToString::to_string)
-        .collect();
-    out.insert("problems".into(), Value::from(listed));
+    out.insert(
+        "problems".into(),
+        listed(scoped.inside.iter().filter(|p| !p.is_warning()).take(LISTED)),
+    );
     out.insert("elsewhere".into(), Value::from(scoped.elsewhere));
     Ok(Value::Object(out))
 }

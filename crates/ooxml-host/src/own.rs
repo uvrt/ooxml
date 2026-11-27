@@ -135,6 +135,9 @@ pub struct OwnCall<'a> {
     pub caller: Option<&'a Map<String, Value>>,
     /// The call as given, for a refusal's way out.
     pub retry: &'a TryCall,
+    /// The moment the application dates the call's writes by ([`crate::CallAs::date`]);
+    /// `None`: the session's clock.
+    pub date: Option<&'a str>,
 }
 
 /// What runs the session tools the host does not run itself.

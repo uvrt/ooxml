@@ -159,7 +159,11 @@ impl HostSession {
             result
         };
         let Some(entry) = catalogue.get(&name) else {
-            let error = catalogue.no_tool(given, roles, true, READ_BATCH, &retry);
+            let error = self
+                .host
+                .settings
+                .own_tool_refused(given, READ_BATCH, &retry)
+                .unwrap_or_else(|| catalogue.no_tool(given, roles, true, READ_BATCH, &retry));
             return (failed(error, going.notes), given.to_owned(), false, Vec::new());
         };
         let paged = entry.spec.arguments.property("cursor").is_some();
