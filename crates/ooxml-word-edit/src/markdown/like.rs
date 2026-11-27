@@ -2,12 +2,14 @@
 //! `LevelLooks`): a paragraph given for a level -- every list's items at that level, or one
 //! kind's alone (a style map's `bullet2`) -- and, for a level below the given ones, the
 //! nearest given level's list a level deeper per level, as Word demotes an item
-//! ([`ParagraphLook::deeper`]); what a sample cannot give (no list, the other kind, no such
-//! level) said once.
+//! ([`ParagraphLook::deeper`]) -- in a one-level list, the item moved as Word's list indent
+//! moves it ([`ParagraphLook::indented`]); what a sample cannot give (no list, the other
+//! kind, no such level) said once.
 //!
 //! Must not: write (the writer takes the look: [`super::writer`]), or read the samples (the
 //! caller gives their looks, read on the version the edit is applied to).
 
+use crate::format::list_indent::ListIndent;
 use crate::format::ParagraphLook;
 use ooxml_word_model::docx::numbering::Lists;
 use ooxml_word_model::docx::Docx;
@@ -60,6 +62,10 @@ enum Told {
 pub(crate) struct Levels {
     given: Vec<LevelLook>,
     told: HashSet<Told>,
+    /// The position of the paragraph after the new items, whose first line and text are
+    /// stops where an item moves in a one-level list; none where a table or nothing
+    /// follows.
+    next: Option<ListIndent>,
 }
 
 impl Levels {
@@ -67,7 +73,13 @@ impl Levels {
         Levels {
             given: given.to_vec(),
             told: HashSet::new(),
+            next: None,
         }
+    }
+
+    /// The paragraph after the new items stands at `next`.
+    pub(crate) fn followed_at(&mut self, next: Option<ListIndent>) {
+        self.next = next;
     }
 
     /// Whether any level is given a look.
@@ -89,7 +101,9 @@ impl Levels {
                 self.check(docx, &lists, &look, kind, depth, &mut said);
                 return (Some(look), said);
             }
-            let deeper = look.deeper(docx, &lists, depth - level);
+            let deeper = look
+                .deeper(docx, &lists, depth - level)
+                .or_else(|| look.indented(docx, &lists, depth - level, self.next));
             if deeper.is_none() {
                 let sample = &look.sample;
                 self.tell(
