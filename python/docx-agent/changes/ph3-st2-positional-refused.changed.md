@@ -7,3 +7,6 @@
   could only mark a table without rows, whose `t@` name still names it.
 - One paraId written two ways (`1A`, `0000001A`) is a repeat: the first keeps it and the second gets
   an id of its own when the document is opened, as Word keeps only the first.
+- `touched` of a document's first edit names only the blocks the edit changed, and lists plain each part the edit
+  wrote ids into: for example `set_properties` on a file without paragraph ids now gives `{"part":
+  "word/document.xml"}` where it gave a section of body blocks whose content did not change.
