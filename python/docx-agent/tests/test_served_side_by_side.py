@@ -6,15 +6,11 @@ import threading
 
 import pytest
 
-from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 WRITERS, EDITS = 8, 3
 
@@ -25,14 +21,17 @@ def toolbox():
         yield box
 
 
-def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
+def test_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     session = toolbox.session()
     doc = session.open(constructs_doc.read_bytes(), name=constructs_doc.name)
-    entry = session.entry(doc)
+
+    def version() -> int:
+        return toolbox.dispatch(session, "describe", {"doc": doc}).version
+
     paragraphs = [block for block, text in word_docs.paragraphs(session, doc)
                   if text.strip() and block != "p:None"][:WRITERS * EDITS]
     before = {block: text for block, text in word_docs.paragraphs(session, doc) if block in paragraphs}
-    start, served = entry.version, sum(edits.served().values())
+    start = version()
     results, failures = [], []
     gate = threading.Barrier(WRITERS)
 
@@ -51,17 +50,10 @@ def test_served_edits_side_by_side_are_one_step_each(toolbox, constructs_doc):
     for thread in threads:
         thread.join(60)
     assert not failures, failures[0].error
-    assert sum(edits.served().values()) - served == WRITERS * EDITS
-    assert all(result.timing["held"] == 0.0 for result in results)
     assert sorted(result.version for result in results) == list(range(start + 1, start + WRITERS * EDITS + 1))
-    assert entry.version == start + WRITERS * EDITS
-    # Lane U3: counted as they ended, in any order -- never as a change outside the tools
-    assert entry.change_version == entry.version
-    assert entry.parts_changed_since(0) == {"word/document.xml"}
-    changes = entry.changes_between(start, entry.version)
-    assert changes is not None and len(changes) == WRITERS * EDITS and None not in changes
+    assert version() == start + WRITERS * EDITS
     for _ in range(WRITERS * EDITS):
         assert toolbox.dispatch(session, "undo", {"doc": doc}).ok
-    assert entry.version == start
+    assert version() == start
     assert {block: text for block, text in word_docs.paragraphs(session, doc) if block in before} == before
     session.close(doc)

@@ -6,17 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-ooxml_core = pytest.importorskip("ooxml_core")
+from ooxml_edit.tools import Limits, Toolbox
 
-from ooxml_edit.tools import Limits, Toolbox  # noqa: E402
+from docx_agent.tools import FORMAT, GROUPS, TOOLS
+import word_docs
 
-from docx_agent.rust import reads  # noqa: E402
-from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
-import word_docs  # noqa: E402
-
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 #: A page of three items: the listings page.
 LIMITS = Limits(max_list_items=3)
@@ -55,9 +49,7 @@ def test_a_preview_counts_the_records_written_since_the_document_was_opened(tool
         written = toolbox.dispatch(session, "word_set_text", {"doc": doc, "target": ids[f"River stone number {c}."],
                                                               "text": f"River pebble {c}."})
         assert written.ok, written.error
-    served = reads.served().get("word_changes", 0)
     preview = toolbox.dispatch(session, "word_changes", {"doc": doc, "action": "preview", "all": True})
-    assert reads.served().get("word_changes", 0) == served + 1
     for action in ("accept", "reject"):
         outcome = preview.data[action]
         # every record a tracked edit of this session wrote: a deletion and an insertion each

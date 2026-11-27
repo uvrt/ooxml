@@ -8,15 +8,11 @@ import threading
 
 import pytest
 
-from docx_agent.rust import edits
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
 from ooxml_edit.tools import Toolbox
 
 import word_docs
 
-# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
-# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
-pytestmark = pytest.mark.python_host
 
 WRITERS = 6
 
@@ -44,12 +40,11 @@ def _report(title: str) -> bytes:
 
 
 @pytest.mark.parametrize("mode", ["always", "auto"])
-def test_an_owned_documents_edits_are_served_never_on_drafts(mode):
+def test_writers_side_by_side_are_never_on_drafts(mode):
     with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS, workers=0, block_edits=mode) as box:
         session = box.session()
         doc = session.open(_report("A made-up report"), "report.docx")
         targets = [block for block, text in word_docs.paragraphs(session, doc) if text.startswith("Lantern")]
-        served = edits.served().get("word_set_text", 0)
         gate = threading.Barrier(WRITERS)
         results: list = []
 
@@ -66,6 +61,5 @@ def test_an_owned_documents_edits_are_served_never_on_drafts(mode):
             thread.join(60)
         assert len(results) == WRITERS and all(r.ok for r in results), [r.error for r in results]
         assert all(r.block is None for r in results), [r.block for r in results]
-        assert edits.served().get("word_set_text", 0) - served == WRITERS
         texts = {text for _, text in word_docs.paragraphs(session, doc)}
         assert {f"River stone {k}." for k in range(WRITERS)} <= texts

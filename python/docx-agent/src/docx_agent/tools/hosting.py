@@ -10,8 +10,24 @@ are the host's Word format's, which every call reads.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from typing import Any
+
+
+class TemplateOpened(UserWarning):
+    """A template (``.dotx``, ``.dotm``) was opened to edit: edits change the template
+    itself; ``new_document`` with the template's blob makes a document from it."""
+
+
+def layout_memory() -> int:
+    """What the process's page engines may keep, in bytes: ``DOCX_AGENT_LAYOUT_MEMORY`` (MB)
+    where it is set to a positive number, else 256 MB."""
+    try:
+        value = float(os.environ.get("DOCX_AGENT_LAYOUT_MEMORY", ""))
+    except ValueError:
+        value = 0.0
+    return int(value * 2 ** 20) if value > 0 else 256 * 2 ** 20
 
 
 class WordHosting:
@@ -40,8 +56,6 @@ class WordHosting:
         from docx2svg import rust
         from ooxml_common.fonts.office import user_font_dirs
 
-        from ..rust.engines import layout_memory
-
         dirs = [str(path) for path in user_font_dirs(list(font_dirs) if font_dirs else None)]
         if locale is None:
             from ooxml_common.locales import EN_US
@@ -52,11 +66,9 @@ class WordHosting:
         return rust.page_setup(options, raster=rust.page_raster((), dirs))
 
     def opened(self, session: Any, doc: str) -> None:
-        """A template opened to edit warns (:class:`~docx_agent.rust.owner.TemplateOpened`):
+        """A template opened to edit warns (:class:`TemplateOpened`):
         edits change the template itself."""
         import warnings
-
-        from ..rust.owner import TemplateOpened
 
         kind = session.document(doc)[3]
         if kind in ("dotx", "dotm"):

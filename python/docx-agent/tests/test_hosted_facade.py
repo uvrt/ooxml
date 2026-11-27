@@ -26,7 +26,7 @@ import zipfile
 
 import pytest
 
-from ooxml_edit.tools import Result, Session, ToolError, Toolbox, string, tool
+from ooxml_edit.tools import Result, ToolError, Toolbox, string, tool
 from ooxml_edit.tools.hosted import HostedSession, HostResult
 
 from docx_agent.tools import FORMAT, GROUPS, TOOLS, docx_format
@@ -74,12 +74,12 @@ def test_a_toolbox_with_tools_of_its_own_runs_on_the_host():
 def test_a_toolbox_with_a_python_format_of_a_kind_the_rust_session_names_runs_on_the_host():
     import dataclasses
 
-    held = dataclasses.replace(FORMAT, kind="xlsx", host=None, owner=None)
+    held = dataclasses.replace(FORMAT, kind="xlsx", host=None)
     with Toolbox(TOOLS, formats=[FORMAT, held], groups=GROUPS, workers=0) as toolbox:
         assert isinstance(toolbox.session(), HostedSession)
-    other = dataclasses.replace(FORMAT, kind="grid", host=None, owner=None)
-    with Toolbox(TOOLS, formats=[FORMAT, other], groups=GROUPS, workers=0) as toolbox:
-        assert type(toolbox.session()) is Session
+    other = dataclasses.replace(FORMAT, kind="grid", host=None)
+    with pytest.raises(ValueError, match="cannot name a 'grid' document"):
+        Toolbox(TOOLS, formats=[FORMAT, other], groups=GROUPS, workers=0)
 
 
 # -- the clock, the result, the log ---------------------------------------------------------------

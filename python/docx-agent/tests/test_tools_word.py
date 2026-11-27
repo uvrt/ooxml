@@ -774,20 +774,6 @@ def test_new_document_from_a_template_blob_and_save_formats(box, session):
     fails(box, session, "new_document", "invalid_arguments", kind="docx", size="16:9")
 
 
-@pytest.mark.python_host     # (the Python format's validation hook, which the Rust host does not read)
-def test_save_refuses_a_new_validation_problem():
-    import dataclasses
-
-    # The gate compares through the format's validation (the Rust session's, which holds the version).
-    gated = dataclasses.replace(FORMAT, validation=lambda entry: {"new": ["word/document.xml: bad"], "fixed": [],
-                                                                    "baseline": 0})
-    with Toolbox(TOOLS, formats=[gated], groups=GROUPS) as box:
-        session = box.session(clock=lambda: CLOCK_AT)
-        d = open_doc(session)
-        error = fails(box, session, "save_document", "refused", doc=d, name="a.docx", format="docx")
-        assert error.valid_options and session.take_outputs() == []
-
-
 def test_find_and_replace_one_or_all_body_or_all_stories(box, session):
     d = open_doc(session)
     found = ok(box, session, "find_text", doc=d, text="months")
@@ -968,72 +954,51 @@ def test_render_sheet_narrows_tiles_that_do_not_fit_and_says_so(box, session):
     assert "2584 px wide" in wide.data["sheet"]["shrunk"]["why"]
 
 
-@pytest.mark.python_host     # (the Python host's mirror of the document, until E2)
-def test_a_check_lays_out_with_the_lock_let_go(monkeypatch):
-    """The layout a check reads runs with the document's lock let go: an edit made meanwhile
-    does not wait, and the check reports the version it laid out.  The check is the Rust
-    session's (lane P5b): it lays the version it was given out in the session's call, held
-    here until the edit has been committed."""
-    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as box:
-        _check_lays_out_with_the_lock_let_go(box, box.session(clock=lambda: CLOCK_AT), monkeypatch)
-
-
-def _check_lays_out_with_the_lock_let_go(box, session, monkeypatch):
+def test_a_check_lays_out_beside_an_edit():
+    """The layout a check reads runs beside the document's edits on the Rust host: an edit
+    made meanwhile does not wait for it, and the check reports the version it laid out (the
+    one it started at).  A made-up document of 1,500 paragraphs: its first layout takes about
+    2 s here, an edit of one paragraph about 10 ms."""
     import threading
 
-    from docx_agent.rust import reads
+    import word_docs
 
-    d = session.open((FIXTURES / "samplelib" / "sample-long.docx").read_bytes(), "long.docx")
-    mirror = reads.owned(session.entry(d)).handle
-    started, finish = threading.Event(), threading.Event()
-    first = {"call": True}
+    with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as box:
+        made = box.session()
+        blank = made.open(word_docs.blank(), "long.docx")
+        word_docs.call(box, made, "word_insert_markdown", doc=blank, at="end", markdown="\n\n".join(
+            f"Paragraph {k} with some words to lay out across the page, " + "more words " * 20
+            for k in range(1500)))
+        data = word_docs.saved(made, blank)
+        for _attempt in range(3):
+            session = box.session(clock=lambda: CLOCK_AT)
+            d = session.open(data, "long.docx")
+            target = word_docs.paragraphs(session, d)[3][0]
+            before = session.save(d).version
+            out = {}
 
-    class Held:
-        """The session, whose first ``check`` waits for ``finish`` before it lays out."""
+            def check():
+                try:
+                    out["result"] = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
+                except BaseException as exc:   # noqa: BLE001 -- a skip (a face absent) re-raised below
+                    out["raised"] = exc
 
-        def __init__(self, inner):
-            self.inner = inner
-
-        def __getattr__(self, name):
-            return getattr(self.inner, name)
-
-        def call(self, tool, *args, **kwargs):
-            if tool == "check" and first.pop("call", False):
-                started.set()
-                assert finish.wait(60)
-            return self.inner.call(tool, *args, **kwargs)
-
-    monkeypatch.setattr(mirror, "session", Held(mirror.session))
-    before = session.save(d).version
-    served = reads.served().get("check", 0)
-    out = {}
-
-    def check():
-        try:
-            out["result"] = box.dispatch(session, "check", {"doc": d, "include": ["reflow"]})
-        except BaseException as exc:   # noqa: BLE001 -- a skip (a face absent) re-raised below
-            out["raised"] = exc
-        finally:
-            started.set()
-
-    thread = threading.Thread(target=check)
-    thread.start()
-    assert started.wait(60)
-    if "raised" in out:
-        raise out["raised"]
-    edit = ok(box, session, "replace_text", doc=d, find="dolore", replace="dolores", expect="all")
-    finish.set()
-    thread.join()
-    if "raised" in out:
-        raise out["raised"]
-    checked = out["result"]
-    assert checked.ok, checked.to_json()
-    assert "call" not in first                         # the layout was held while the edit ran
-    assert reads.served().get("check", 0) == served + 1
-    assert edit.version == before + 1 and checked.version == before
-    assert checked.data["reflow"]["pages"] == 36
-    again = ok(box, session, "check", doc=d, include=["reflow"])   # the edited version, afresh
-    assert again.version == before + 1 and again.data["reflow"]["pages"] == 36
+            thread = threading.Thread(target=check)
+            thread.start()
+            thread.join(0.3)                   # the check under way, laying the document out
+            edit = ok(box, session, "word_set_text", doc=d, target=target, text="Changed.")
+            edited_while_checking = thread.is_alive()
+            thread.join(300)
+            if "raised" in out:
+                raise out["raised"]
+            checked = out["result"]
+            assert checked.ok, checked.to_json()
+            if edited_while_checking and checked.version == before:
+                break
+        assert edited_while_checking, "the edit waited for the check's layout"
+        assert edit.version == before + 1 and checked.version == before
+        again = ok(box, session, "check", doc=d, include=["reflow"])   # the edited version, afresh
+        assert again.version == before + 1
 
 
 def test_check_reports_validate_reflow_and_fields(box, session):
