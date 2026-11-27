@@ -485,9 +485,24 @@ impl WordDoc {
         let now = tree.as_ref().and_then(|t| {
             ooxml_word_model::docx::at_path(t.root(), path)
                 .and_then(|e| e.attribute(Some(crate::names::W14), "paraId"))
-                .and_then(ooxml_word_model::ids::hex_value)
+                .map(str::to_owned)
         });
-        let Some(now) = now else { return true };
+        now.is_none_or(|now| self.para_id_written(part, &now))
+    }
+
+    /// [`WordDoc::id_written`] of the block of `part` whose paraId is `para_id`.
+    #[must_use]
+    pub fn para_id_written(&self, part: &str, para_id: &str) -> bool {
+        if self.stamped.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
+            return true;
+        }
+        let Some(now) = ooxml_word_model::ids::hex_value(para_id) else {
+            return true;
+        };
         // a value the open gave is never one the saved part holds (draws skip those)
         base.saved_tree(part)
             .ok()

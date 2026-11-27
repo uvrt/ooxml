@@ -66,10 +66,17 @@ impl Command<WordDoc> for EditCommentText {
             let work = space
                 .get_mut(&comment.part)
                 .ok_or_else(|| EditError::no_part(comment.part.clone()))?;
+            // the last paragraph keeps its paraId; its textId too where the id was given at
+            // open and not yet written (an unwritten id counts as fresh at its first write)
+            let mut kept_text = None;
             for paragraph in work.children(node).to_vec() {
                 if work.is(paragraph, W, "p") {
+                    kept_text = work.get(paragraph, Some(W14), "textId").map(str::to_owned);
                     work.remove(paragraph);
                 }
+            }
+            if sink.doc().para_id_written(&comment.part, &comment.last_para) {
+                kept_text = None;
             }
             let seed = format!("{}\0comment", comment.part);
             let lines: Vec<&str> = text.split('\n').collect();
@@ -78,10 +85,11 @@ impl Command<WordDoc> for EditCommentText {
                 let (Some(para), Some(text_id)) = (drawn.first(), drawn.get(1)) else {
                     return Err(EditError::no_element(comment.part.clone()));
                 };
-                let para = if k + 1 == lines.len() {
-                    comment.last_para.clone()
-                } else {
-                    para.clone()
+                let last = k + 1 == lines.len();
+                let para = if last { comment.last_para.clone() } else { para.clone() };
+                let text_id = match &kept_text {
+                    Some(kept) if last => kept,
+                    _ => text_id,
                 };
                 let work = space
                     .get_mut(&comment.part)
