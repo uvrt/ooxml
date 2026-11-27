@@ -1748,5 +1748,5 @@
 {"digest":"sha256:1bf45d3f17515e8cbc35ae5695062d34","id":"read:362e783cf480b73b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4c01e05c8537a0ae1b562ca4c6670f86","id":"laid:12c6c9ee998e7ae7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9c0b954c861612597062a5526362f6c6","id":"laid:e4b6143ad84c9aa3","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9c0b954c861612597062a5526362f6c6","id":"laid:dcc5aa32af0dbc1b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:8021989da6daabcaf1f1db187cc4de57","id":"laid:dcc5aa32af0dbc1b","source":"R140 fix, user decision 2026-11-27: each kind against its own minimum (0.1 filtered by the smallest)"}
 {"digest":"sha256:8143ab8642e2729d477cfafde6f6b65c","id":"laid:26b6cb7b9f6317d8","source":"frozen Python a512c901, unmeasured"}
