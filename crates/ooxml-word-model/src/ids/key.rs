@@ -3,10 +3,10 @@
 //! ([`BlockKey`], 12 bytes, `Copy`) and a place on or in a block that a layout draws
 //! ([`Anchor`], [`Sub`]) -- per the phase 3 identity design.
 //!
-//! A key is durable where its block has a paraId of its own (a table: its first row's), and
-//! otherwise names the block by its place in the version it was made from (an ordinal, a
-//! repeat of a paraId, a table's row): such keys live only in versions not yet stamped. The
-//! part's index makes and resolves keys ([`super::PartIds::key_of`],
+//! A key is durable: its block's paraId of its own (a table: its first row's), every
+//! paragraph and row having one from the document's open. A table without rows is keyed by
+//! its ordinal among the story's tables (Word drops such a table on save). The part's index
+//! makes and resolves keys ([`super::PartIds::key_of`],
 //! [`super::PartIds::entry_of`]); a key is never written or kept across a reopen: ids
 //! ([`super::BlockId`]) are.
 //!
@@ -99,32 +99,19 @@ impl StoryTable {
 /// How a key names its block within its story.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum KeyName {
-    /// By a paraId of its own (a table: its first row's), unique among the story's blocks of
-    /// its kind.
+    /// By a paraId of its own (a table: its first row's), unique among the story's blocks.
     Durable(ParaId),
-    /// The `k`-th repeat (from 1) of a paragraph's paraId.
-    Repeat(ParaId, u32),
-    /// By its ordinal among the story's paragraphs or tables: a block without a durable id
-    /// (no paraId, an invalid or ambiguously written one, a repeat of an invalid one).
-    Ordinal(u32),
-    /// The `row`-th own row (from 0) of the table with ordinal `table`: a row without a
-    /// durable id.
-    RowAt {
-        /// The table's ordinal among the story's tables.
-        table: u32,
-        /// The row's place among the table's own rows.
-        row: u32,
-    },
+    /// A table without rows, by its ordinal among the story's tables.
+    Rowless(u32),
 }
 
-/// A block's compact handle: its story, kind and name, in 12 bytes.
+/// A block's compact handle: its story, kind and name, in 8 bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BlockKey {
     story: StoryIx,
     kind: BlockKind,
     tag: Tag,
     value: u32,
-    extra: u32,
 }
 
 /// Which [`KeyName`] a key holds.
@@ -132,29 +119,24 @@ pub struct BlockKey {
 #[repr(u8)]
 enum Tag {
     Durable,
-    Repeat,
-    Ordinal,
-    RowAt,
+    Rowless,
 }
 
-const _: () = assert!(std::mem::size_of::<BlockKey>() == 12);
+const _: () = assert!(std::mem::size_of::<BlockKey>() == 8);
 
 impl BlockKey {
     /// The key of the block of kind `kind` named `name` in the story `story`.
     #[must_use]
     pub fn new(story: StoryIx, kind: BlockKind, name: KeyName) -> BlockKey {
-        let (tag, value, extra) = match name {
-            KeyName::Durable(id) => (Tag::Durable, id.get(), 0),
-            KeyName::Repeat(id, k) => (Tag::Repeat, id.get(), k),
-            KeyName::Ordinal(n) => (Tag::Ordinal, n, 0),
-            KeyName::RowAt { table, row } => (Tag::RowAt, table, row),
+        let (tag, value) = match name {
+            KeyName::Durable(id) => (Tag::Durable, id.get()),
+            KeyName::Rowless(n) => (Tag::Rowless, n),
         };
         BlockKey {
             story,
             kind,
             tag,
             value,
-            extra,
         }
     }
 
@@ -173,16 +155,10 @@ impl BlockKey {
     /// How it names its block.
     #[must_use]
     pub fn name(self) -> KeyName {
-        let para = || ParaId::new(self.value);
         match self.tag {
             // made from a `ParaId`, so one again
-            Tag::Durable => para().map_or(KeyName::Ordinal(self.value), KeyName::Durable),
-            Tag::Repeat => para().map_or(KeyName::Ordinal(self.value), |id| KeyName::Repeat(id, self.extra)),
-            Tag::Ordinal => KeyName::Ordinal(self.value),
-            Tag::RowAt => KeyName::RowAt {
-                table: self.value,
-                row: self.extra,
-            },
+            Tag::Durable => ParaId::new(self.value).map_or(KeyName::Rowless(self.value), KeyName::Durable),
+            Tag::Rowless => KeyName::Rowless(self.value),
         }
     }
 
@@ -248,13 +224,7 @@ mod tests {
     #[test]
     fn a_key_gives_back_the_name_it_was_made_with() {
         let id = ParaId::new(0x7FFF_FFFF).unwrap();
-        for name in [
-            KeyName::Durable(id),
-            KeyName::Repeat(id, 3),
-            KeyName::Ordinal(0),
-            KeyName::Ordinal(u32::MAX),
-            KeyName::RowAt { table: 2, row: 9 },
-        ] {
+        for name in [KeyName::Durable(id), KeyName::Rowless(0), KeyName::Rowless(u32::MAX)] {
             for kind in [BlockKind::Paragraph, BlockKind::Table, BlockKind::Row] {
                 let key = BlockKey::new(StoryIx(7), kind, name);
                 assert_eq!((key.story(), key.kind(), key.name()), (StoryIx(7), kind, name));
@@ -262,8 +232,8 @@ mod tests {
             }
         }
         assert_ne!(
-            BlockKey::new(StoryIx::BODY, BlockKind::Paragraph, KeyName::Ordinal(5)),
-            BlockKey::new(StoryIx::BODY, BlockKind::Table, KeyName::Ordinal(5))
+            BlockKey::new(StoryIx::BODY, BlockKind::Paragraph, KeyName::Rowless(5)),
+            BlockKey::new(StoryIx::BODY, BlockKind::Table, KeyName::Rowless(5))
         );
     }
 

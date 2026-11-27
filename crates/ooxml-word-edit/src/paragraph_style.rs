@@ -14,7 +14,6 @@ use crate::names::{W, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::set_text::{block_key, find, paragraph_has_annotations};
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -36,8 +35,6 @@ pub struct SetParagraphStyle {
 pub struct StyleSet {
     /// The paragraph's id after the edit.
     pub id: ooxml_word_model::ids::BlockId,
-    /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
     pub part: ooxml_opc::PartName,
 }
@@ -115,8 +112,7 @@ pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option
         crate::builtin::resolve(&docx, name, "paragraph")?;
     }
     sink.read(block_key(&found.part, &found.id));
-    let renamed = stamp_document(sink, &docx)?;
-    let id = crate::ranges::renamed_id(&renamed, &found.id);
+    let id = found.id.clone();
     let style = match style {
         Some(name) => Some(crate::builtin::ensure(sink, name, "paragraph")?),
         None => None,
@@ -161,7 +157,6 @@ pub(crate) fn set_style(sink: &mut EditSink<'_, '_>, target: &str, style: Option
     }
     Ok(StyleSet {
         id: id.into(),
-        renamed,
         part: found.part.into(),
     })
 }

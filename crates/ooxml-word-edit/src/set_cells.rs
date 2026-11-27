@@ -31,9 +31,6 @@ pub struct SetCells {
     pub table: ooxml_word_model::address::Address,
     /// Each cell's place and text (`\n` between its paragraphs), in order.
     pub writes: Vec<CellWrite>,
-    /// Each cell written as `_set_cell` writes it, the document stamped first where it
-    /// needs ids; else as `_fill_cells` writes them, unstamped.
-    pub stamping: bool,
     /// Untracked or tracked.
     pub policy: RevisionPolicy,
     /// Where given, positions and labels count the table as accepting its tracked changes
@@ -80,8 +77,6 @@ impl CellWrite {
 pub struct CellEdit {
     /// The paragraph written or made; `None` for a deletion.
     pub id: Option<String>,
-    /// Ids renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// Paragraphs made.
     pub created: Vec<String>,
     /// Paragraphs removed.
@@ -221,14 +216,7 @@ impl SetCells {
                     TableGrid::new(story, &now).no_cell(&now.id, row, column),
                 ));
             };
-            write_cell(
-                &mut sink,
-                &found,
-                &places,
-                (row, column),
-                (&write.text, self.stamping),
-                &mut out.edits,
-            )?;
+            write_cell(&mut sink, &found, &places, (row, column), &write.text, &mut out.edits)?;
             out.ids.push(format!("{}/c{r},{c}", found.id));
             out.at.push((row, column));
         }
@@ -327,18 +315,17 @@ pub(crate) fn set_cell(
         .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let places = grid(tree.root(), &found.rows);
     let mut edits = Vec::new();
-    write_cell(sink, &found, &places, (row, column), (text, true), &mut edits)?;
+    write_cell(sink, &found, &places, (row, column), text, &mut edits)?;
     Ok(edits)
 }
 
-/// One cell's text (`stamping`: its first paragraph written as an edit of its own, the
-/// document stamped first).
+/// One cell's text.
 fn write_cell(
     sink: &mut EditSink<'_, '_>,
     table: &Table,
     places: &GridPlaces,
     (row, column): (usize, usize),
-    (text, stamping): (&str, bool),
+    text: &str,
     edits: &mut Vec<CellEdit>,
 ) -> Result<()> {
     let missing = || EditError::Refused(format!("{} has no cell at row {row}, column {column}", table.id));
@@ -364,10 +351,9 @@ fn write_cell(
         .unwrap_or_default();
     if current != head {
         check_text(head)?;
-        let wrote = crate::set_text::write_text_as(sink, first, head, stamping)?;
+        let wrote = crate::set_text::write_text(sink, first, head)?;
         edits.push(CellEdit {
             id: Some(wrote.id.to_string()),
-            renamed: wrote.renamed,
             created: Vec::new(),
             removed: Vec::new(),
         });
@@ -376,7 +362,6 @@ fn write_cell(
         let gone = crate::delete_write::delete(sink, id)?;
         edits.push(CellEdit {
             id: gone.id,
-            renamed: gone.renamed,
             created: Vec::new(),
             removed: gone.removed,
         });
@@ -391,7 +376,6 @@ fn write_cell(
             let made = crate::paragraphs::insert_paragraph(sink, &last, (true, line, None))?;
             edits.push(CellEdit {
                 id: Some(made.id.to_string()),
-                renamed: made.renamed,
                 created: vec![made.id.to_string()],
                 removed: Vec::new(),
             });

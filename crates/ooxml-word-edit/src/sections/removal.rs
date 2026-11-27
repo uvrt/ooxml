@@ -13,7 +13,6 @@ use crate::doc::Key;
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::sink::EditSink;
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -57,8 +56,6 @@ impl RemoveSectionBreak {
         let mut paths = vec![paragraph_path.clone(), next_path.clone()];
         paths.extend(following_path.clone());
         let tracked = matches!(self.policy, RevisionPolicy::Tracked(_));
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let entry_id = crate::ranges::renamed_id(&renamed, &entry_id);
         let tree = sink
             .doc()
             .tree(&main)?
@@ -115,7 +112,7 @@ impl RemoveSectionBreak {
         let count = (stretch.1 - stretch.0) as usize + 1;
         sink.splice_children(&main, (&parent, stretch.0 as usize, count), built, keys, draws)?;
         finish(sink, &main, released, dated)?;
-        outcome(sink, (wanted_id, renamed, removed), (survivor, kept))
+        outcome(sink, (wanted_id, removed), (survivor, kept))
     }
 }
 
@@ -174,19 +171,14 @@ impl RemoveSectionBreak {
 /// named for the one that joined it (or the break's paragraph, kept).
 fn outcome(
     sink: &mut EditSink<'_, '_>,
-    (wanted_id, renamed, removed): (String, ooxml_word_model::ids::Renames, Vec<String>),
+    (wanted_id, removed): (String, Vec<String>),
     (survivor, kept): (Option<String>, Option<String>),
 ) -> Result<SectionEdited> {
-    let renamed: ooxml_word_model::ids::Renames = renamed
-        .into_iter()
-        .filter(|(old, _)| !removed.iter().any(|r| r == old))
-        .collect();
     let mut out = SectionEdited {
         id: None,
         changed: true,
         created: Vec::new(),
         removed: std::iter::once(wanted_id).chain(removed.iter().cloned()).collect(),
-        renamed,
         warnings: Vec::new(),
     };
     if let (Some(first), Some(survivor)) = (removed.first(), survivor) {

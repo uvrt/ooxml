@@ -35,6 +35,12 @@ with Toolbox(TOOLS, formats=[FORMAT], groups=GROUPS) as toolbox:
   the rest load on demand in five groups. What is supported and what is not:
   [SUPPORTED.md](../src/docx_agent/tools/SUPPORTED.md); for the application's thinking layer:
   [GUIDANCE.md](../src/docx_agent/tools/GUIDANCE.md).
+- **Ids are durable from the first read** (stamp on open): every paragraph, table and row has
+  one (`p:<paraId>`, `t:<paraId>`, `tr:<paraId>`, prefixed with its story outside the body),
+  given in memory when the document is opened where the file has none, and written with the
+  first edit. Names by place (`p@body/3`, `t:X/r1`, `p:X#1`, `s@body/3`) are not given and are
+  refused (`invalid_arguments`) with the way on: read the ids first (`word_inspect` or
+  `word_read`). A reply's `renamed` lists only a command's own renames.
 - **Every changing call** is one undo step (all of a `batch` is one: a failing op is skipped
   with its error and the rest apply; `atomic: true` for all or none), written as tracked
   changes while `word_set_tracking` is on, and returns `checks`: the validation delta

@@ -16,7 +16,7 @@ use crate::policy::RevisionPolicy;
 use crate::review::space::Space;
 use crate::review::xml::attached;
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::work::{scope_above, Id, Work};
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
@@ -183,7 +183,6 @@ impl DeleteNote {
         let (notes_part, note_path, note) = note_element(sink.doc(), &docx, &self.note)?;
         let found = note_reference(&docx, &self.note);
         if let (RevisionPolicy::Tracked(tracking), Some((part, reference))) = (sink.policy().clone(), &found) {
-            let renamed = stamp_document(&mut *sink, &docx)?;
             let mut edited = editable(&*sink, part, reference)?;
             let reference_node = edited.node;
             let (released, numbered, dated) = sink.stamped(tracking.clone(), |stamp| {
@@ -207,13 +206,11 @@ impl DeleteNote {
                 return Ok(NoteEdited {
                     id: None,
                     removed: vec![self.note.clone()],
-                    renamed,
                     created: Vec::new(),
                 });
             }
             return Ok(NoteEdited {
                 id: Some(self.note.clone()),
-                renamed,
                 ..NoteEdited::default()
             });
         }
@@ -229,7 +226,6 @@ impl DeleteNote {
             );
         }
         let _ = note;
-        let renamed = stamp_document(&mut *sink, &docx)?;
         if let Some((part, reference)) = &found {
             let mut edited = editable(&*sink, part, reference)?;
             let node = edited.node;
@@ -239,10 +235,6 @@ impl DeleteNote {
         remove_note(&mut *sink, &self.note)?;
         Ok(NoteEdited {
             id: None,
-            renamed: renamed
-                .into_iter()
-                .filter(|(old, _)| !removed.iter().any(|r| r == old))
-                .collect(),
             removed,
             created: Vec::new(),
         })
@@ -281,8 +273,6 @@ impl MoveNote {
         if let RevisionPolicy::Tracked(tracking) = &self.policy {
             return self.edit_tracked(sink, tracking.clone(), &paragraph, offset);
         }
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let docx = sink.docx()?;
         let (old_part, reference) = note_reference(&docx, &self.note)
             .ok_or_else(|| EditError::Refused(format!("{} has no reference to move", self.note)))?;
         let mut old = editable(&*sink, &old_part, &reference)?;
@@ -321,7 +311,6 @@ impl MoveNote {
         }
         Ok(NoteEdited {
             id: Some(self.note.clone()),
-            renamed,
             ..NoteEdited::default()
         })
     }

@@ -16,7 +16,6 @@ use crate::review::space::Space;
 use crate::review::xml::{attached, make};
 use crate::set_text::Found;
 use crate::sink::{EditSink, Numbered};
-use crate::stamping::stamp_document;
 use crate::work::{Id, Work};
 use crate::{EditError, Result};
 
@@ -30,8 +29,6 @@ impl MoveNote {
         offset: usize,
     ) -> Result<NoteEdited> {
         let kind = NoteKind::of(&self.note);
-        let docx = sink.docx()?;
-        let renamed = stamp_document(&mut *sink, &docx)?;
         let docx = sink.docx()?;
         let no_reference = || EditError::Refused(format!("{} has no reference to move", self.note));
         let (old_part, reference) = note_reference(&docx, &self.note).ok_or_else(no_reference)?;
@@ -100,7 +97,6 @@ impl MoveNote {
             id: Some(id.clone()),
             created: vec![id],
             removed: Vec::new(),
-            renamed,
         })
     }
 }

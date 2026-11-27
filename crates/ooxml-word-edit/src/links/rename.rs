@@ -10,7 +10,7 @@ use crate::delete::{editable, stretch_keys};
 use crate::doc::Key;
 use crate::names::W;
 use crate::sink::EditSink;
-use crate::stamping::{stamp_document, with_attribute};
+use crate::stamping::with_attribute;
 use crate::{EditError, Result, WordDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_store::{Command, Txn};
@@ -75,8 +75,6 @@ impl RenameBookmark {
                 repr_str(&self.new)
             )));
         }
-        let stamped = stamp_document(&mut *sink, &docx)?;
-        let docx = sink.docx()?;
         let marked = bookmark(&docx, &old).map_err(EditError::Address)?;
         let (marked_part, start) = (marked.part.part.clone(), marked.start.clone());
         for story in &docx.parts {
@@ -107,9 +105,8 @@ impl RenameBookmark {
                 edit.write(&mut *sink, &story.part)?;
             }
         }
-        let mut renamed: ooxml_word_model::ids::Renames =
+        let renamed: ooxml_word_model::ids::Renames =
             vec![(format!("bm:{old}").into(), format!("bm:{}", self.new).into())];
-        renamed.extend(stamped);
         let id = format!("bm:{}", self.new);
         Ok(LinkEdited {
             id: Some(id),
@@ -205,8 +202,6 @@ impl RemoveBookmark {
             dangling.extend(std::iter::repeat_n(format!("a hyperlink in {}", story.story), links));
             dangling.extend(std::iter::repeat_n(format!("a field in {}", story.story), fields));
         }
-        let renamed = stamp_document(&mut *sink, &docx)?;
-        let docx = sink.docx()?;
         let marked = bookmark(&docx, &old).map_err(EditError::Address)?;
         let part = marked.part.part.clone();
         let mut paths = vec![marked.start.to_vec()];
@@ -227,7 +222,6 @@ impl RemoveBookmark {
             id: None,
             changed: true,
             removed: vec![format!("bm:{old}")],
-            renamed,
             warnings: dangling
                 .into_iter()
                 .map(|what| format!("{what} still points at the removed bookmark {}", repr_str(&old)))

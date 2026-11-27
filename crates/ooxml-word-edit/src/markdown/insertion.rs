@@ -17,7 +17,7 @@ use crate::placing::{Place, Stretch, BLOCKS};
 use crate::policy::{RevisionPolicy, Stamp};
 use crate::replacing::{Order, Replaced};
 use crate::sink::EditSink;
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
@@ -119,7 +119,6 @@ pub(crate) fn insert(
     } = locate(sink.doc(), &docx, &command.at, blocks)?;
     // the replaced paragraphs read before anything changes
     let donors = super::keep::donors(&docx, &place.part, &replaced);
-    let renamed = stamp_document(sink, &docx)?;
     let part = place.part.clone();
     let tracked = matches!(sink.policy(), RevisionPolicy::Tracked(_));
     let mut replacing = Replaced::begin(sink, &mut place, replaced, tracked, Order::After)?;
@@ -173,7 +172,7 @@ pub(crate) fn insert(
     })?;
     crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
     let (created, top) = stamped;
-    let kept = said(&stretch.work, kept, &renamed);
+    let kept = said(&stretch.work, kept);
     let per_block: Vec<Vec<String>> = top.iter().map(|id| vec![id.clone()]).collect();
     replacing.finish(sink, tracked, &per_block)?;
     removed.extend(replacing.removed);
@@ -183,7 +182,6 @@ pub(crate) fn insert(
         first: created.first().cloned(),
         changed: true,
         created,
-        renamed,
         removed,
         warnings: writer.warnings,
         blocks: top,
@@ -212,20 +210,14 @@ fn keep_settings(
     ))
 }
 
-/// What each new paragraph kept, by the id it was stamped with, and the replaced one's id
-/// after the edit's stamping (`renamed`: a paragraph the document never stamped is named by
-/// its new id, as docx-agent names it).
-fn said(
-    work: &Work,
-    kept: Vec<super::keep::Kept>,
-    renamed: &[(ooxml_word_model::ids::BlockId, ooxml_word_model::ids::BlockId)],
-) -> Vec<KeptSettings> {
+/// What each new paragraph kept, by the id it was stamped with, and the replaced one's id.
+fn said(work: &Work, kept: Vec<super::keep::Kept>) -> Vec<KeptSettings> {
     kept.into_iter()
         .filter_map(|k| {
             let block = format!("p:{}", work.get(k.node, Some(W14), "paraId")?);
             Some(KeptSettings {
                 block,
-                from: crate::ranges::renamed_id(renamed, &k.from),
+                from: k.from,
                 settings: k.settings,
             })
         })

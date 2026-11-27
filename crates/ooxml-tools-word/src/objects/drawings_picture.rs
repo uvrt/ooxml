@@ -244,7 +244,7 @@ impl Command<WordDoc> for Picture<'_> {
                 changed: true,
                 created: vec![id.to_string()],
                 removed: Vec::new(),
-                renamed: ooxml_word_model::ids::renames_text(&done.renamed),
+                renamed: Vec::new(),
                 warnings: Vec::new(),
             });
             if plan.align_taken {
@@ -306,7 +306,7 @@ impl Picture<'_> {
                 changed: done.changed,
                 created: Vec::new(),
                 removed: done.removed,
-                renamed: ooxml_word_model::ids::renames_text(&done.renamed),
+                renamed: Vec::new(),
                 warnings: done.warnings,
             });
         }

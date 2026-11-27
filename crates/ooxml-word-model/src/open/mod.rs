@@ -156,11 +156,6 @@ pub struct Model {
     bodies: ElementDigests,
     context: Option<(Digest, Context)>,
     elements: Memo<Digest, Kept<BodyElement>>,
-    /// The last version's top-level body elements' blocks, by their ordinal among the
-    /// body's block elements: what a reading whose keys name places (an unstamped part's) is
-    /// shared with where it reads the same, keys included -- a candidate by place, taken
-    /// only where equal (never a memo key, ADR-008).
-    read_before: Vec<Arc<[Block]>>,
     stories: Memo<Digest, Kept<StoryRead>>,
     notes: Memo<Digest, Kept<Notes>>,
     resolver: Resolver,
@@ -245,7 +240,6 @@ impl Model {
             bodies: ElementDigests::default(),
             context: None,
             elements: Memo::new(Arc::clone(&budget)),
-            read_before: Vec::new(),
             stories: Memo::new(Arc::clone(&budget)),
             notes: Memo::new(Arc::clone(&budget)),
             resolver: Resolver::new(&budget),
@@ -378,7 +372,6 @@ impl Model {
         let mut steps = Steps::new("w:body");
         let mut out = Vec::new();
         let (mut count, mut read) = (0, 0);
-        let mut read_now: Vec<Arc<[Block]>> = Vec::new();
         for (k, node) in body.children().iter().enumerate() {
             let Some(node) = node.as_element() else { continue };
             let here = at.child(k, node, &mut steps);
@@ -401,31 +394,23 @@ impl Model {
                 .filter(|Kept(kept)| keyer.as_ref().is_some_and(|k| k.reusable(&kept.blocks)))
             {
                 fields.cached.extend(kept.cached.iter().cloned());
-                read_now.push(Arc::clone(&kept.blocks));
                 out.extend(kept.blocks.iter().cloned());
                 continue;
             }
             read += 1;
             let before = fields.stack.clone();
             let mut element = reader.body_element(node, &here, &mut fields);
-            // read again to the same blocks, keys included, as the last version's element at
-            // this ordinal: its blocks are shared (what was measured of them is kept too). The
-            // ordinal only nominates a candidate and equality decides: never a memo key
-            // (ADR-008)
-            let before_here = self.read_before.get(count - 1).filter(|b| **b == element.blocks);
-            if let Some(blocks) =
-                before_here.or(kept.as_ref().map(|Kept(k)| &k.blocks).filter(|b| **b == element.blocks))
-            {
+            // read again to the same blocks, keys included, as the memo's: its blocks are
+            // shared (what was measured of them is kept too)
+            if let Some(blocks) = kept.as_ref().map(|Kept(k)| &k.blocks).filter(|b| **b == element.blocks) {
                 element.blocks = Arc::clone(blocks);
             }
-            read_now.push(Arc::clone(&element.blocks));
             out.extend(element.blocks.iter().cloned());
             if fields.stack == before && keyer.is_some() {
                 self.elements.insert(key, Kept(Arc::new(element)));
             }
         }
         self.bodies.finish();
-        self.read_before = read_now;
         self.stats.elements = count;
         self.stats.elements_read = read;
         (out, std::mem::take(&mut fields.cached), Some(body))

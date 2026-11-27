@@ -29,7 +29,8 @@ pub(super) struct Block {
     pub(super) owner: Option<u32>,
     /// The `w14:paraId` as written (paragraphs and rows).
     pub(super) raw: Option<Arc<str>>,
-    /// The same, upper-cased (repeats are counted in any case).
+    /// The same as repeats compare it ([`compared`]): by value, whatever its case or
+    /// spelling.
     pub(super) upper: Option<Arc<str>>,
     /// Its ordinal among the segment's blocks of its kind (paragraphs, tables).
     pub(super) ordinal: u32,
@@ -39,13 +40,6 @@ impl Block {
     /// A paragraph or row whose paraId is missing or out of range (stamping gives it one).
     pub(super) fn unstamped(&self) -> bool {
         self.kind != Kind::Tbl && !self.raw.as_deref().is_some_and(valid_long_hex)
-    }
-
-    /// A paragraph or row whose valid paraId is written with fewer than eight digits.
-    pub(super) fn short(&self) -> bool {
-        self.raw
-            .as_deref()
-            .is_some_and(|raw| raw.len() < 8 && valid_long_hex(raw))
     }
 }
 
@@ -62,9 +56,6 @@ pub(super) struct Body {
     pub(super) tables: Box<[u32]>,
     /// How many of its paragraphs and rows are unstamped.
     pub(super) unstamped: u32,
-    /// How many of its paragraphs and rows have a valid paraId written with fewer than
-    /// eight digits (one value may then be written more than one way).
-    pub(super) short: u32,
 }
 
 impl Body {
@@ -107,7 +98,7 @@ impl Body {
 
     fn from_blocks(node: Option<Node>, mut blocks: Vec<Block>) -> Body {
         let (mut paragraphs, mut tables) = (Vec::new(), Vec::new());
-        let (mut unstamped, mut short) = (0, 0);
+        let mut unstamped = 0;
         for (k, block) in blocks.iter_mut().enumerate() {
             let k = u32::try_from(k).unwrap_or(u32::MAX);
             match block.kind {
@@ -122,7 +113,6 @@ impl Body {
                 Kind::Tr => {}
             }
             unstamped += u32::from(block.unstamped());
-            short += u32::from(block.short());
         }
         Body {
             node,
@@ -130,7 +120,6 @@ impl Body {
             paragraphs: paragraphs.into(),
             tables: tables.into(),
             unstamped,
-            short,
         }
     }
 
@@ -160,6 +149,16 @@ impl Body {
     }
 }
 
+/// A paraId as repeats compare it: by value (eight upper-case hex digits) where it is hex,
+/// so `1A` and `0000001A` are one id (Word's rule: the first occurrence keeps it), else
+/// upper-cased.
+pub(super) fn compared(raw: &str) -> String {
+    match crate::ids::hex_value(raw) {
+        Some(value) => format!("{value:08X}"),
+        None => raw.to_uppercase(),
+    }
+}
+
 fn kind_of(element: &Element) -> Option<Kind> {
     let name = element.name();
     if name.namespace() != Some(W) {
@@ -180,7 +179,7 @@ fn found(element: &Arc<Element>, path: &[u32], tables: &mut Vec<u32>, out: &mut 
         Kind::Tbl => None,
         Kind::P | Kind::Tr => element.attribute(Some(W14), "paraId").map(Arc::<str>::from),
     };
-    let upper = raw.as_deref().map(|r| Arc::<str>::from(r.to_uppercase()));
+    let upper = raw.as_deref().map(|r| Arc::<str>::from(compared(r)));
     out.push(Block {
         element: Arc::clone(element),
         rel: path.into(),

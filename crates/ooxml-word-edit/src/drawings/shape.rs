@@ -15,10 +15,8 @@ use crate::controls::{rewrite, InParagraph, Rewrite};
 use crate::marks::{insert_in_order, insert_paragraph_content};
 use crate::names::{MC, W, W14, WP, WP14};
 use crate::policy::RevisionPolicy;
-use crate::ranges::renamed_id;
 use crate::review::xml::make;
 use crate::sink::{EditSink, TextWrite};
-use crate::stamping::stamp_document;
 use crate::text::atoms;
 use crate::text::write::{check_text, make_run};
 use crate::text_range::{range, range_id, Span};
@@ -127,11 +125,9 @@ impl InsertShape {
     fn edit(&self, sink: &mut EditSink<'_, '_>) -> Result<DrawingEdited> {
         let docx = sink.docx()?;
         let place = self.check(sink.doc(), &docx)?;
-        let renamed = stamp_document(sink, &docx)?;
         let heights = all_heights(sink)?;
         let docx = sink.docx()?;
-        let id = renamed_id(&renamed, &place.id);
-        let found = crate::set_text::find(sink.doc(), &docx, &id)?;
+        let found = crate::set_text::find(sink.doc(), &docx, &place.id)?;
         let part = found.part.clone();
         let number = sink.draw_drawings(1)?.first().copied().unwrap_or(1);
         let ids = sink.draw(&format!("{part}\0shape"), 2)?;
@@ -188,7 +184,6 @@ impl InsertShape {
             id: format!("d:{number}"),
             changed: true,
             created,
-            renamed,
             warnings: Vec::new(),
         })
     }

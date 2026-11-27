@@ -261,7 +261,6 @@ fn set(args: &WordHeadersFooters, editing: &Editing<'_>, story: &Story) -> ToolR
                 steps.push(Outcome {
                     id: typed.id,
                     changed: true,
-                    renamed: ooxml_word_model::ids::renames_text(&typed.renamed),
                     ..Outcome::default()
                 });
             }

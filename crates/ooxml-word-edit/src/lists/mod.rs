@@ -2,7 +2,7 @@
 //! per paragraph in order as `word_lists` makes them (`edit/numbering.py`'s `ListOps`):
 //! a paragraph added to Word's own bullet or numbered list (joining the list right before
 //! it), taken out of its list, moved to a level, its list restarted or continued, a level's
-//! format changed -- each step stamping as an edit does, writing the paragraphs' and the
+//! format changed -- each step writing the paragraphs' and the
 //! numbering part's changes (tracked: the paragraphs' old properties in `w:pPrChange`s)
 //! and removing the instances and definitions it left unused.
 //!
@@ -20,7 +20,6 @@ pub(crate) use read::style_list as style_list_of;
 pub use read::{numbered_by_style, unnumbered_styles_like};
 
 use crate::policy::RevisionPolicy;
-use crate::stamping::stamp_document;
 use crate::{EditError, Result, WordDoc};
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::address::scope_paragraphs;
@@ -86,8 +85,6 @@ pub struct ListStep {
     pub changed: bool,
     /// The instances and definitions it removed (`num:3`, `abstractNum:2`).
     pub removed: Vec<String>,
-    /// Ids its stamping renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What it notes.
     pub warnings: Vec<String>,
 }
@@ -156,24 +153,6 @@ fn table_paragraphs(docx: &Docx, address: &Address) -> Option<Vec<(String, usize
     Some(out)
 }
 
-/// Stamping done by the first step that edits: the renames it made.
-pub(crate) struct Stamped {
-    renamed: Option<ooxml_word_model::ids::Renames>,
-}
-
-impl Stamped {
-    /// Stamp the document if no step did yet; this step's renames.
-    pub(crate) fn once(&mut self, sink: &mut crate::sink::EditSink<'_, '_>) -> Result<ooxml_word_model::ids::Renames> {
-        if self.renamed.is_some() {
-            return Ok(Vec::new());
-        }
-        let docx = sink.docx()?;
-        let renamed = stamp_document(sink, &docx)?;
-        self.renamed = Some(renamed.clone());
-        Ok(renamed)
-    }
-}
-
 impl Command<WordDoc> for ListEdit {
     type Out = ListsEdited;
     type Error = EditError;
@@ -211,10 +190,9 @@ impl Command<WordDoc> for ListEdit {
         for place in &stepped {
             steps::precheck(&docx, place, &self.action)?;
         }
-        let mut stamped = Stamped { renamed: None };
         let mut out = ListsEdited::default();
         for place in stepped {
-            match steps::step(&mut sink, &mut stamped, place, &self.action)? {
+            match steps::step(&mut sink, place, &self.action)? {
                 steps::Stepped::Done(step) => out.steps.push(step),
                 steps::Stepped::Listless(id) => out.listless.push(id),
             }

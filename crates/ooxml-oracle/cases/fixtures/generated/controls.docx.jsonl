@@ -1991,7 +1991,7 @@
 {"case":{"arguments":{"doc":"d1","target":"t:7B000001.."},"case":"inspect t:7B000001..","tool":"word_inspect"},"id":"inspect:07282850d5c67084","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7B000001"},"case":"inspect t:7B000001","tool":"word_inspect"},"id":"inspect:9cf49d016b989c2f","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7B000001/c0,0"},"case":"inspect t:7B000001/c0,0","tool":"word_inspect"},"id":"inspect:5c74f889dc43271f","mode":"inspect"}
-{"case":{"arguments":{"doc":"d1","target":"t:7B000001/r0"},"case":"inspect t:7B000001/r0","tool":"word_inspect"},"id":"inspect:61d924ea83600a67","mode":"inspect"}
+{"case":{"arguments":{"doc":"d1","target":"tr:7B000001"},"case":"inspect t:7B000001/r0","tool":"word_inspect"},"id":"inspect:3ab75f7238c2172f","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"t:7B000001/c1,0"},"case":"inspect t:7B000001/c1,0","tool":"word_inspect"},"id":"inspect:986c7daeb78a486c","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"h:p:7A000001"},"case":"inspect h:p:7A000001","tool":"word_inspect"},"id":"inspect:7a85775e2f61329b","mode":"inspect"}
 {"case":{"arguments":{"doc":"d1","target":"s:1"},"case":"inspect s:1","tool":"word_inspect"},"id":"inspect:682a66c585c51d4d","mode":"inspect"}
@@ -2005,7 +2005,7 @@
 {"case":{"arguments":{"doc":"d1","range":"t:7B000001.."},"case":"read t:7B000001..","tool":"word_read"},"id":"ranges:f5f768e9ea3edf60","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7B000001"},"case":"read t:7B000001","tool":"word_read"},"id":"ranges:0b7ba96df295f84a","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7B000001/c0,0"},"case":"read t:7B000001/c0,0","tool":"word_read"},"id":"ranges:fca20046c3912679","mode":"ranges"}
-{"case":{"arguments":{"doc":"d1","range":"t:7B000001/r0"},"case":"read t:7B000001/r0","tool":"word_read"},"id":"ranges:48eecc10a200f40b","mode":"ranges"}
+{"case":{"arguments":{"doc":"d1","range":"tr:7B000001"},"case":"read t:7B000001/r0","tool":"word_read"},"id":"ranges:fec9d73feed9a885","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"t:7B000001/c1,0"},"case":"read t:7B000001/c1,0","tool":"word_read"},"id":"ranges:72b77530b28f3674","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"h:p:7A000001"},"case":"read h:p:7A000001","tool":"word_read"},"id":"ranges:72e280f72b91fda0","mode":"ranges"}
 {"case":{"arguments":{"doc":"d1","range":"s:1"},"case":"read s:1","tool":"word_read"},"id":"ranges:836223382f3ca698","mode":"ranges"}

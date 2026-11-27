@@ -1,7 +1,7 @@
 //! Block identity's round trips (phase 3 design, section 5 item 2), over every story of
 //! every corpus document and over random lineages of made-up parts: every id the index
 //! names reads back as written (`BlockId::parse(x).to_string() == x`), odd forms of it too
-//! (lower case, short hex, `#k`, `@n`, `/rK`); every paragraph's, table's and row's key
+//! (lower case, short hex, a rowless table's `t@`); every paragraph's, table's and row's key
 //! finds that block again (`entry_of(key_of(e)) == e`) with its place and id; and every
 //! block's name at the edge (`VersionNames::path`) is the path the layout model writes today
 //! (`story_model_path`'s, a note's blocks named from their note by its id).
@@ -102,51 +102,22 @@ fn check_id(text: &str, kind: BlockKind, story: &StoryName, tally: &mut Tally) {
         format!("{story}/")
     };
     let mut odd: Vec<(String, BlockKind, BlockName)> = Vec::new();
-    odd.push((format!("p@{story}/7"), BlockKind::Paragraph, BlockName::Ordinal(7)));
-    odd.push((format!("t@{story}/0"), BlockKind::Table, BlockName::Ordinal(0)));
+    odd.push((format!("t@{story}/0"), BlockKind::Table, BlockName::Rowless(0)));
     if let BlockName::Durable(id) = name {
         let tag = match kind {
             BlockKind::Paragraph => "p",
             BlockKind::Table => "t",
             BlockKind::Row => "tr",
         };
-        let short = format!("{prefix}{tag}:{:x}", id.get());
-        odd.push((short, kind, name.clone()));
-        let lower = format!("{prefix}{tag}:{:08x}", id.get());
-        odd.push((lower, kind, name.clone()));
-        match kind {
-            BlockKind::Paragraph => {
-                for k in [1, 12] {
-                    odd.push((format!("{text}#{k}"), kind, BlockName::Repeat(Some(*id), k)));
-                }
-            }
-            BlockKind::Table => {
-                for row in [0, 3] {
-                    let at = BlockName::RowAt {
-                        table: Box::new(name.clone()),
-                        row,
-                    };
-                    odd.push((format!("{text}/r{row}"), BlockKind::Row, at));
-                }
-            }
-            BlockKind::Row => {}
-        }
-    }
-    if let BlockName::Ordinal(n) = name {
-        if kind == BlockKind::Table {
-            let at = BlockName::RowAt {
-                table: Box::new(BlockName::Ordinal(*n)),
-                row: 2,
-            };
-            odd.push((format!("{text}/r2"), BlockKind::Row, at));
-        }
+        odd.push((format!("{prefix}{tag}:{:x}", id.get()), kind, name));
+        odd.push((format!("{prefix}{tag}:{:08x}", id.get()), kind, name));
     }
     for (form, kind, name) in odd {
         let read = BlockId::parse(&form).unwrap_or_else(|e| panic!("{e} (from {text})"));
         assert_eq!(read.to_string(), form);
         assert_eq!(
             (read.kind(), read.story(), read.name()),
-            (Some(kind), Some(story), Some(&name)),
+            (Some(kind), Some(story), Some(name)),
             "{form}"
         );
         tally.odd_forms += 1;
@@ -164,7 +135,6 @@ fn check_part(names: &VersionNames, ix: StoryIx, part: &StoryPart, tally: &mut T
         part,
         name: StoryName::new(&part.story),
         every,
-        short: short_written(&part.ids),
     };
     let mut keys: HashSet<BlockKey> = HashSet::new();
     let seen = check_paragraphs(&story, &mut keys, tally) + check_tables(&story, &mut keys, tally);
@@ -179,8 +149,6 @@ struct Story<'a> {
     name: StoryName,
     /// Paths are checked for every `every`-th block.
     every: usize,
-    /// Whether a paraId is written with fewer than eight digits.
-    short: bool,
 }
 
 impl Story<'_> {
@@ -220,10 +188,7 @@ fn check_paragraphs(story: &Story<'_>, keys: &mut HashSet<BlockKey>, tally: &mut
             tally.paths += 1;
         }
         let durable = key.durable();
-        assert!(!durable || p.state == IdState::Ok, "{}", p.id);
-        if p.state == IdState::Ok && p.raw.as_deref().is_some_and(|r| r.len() == 8) && !story.short {
-            assert!(durable, "{}", p.id);
-        }
+        assert!(durable && p.state == IdState::Ok, "{}", p.id);
         tally.durable += usize::from(durable);
         check_id(&p.id, BlockKind::Paragraph, &story.name, tally);
         keys.insert(key);
@@ -333,17 +298,6 @@ fn in_paragraph(path: &str) -> bool {
     steps.iter().any(|step| step.starts_with("w:p["))
 }
 
-/// Whether some paraId of the part is written with fewer than eight digits.
-fn short_written(ids: &ooxml_word_model::ids::PartIds) -> bool {
-    let short = |raw: &Option<String>| raw.as_deref().is_some_and(|r| r.len() < 8);
-    ids.paragraphs().iter().any(|p| short(&p.raw))
-        || ids.tables().iter().any(|t| {
-            t.rows
-                .iter()
-                .any(|(_, id)| id.rsplit(':').next().is_some_and(|r| r.len() < 8))
-        })
-}
-
 fn docx_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
@@ -392,6 +346,19 @@ fn every_block_of_every_corpus_story_round_trips_by_key_id_and_path() {
     );
 }
 
+/// `root` with every block given a paraId of its own, as a document's open gives them: what
+/// every version of a part holds.
+fn stamped(name: &str, root: &Arc<Element>) -> Arc<Element> {
+    let ids = ooxml_word_model::ids::PartIds::new(name, root);
+    let Some(found) = ooxml_word_model::stamp::unstamped("word/document.xml", root, &ids, false) else {
+        return Arc::clone(root);
+    };
+    let mut pool = ooxml_word_model::ids::IdPool::of(ooxml_word_model::ids::used_long_hex(&[&**root]));
+    let mut draw = |seed: &str, count: usize| Ok::<_, std::convert::Infallible>(pool.generate(seed, count));
+    let Ok(stamp) = found.stamp(&mut draw);
+    stamp.root
+}
+
 /// A part's version as a story part: `earlier`'s index followed where given.
 fn story_part(name: &str, root: &Arc<Element>, earlier: Option<&StoryPart>, kept: &Arc<Kept>) -> StoryPart {
     let part = if name == "body" {
@@ -419,12 +386,12 @@ fn keys_round_trip_in_every_version_of_random_lineages_and_durable_ones_survive_
         let mut stories = StoryTable::new();
         let ix = stories.intern(name).unwrap();
         let blocks = 10 + rng.below(60);
-        let mut root = document(&mut rng, blocks, story);
+        let mut root = stamped(name, &document(&mut rng, blocks, story));
         let mut part = Arc::new(story_part(name, &root, None, &kept));
         for _ in 0..10 {
             let names = VersionNames::from_parts([(ix, Arc::clone(&part))]);
             check_part(&names, ix, &part, &mut tally);
-            let next = edited(&mut rng, &root, story);
+            let next = stamped(name, &edited(&mut rng, &root, story));
             let after = Arc::new(story_part(name, &next, Some(&part), &kept));
             // a durable key names the block with the same paraId after the edit, wherever it is
             for p in part.ids.paragraphs().iter() {
@@ -432,8 +399,14 @@ fn keys_round_trip_in_every_version_of_random_lineages_and_durable_ones_survive_
                 if !key.durable() {
                     continue;
                 }
+                // the same paraId by value, whatever its spelling
                 if let Some(id) = after.ids.id_of_key(key) {
-                    assert!(id.as_str().eq_ignore_ascii_case(&p.id), "{id} was {}", p.id);
+                    assert_eq!(
+                        id.para_id(),
+                        BlockId::parse(&p.id).ok().and_then(|b| b.para_id()),
+                        "{id} was {}",
+                        p.id
+                    );
                 }
             }
             (root, part) = (next, after);

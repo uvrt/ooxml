@@ -18,7 +18,6 @@ use crate::names::{W, W16DU};
 use crate::policy::RevisionPolicy;
 use crate::set_text::{block_key, find, paragraph_has_annotations};
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::stamp_document;
 use crate::text::{atoms, Atom};
 use crate::validate::Orders;
 use crate::work::{scope_above, Id, Work};
@@ -57,8 +56,6 @@ pub struct StyleSpans {
 pub struct SpansStyled {
     /// The paragraph's id after the edit.
     pub id: ooxml_word_model::ids::BlockId,
-    /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// The paragraph's part.
     pub part: ooxml_opc::PartName,
 }
@@ -113,8 +110,7 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
     let docx = sink.docx()?;
     let found = find(sink.doc(), &docx, target)?;
     sink.read(block_key(&found.part, &found.id));
-    let renamed = stamp_document(sink, &docx)?;
-    let id = crate::ranges::renamed_id(&renamed, &found.id);
+    let id = found.id.clone();
     let mut ids: Vec<(String, String)> = Vec::new();
     for name in spans.iter().filter_map(|s| s.style.as_deref()) {
         if !ids.iter().any(|(n, _)| n == name) {
@@ -184,7 +180,6 @@ pub(crate) fn style_spans(sink: &mut EditSink<'_, '_>, target: &str, spans: &[Sp
     }
     Ok(SpansStyled {
         id: id.into(),
-        renamed,
         part: found.part.into(),
     })
 }

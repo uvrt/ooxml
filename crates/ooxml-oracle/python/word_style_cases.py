@@ -307,7 +307,9 @@ def follow_cases(document) -> list[dict]:
         follow(tables[-1], [tables[0], tables[0], tables[-1]], preview=True)
         follow(tables[0], tables[1:2], report="actionable")
         cell = [p for p in document._index(document.package.document_part()).paragraphs if p.id not in paragraphs][:1]
-        follow(f"{tables[0]}/c1,1", [c.id for c in cell] + [f"{tables[-1]}/r1"])
+        # a row by its tr: id, else its table (a row by its place is refused since stamp on open)
+        rows = [row for _, row in document._resolve(tables[-1])[1].rows if row.startswith("tr:")]
+        follow(f"{tables[0]}/c1,1", [c.id for c in cell] + [rows[1] if len(rows) > 1 else tables[-1]])
     if len(paragraphs) > 1:
         stated = [p for p in paragraphs if document._resolve(p)[1].element.find(f"{_W}pPr") is not None]
         sample = (stated or paragraphs)[-1]

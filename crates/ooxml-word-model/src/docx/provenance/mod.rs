@@ -59,7 +59,7 @@ pub enum Kind {
     Text,
 }
 
-/// What `key` names (docx-agent's `kind_of`): `None` for a volatile id or another form.
+/// What `key` names (docx-agent's `kind_of`): `None` for another form.
 #[must_use]
 pub fn kind_of(key: &str) -> Option<Kind> {
     let local = if key.starts_with("d:") {

@@ -198,7 +198,7 @@ fn named(part: &StoryPart, base: &[u32], spaced: &[Spaced]) -> Option<EmptyRun> 
             (Some(first), Some(last)) if mine.len() > 1 && run.siblings => vec![format!("{first}..{last}")],
             _ => mine.iter().rev().cloned().collect(),
         };
-        entry.targets.splice(0..0, found); // the last run first: a p@ id stays true
+        entry.targets.splice(0..0, found); // the last run first
         entry.paragraphs.extend(run.positions.iter().copied());
         entry.ids.extend(mine);
     }

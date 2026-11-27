@@ -300,7 +300,7 @@ impl<'r> Reader<'r> {
         if let Some(wanted) = reference_target(target) {
             return Ok(self.referenced(target, wanted)?);
         }
-        if target.contains('@') && !target.starts_with("p@") {
+        if ooxml_word_model::address::is_text_range(target) {
             return self.range_target(target);
         }
         if let Some(kind) = other_kind(target) {

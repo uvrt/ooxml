@@ -113,7 +113,6 @@ fn edit(rng: &mut Rng, targets: &[String], tables: &[String], writer: u64) -> Ed
         3 => Edit::Cells(SetCells {
             table: ooxml_word_model::address::Address::from(table),
             writes: vec![CellWrite::at(rng.below(3), rng.below(3), words.join(" "))],
-            stamping: false,
             policy: policy(rng, writer),
             accepted: None,
         }),

@@ -12,10 +12,10 @@
 use crate::doc::{Key, WordDoc};
 use crate::names::{W, W14, W16DU};
 use crate::policy::RevisionPolicy;
-use crate::ranges::{renamed_id, stretch};
+use crate::ranges::stretch;
 use crate::set_text::{block_key, cell_paragraph, find, paragraph_has_annotations, write_text, TextEdited};
 use crate::sink::{annotation_draws, EditSink};
-use crate::stamping::{stamp_document, w14_prefix};
+use crate::stamping::w14_prefix;
 use crate::text::write::{check_text, make_run, run_properties_for};
 use crate::text::{paragraph_text, walk};
 use crate::work::{Id, Work};
@@ -48,8 +48,6 @@ pub struct InsertParagraph {
 pub struct ParagraphInserted {
     /// The new paragraph's id.
     pub id: ooxml_word_model::ids::BlockId,
-    /// Ids the edit's stamping renamed, old to new, in the order made.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// Its part.
     pub part: ooxml_opc::PartName,
 }
@@ -169,7 +167,7 @@ fn made(work: &mut Work, anchor: Id, template: bool, after: bool, text: &str, st
 }
 
 /// docx-agent's `_insert_paragraph` inside an edit: a new paragraph of `text` after (or
-/// before) the block `target` names; its id, the stamping's renames and its part.
+/// before) the block `target` names; its id and its part.
 ///
 /// # Errors
 /// [`EditError::Text`] for text a paragraph cannot hold; a refusal for an anchor that is
@@ -187,8 +185,6 @@ pub(crate) fn insert_paragraph(
     }
     let part = anchor.part.clone();
     sink.read(block_key(&part, &anchor.id));
-    let renamed = stamp_document(sink, &docx)?;
-    let anchor_id = renamed_id(&renamed, &anchor.id);
     let style = match style {
         Some(name) => Some(crate::builtin::ensure(sink, name, "paragraph")?),
         None => None,
@@ -239,7 +235,7 @@ pub(crate) fn insert_paragraph(
     } else {
         format!("{}/p:{para_id}", anchor.story)
     };
-    let mut keys = vec![block_key(&part, &anchor_id), block_key(&part, &new_id)];
+    let mut keys = vec![block_key(&part, &anchor.id), block_key(&part, &new_id)];
     if annotated {
         keys.push(Key::Annotations);
     }
@@ -254,7 +250,6 @@ pub(crate) fn insert_paragraph(
     }
     Ok(ParagraphInserted {
         id: new_id.into(),
-        renamed,
         part: part.into(),
     })
 }
@@ -426,33 +421,21 @@ pub(crate) fn set_lines_in(sink: &mut EditSink<'_, '_>, target: &str, text: &str
         return Ok(TextEdited {
             id: found.id.into(),
             changed: false,
-            renamed: Vec::new(),
             part: found.part.into(),
             created: Vec::new(),
         });
     }
     let first = write_text(sink, &found.id, head)?;
-    let mut renamed = first.renamed.clone();
     let mut created = Vec::new();
     let mut current = first.id.clone();
     for line in rest {
         let made = insert_paragraph(sink, &current, (true, line, None))?;
-        for (old, new) in made.renamed {
-            match renamed.iter_mut().find(|(o, _)| *o == old) {
-                Some(slot) => slot.1 = new,
-                None => renamed.push((old, new)),
-            }
-        }
         created.push(made.id.to_string());
         current = made.id;
     }
     Ok(TextEdited {
-        id: renamed
-            .iter()
-            .find(|(old, _)| *old == found.id)
-            .map_or_else(|| first.id.clone(), |(_, new)| new.to_string().into()),
+        id: first.id,
         changed: true,
-        renamed,
         part: found.part.into(),
         created,
     })

@@ -151,7 +151,6 @@ impl Command<WordDoc> for PlaceRows {
         let cells = SetCells {
             table: table.clone(),
             writes: self.writes.clone(),
-            stamping: true,
             policy: self.policy.clone(),
             accepted: None,
         }

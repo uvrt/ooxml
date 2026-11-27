@@ -1319,7 +1319,7 @@
 {"digest":"sha256:683468b8ee116cdaedecc5d43b613f6a","id":"structure:0e62c2c783f226ae","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a0019d861ff7864acd68696ea49857b8","id":"structure:7e29a0183f72869d","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:deb05143211ed7ee82bbf26b31bed4ea","id":"structure:9657491a42952493","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:48a4e377654394125fbbd1dcbfa03072","id":"structure:0d1a5b7c65ac8c4f","source":"known difference: P4b8, ph1-quirks: a row past the table's last: docx-agent's _add_block_comment indexes the rows unchecked and fails with Python's IndexError (\"list index out of range\", not_found); the Rust core refuses the address (\"t:7B000001/r1 names no row of its table\", not_found). A docx-agent crash, not copied."}
+{"digest":"sha256:40edb7107e3ee1fbd860402b4a5aa45c","id":"structure:0d1a5b7c65ac8c4f","source":"stamp-on-open-2026-11-26, decision 4: a row named by its place is refused with guidance; this row (past the last of a one-row table) has no durable id to name (ST2; 2 word_comments)"}
 {"digest":"sha256:6537affdb212a8f62fc41a3e4303ba38","id":"structure:44001447d6a5ec18","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:79e8975f9d59be88802288ef2b6a1601","id":"structure:9edd6ef9f94f7b3c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:84157f38f042b1b5e4b5047160697bc3","id":"structure:76a2d342f2eb1e50","source":"frozen Python a512c901, unmeasured"}
@@ -1356,7 +1356,7 @@
 {"digest":"sha256:6f55b9e034ee17e2589a9b8847f81871","id":"structure:60ea4b6d185d3c26","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a0019d861ff7864acd68696ea49857b8","id":"structure:b47fb70d83486f88","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d254591b02adf40885b599bb9262ca48","id":"structure:bca483a683bb00af","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:48a4e377654394125fbbd1dcbfa03072","id":"structure:30fa885aa2becbf0","source":"known difference: P4b8, ph1-quirks: a row past the table's last: docx-agent's _add_block_comment indexes the rows unchecked and fails with Python's IndexError (\"list index out of range\", not_found); the Rust core refuses the address (\"t:7B000001/r1 names no row of its table\", not_found). A docx-agent crash, not copied."}
+{"digest":"sha256:40edb7107e3ee1fbd860402b4a5aa45c","id":"structure:30fa885aa2becbf0","source":"stamp-on-open-2026-11-26, decision 4: a row named by its place is refused with guidance; this row (past the last of a one-row table) has no durable id to name (ST2; 2 word_comments)"}
 {"digest":"sha256:9b357dadec28b8f07fce1e9588ad9bb5","id":"structure:ab47f4d5ca4aeb4f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:68aa57bba605d22b9dce546a1f8825e6","id":"structure:c8d3a8aac42a8394","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:b84256268a32ad14f4df653e2d59a0a8","id":"structure:a83e2399a4285632","source":"frozen Python a512c901, unmeasured"}
@@ -1991,7 +1991,7 @@
 {"digest":"sha256:b2eb0f39c312a51edee95245b2ef356e","id":"inspect:07282850d5c67084","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:9e9620cccafc0f596533e99e0ac04166","id":"inspect:9cf49d016b989c2f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d30c4c75e35d1c65532f06f7a4538916","id":"inspect:5c74f889dc43271f","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:95b947edf6fd5153ef28a9491c5f710c","id":"inspect:61d924ea83600a67","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:a54d72f47ff177b41ca6a3e1120c06e6","id":"inspect:3ab75f7238c2172f","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:d566b0a55a06587efef465ed867a0d86","id":"inspect:986c7daeb78a486c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:66661f32b93c469420a2bedfae884d15","id":"inspect:7a85775e2f61329b","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:2a1bf5d3a505c25a1c0e4778e71868bc","id":"inspect:682a66c585c51d4d","source":"frozen Python a512c901, unmeasured"}
@@ -2005,7 +2005,7 @@
 {"digest":"sha256:2e349a35272973dd330191001dde9dac","id":"ranges:f5f768e9ea3edf60","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:fcdeff56cea93da3a1e7c71a95077d71","id":"ranges:0b7ba96df295f84a","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:a23d7f18151cbecfb80c67b46082e2a2","id":"ranges:fca20046c3912679","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:47e1d1455dbfdcf90869b60789c55a40","id":"ranges:48eecc10a200f40b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:c51815b89738e08e0c6e8f31de603228","id":"ranges:fec9d73feed9a885","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
 {"digest":"sha256:35187548f3c7ea42a515709072390300","id":"ranges:72b77530b28f3674","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:887594ef7a74f16372a63e377cd2c435","id":"ranges:72e280f72b91fda0","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:0cb01f53b5d72c6c253b6a7c2a3cfec8","id":"ranges:836223382f3ca698","source":"frozen Python a512c901, unmeasured"}

@@ -37,7 +37,7 @@ pub struct LinkEdited {
     pub created: Vec<String>,
     /// Ids it removed.
     pub removed: Vec<String>,
-    /// Ids renamed, old to new, in the order made (the stamping's after the edit's own).
+    /// Ids renamed, old to new (a bookmark's).
     pub renamed: ooxml_word_model::ids::Renames,
     /// What it could not do, or what is left dangling.
     pub warnings: Vec<String>,

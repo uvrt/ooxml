@@ -135,7 +135,9 @@ def test_word_read_takes_a_cell_a_row_and_open_spans(box, session):
     table = _table(session, doc)
     text = ok(box, session, "word_read", doc=doc, range=f"{table}/c1,0").data
     assert "left" in text and "right" not in text and "Name" not in text
-    row = ok(box, session, "word_read", doc=doc, range=f"{table}/r1").data
+    # a row by its tr: id (by its place, t:X/r1, it is refused since stamp on open)
+    rows = [tr.get(word_docs.W14_PARA) for tr in word_docs.tree(word_docs.saved(session, doc)).iter(W + "tr")]
+    row = ok(box, session, "word_read", doc=doc, range=f"tr:{rows[1]}").data
     assert "left" in row and "right" in row and "Name" not in row
     to_end = ok(box, session, "word_read", doc=doc, range=f"{ids['Charlie']}..").data
     assert "Charlie" in to_end and "Delta" in to_end and "Bravo" not in to_end

@@ -19,6 +19,12 @@ for laid-out documents, the pages it reflowed (see [GUIDANCE.md](GUIDANCE.md)).
 | Numbers in text no value holds | `check` with `include: ["numbers"]` | per body paragraph and table cell, decimals and percentages no value of the session's datasets or open workbooks' tables matches within the text's rounding (unverified, with the nearest values and their sources), and typed numbers a value matches, with the `replace_text` call that writes them by reference; text written by reference, tables placed with `from`, a table of contents, deleted text, headers and footers left out; read in the session's locale; whole numbers and an ignore list are the application's (`NumberRules`) |
 | Session | `undo`, `check`, `batch` | `check`: validation, reflow, fields and, with `layout`, the pages' layout facts (small text, direct formatting with the call that clears it, styles outside a list, empty paragraphs as space, empty paragraphs between text in the body and in cells, keep-with-next at a page's foot, split rows, header rows not repeated, past the margins, uncertain pages), and where its time went (`data.timing`: its parts, and apart the waits for the layout's worker and for the document); `batch`: a failing op is skipped with its error, the rest apply as one step; `atomic: true` for all or none |
 
+Ids: every paragraph, table and row has a durable id from the first read (`p:<paraId>`,
+`t:<paraId>`, `tr:<paraId>`), given when the document is opened where the file has none and
+written with the first edit; a table without rows is `t@<story>/<n>`. Names by place
+(`p@body/3`, `t:X/r1`, `p:X#1`, `s@body/3`) are refused with guidance: read the ids first
+(`word_inspect` or `word_read`).
+
 A table's width is a share of the text width or, with `word_format_table` `width_of: "body"`, of
 the body's lines beside it (a template whose Normal runs past a margin); `check` does not count
 such a table as past the margins.

@@ -148,7 +148,7 @@ impl From<SectionEdited> for Outcome {
             changed: out.changed,
             created: out.created,
             removed: out.removed,
-            renamed: ooxml_word_model::ids::renames_text(&out.renamed),
+            renamed: Vec::new(),
             warnings: out.warnings,
         }
     }

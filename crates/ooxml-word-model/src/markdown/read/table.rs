@@ -158,7 +158,6 @@ impl Reader<'_> {
                 .count();
         }
         let record = TableRecord {
-            volatile: entry.id.starts_with("t@"),
             id: entry.id,
             element: Arc::clone(&table.element),
             style_name,

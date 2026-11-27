@@ -92,7 +92,7 @@ fn run(args: &WordDelete, editing: &Editing<'_>) -> Result<ToolResult<Value>, To
         return Ok(result);
     }
     let target = args.target.clone().unwrap_or_default();
-    if target.contains('@') && !target.starts_with("p@") && !target.starts_with("cc@") {
+    if ooxml_word_model::address::is_text_range(&target) {
         let command = DeletePlaced {
             place: TextPlace::Range(Address::parse(&target)),
             collapse_space,
@@ -239,7 +239,7 @@ fn placed(edited: ooxml_word_edit::RangesEdited) -> Outcome {
     Outcome {
         changed: edited.count > 0,
         id: edited.id,
-        renamed: ooxml_word_model::ids::renames_text(&edited.renamed),
+        renamed: Vec::new(),
         ..Outcome::default()
     }
 }

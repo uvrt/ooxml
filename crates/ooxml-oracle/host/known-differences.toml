@@ -20,7 +20,7 @@
 # "limits-in-details-2026-11-25" (round 60, R142: a limit refusal says its limit and what the
 # call gave in details) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
 # from the first read: the streams' ids by place are re-targeted by
-# crates/ooxml-oracle/python/stamp_on_open.py, and what the map cannot say -- the renames stamping
+# the re-target tool (lane ph3-st1, removed in ST2), and what the map cannot say -- the renames stamping
 # made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry
 # without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
 # release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
@@ -220,7 +220,7 @@ tool = "word_insert_markdown"
 fields = ["result.error", "result.doc", "result.version"]
 cause = "Phase 3 D3b (ooxml-host, until R138): a from naming rows is checked and read as a declared source before word_insert_markdown refuses it as not supported yet; today's adapter never resolved it"
 
-# stamp-on-open-2026-11-26 (lane ph3-st1): what the streams' re-target through the id map (python/stamp_on_open.py) cannot
+# stamp-on-open-2026-11-26 (lane ph3-st1): what the streams' re-target through the id map (the re-target tool, removed in ST2) cannot
 # say -- one entry per stream, tool and kind, its fields the paths the replay found.
 [[difference]]
 decision = "stamp-on-open-2026-11-26"
@@ -884,3 +884,25 @@ stream = "docx/tests/test_saved_zip_layout"
 tool = "save_document"
 fields = ["outputs[0].validate.baseline"]
 cause = "Lane ph3-st1 (stamp-on-open ST1): a repeated or out-of-range paraId the bytes hold is repaired when the document is opened (written with the first edit), so it is no problem the document opened with"
+
+# stamp-on-open-2026-11-26 (lane ph3-st2, decision 4): a name by place held from before stamp on open is refused with
+# guidance where the recorded reply read it.
+[[difference]]
+decision = "stamp-on-open-2026-11-26"
+stream = "docx/tests/test_addresses"
+case = "test_addresses::test_word_read_takes_a_cell_a_row_and_open_spans#1"
+tool = "word_read"
+fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.field", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
+cause = "Lane ph3-st2 (stamp-on-open ST2, decision 4): a row by its place (`t:<id>/r1`) is refused (invalid_arguments) with the durable forms and the way on (read the ids first, word_inspect or word_read); the row has its `tr:` id from the first read"
+
+# stamp-on-open-2026-11-26 (lane ph3-st2, main's Q1 ruling): an id given at open and never written stays fresh for the
+# whole transaction that first writes its part. word_edit_table's set_cells with grow placed rows, then wrote each cell
+# as an edit that stamped the document first: after the first cell, the others renewed their textIds. Now every cell's
+# paragraph keeps the textId given at open; only the textIds in document.xml differ.
+[[difference]]
+decision = "stamp-on-open-2026-11-26"
+stream = "frozen/values"
+case = "*test_rows_r58.py::test_rows_grow_and_sync_add_look_like_the_last_row"
+tool = "word_edit_table"
+fields = ["after.word/document.xml"]
+cause = "Lane ph3-st2 (stamp-on-open ST2, Q1): an id never written stays fresh for the whole transaction that first writes its part, so cells written after rows were placed keep the textIds given at open instead of renewing them"

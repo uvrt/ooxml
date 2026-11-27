@@ -102,8 +102,6 @@ pub struct FormatStep {
     pub id: ooxml_word_model::ids::BlockId,
     /// Whether it changed anything.
     pub changed: bool,
-    /// Ids its stamping renamed, old to new.
-    pub renamed: ooxml_word_model::ids::Renames,
     /// What it removed (`num:3`).
     pub removed: Vec<String>,
     /// What it notes.
@@ -196,7 +194,6 @@ pub fn known_style(docx: &Docx, name: &str, kind: &str) -> Result<String> {
 fn places(run: &Run<'_, '_, '_>, address: &Address) -> Result<Vec<(String, usize)>> {
     let docx = run.sink.docx()?;
     if address.has(Shape::Text) {
-        // a range's ends followed where stamping renamed them (`Document.range`)
         let span = Span::of(run.sink.doc(), &docx, &range(run.sink.doc(), &docx, address)?)?;
         let story = docx
             .part(&span.part)
@@ -218,7 +215,7 @@ fn target(
     kept: bool,
     steps: &mut Vec<FormatStep>,
 ) -> Result<()> {
-    let is_range = address.as_str().contains('@') && !address.as_str().starts_with("p@");
+    let is_range = address.has(Shape::Text);
     let paragraphs = places(run, address)?;
     if let Some(on) = plan.keep_together {
         if kept {
@@ -396,7 +393,6 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &Address, on: bool) -> Result
             ..FormatStep::default()
         });
     }
-    let renamed = run.stamp()?;
     let main = docx.main.clone();
     for (path, settings) in &plan.changes {
         let docx = run.sink.docx()?;
@@ -408,9 +404,8 @@ fn keep_blocks(run: &mut Run<'_, '_, '_>, address: &Address, on: bool) -> Result
         run.paragraph(&main, index, &ParagraphOp::Settings(settings, &[]))?;
     }
     Ok(FormatStep {
-        id: crate::ranges::renamed_id(&renamed, &plan.first).into(),
+        id: plan.first.into(),
         changed: true,
-        renamed,
         warnings,
         ..FormatStep::default()
     })
