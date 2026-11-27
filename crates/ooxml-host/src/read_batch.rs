@@ -41,7 +41,8 @@ impl HostSession {
                 "{} ops; at most {most} per read_batch: send the rest in another",
                 ops.len()
             );
-            let mut result = ToolResult::failed(ToolError::failure(Failure::Limit, message).at("ops"));
+            let error = ToolError::failure(Failure::Limit, message).with_limit(most, ops.len());
+            let mut result = ToolResult::failed(error.at("ops"));
             self.name_doc(&mut result, first_doc);
             return result;
         }

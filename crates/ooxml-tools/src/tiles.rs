@@ -119,8 +119,17 @@ impl Tiling {
     }
 }
 
-fn limit(message: String, field: &str) -> ToolError {
-    ToolError::failure(Failure::Limit, message).at(field)
+/// A `limit` refusal at `field`, `most` the limit and `given` what the call asked
+/// (its details).
+fn limit(message: String, field: &str, (most, given): (usize, usize)) -> ToolError {
+    ToolError::failure(Failure::Limit, message)
+        .with_limit(most, given)
+        .at(field)
+}
+
+/// A count of tiles or columns (never negative) as a limit's detail.
+fn counted(n: i64) -> usize {
+    usize::try_from(n).unwrap_or(0)
 }
 
 fn invalid(message: String, field: &str, low: i64, high: i64) -> ToolError {
@@ -147,6 +156,7 @@ pub fn tiling_of(options: TileOptions, count: usize, ask: TileAsk<'_>) -> Result
                 "one {name} holds at most {MAX_TILES} {what}, not {count}: render the first {MAX_TILES}, and the rest in another call"
             ),
             what,
+            (MAX_TILES, count),
         ));
     }
     let columns = options.columns.unwrap_or(DEFAULT_COLUMNS);
@@ -200,6 +210,7 @@ pub fn tiling_of(options: TileOptions, count: usize, ask: TileAsk<'_>) -> Result
                 result.columns
             ),
             &format!("{name}.columns"),
+            (counted(most), counted(result.columns)),
         ));
     }
     let why = format!(
@@ -257,6 +268,7 @@ pub fn fit(tiling: &Tiling, ratios: &[f64], ask: TileAsk<'_>) -> Result<Tiling, 
                 rows * tiling.columns
             ),
             what,
+            (counted(rows * tiling.columns), ratios.len()),
         ));
     }
     while low < high {
@@ -303,6 +315,7 @@ pub fn check_size(tiling: &Tiling, heights: &[i64], ask: TileAsk<'_>) -> Result<
                 rows * tiling.columns
             ),
             what,
+            (counted(rows * tiling.columns), heights.len()),
         ));
     }
     Ok((width, height))

@@ -158,6 +158,7 @@ impl HostSession {
                 Failure::Limit,
                 format!("{} ops; at most {} per batch", ops.len(), settings.max_batch_ops),
             )
+            .with_limit(settings.max_batch_ops, ops.len())
             .at("ops");
             return self.at_primary(ToolResult::failed(error), primary.as_deref());
         }

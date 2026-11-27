@@ -709,8 +709,8 @@ impl Replayer {
     }
 
     /// A session for a case whose head is `head`: the toolbox and session settings it gives
-    /// (roles, locale, limits; `Settings` for any other), its clock; Word's format laid out
-    /// with the repository's open faces (a bench's host too).
+    /// (roles, locale, limits, Word's `min_text_size`; `Settings` for any other), its clock;
+    /// Word's format laid out with the repository's open faces (a bench's host too).
     ///
     /// # Errors
     /// What it waits for: a setting the replay does not make yet.
@@ -724,6 +724,7 @@ impl Replayer {
         let given = |which: &str| head.get(which).and_then(Value::as_object).cloned().unwrap_or_default();
         let (toolbox, session) = (given("toolbox"), given("session"));
         let mut locale = None;
+        let mut min_text_size = None;
         for (key, value) in toolbox.iter().chain(session.iter()) {
             match key.as_str() {
                 // (block_edits: when the Python host drafts an edit beside another; the Rust
@@ -732,6 +733,10 @@ impl Replayer {
                 "roles" => settings.roles = roles_of(value).ok_or(Waits::Settings)?,
                 "locale" => locale = Some(locale_of(value).ok_or(Waits::Settings)?),
                 "limits" => limits(&mut settings, value)?,
+                // docx_format(min_text_size=...): Word's format's setting
+                "min_text_size" => {
+                    min_text_size = ooxml_tools_word::minimum_of(value).map_err(|_| Waits::Settings)?;
+                }
                 _ => return Err(Waits::Settings),
             }
         }
@@ -745,7 +750,10 @@ impl Replayer {
             memory: MemoryBudget::new(256 << 20),
             raster: Some(Arc::clone(&self.raster)),
         };
-        let format = WordFormat { pages: Some(pages) };
+        let format = WordFormat {
+            pages: Some(pages),
+            min_text_size,
+        };
         let mut all: Vec<Arc<dyn ooxml_session::Format>> = vec![Arc::new(format)];
         all.extend(formats);
         let host = Arc::new(Host::new(all, settings, Arc::new(HostTools)));

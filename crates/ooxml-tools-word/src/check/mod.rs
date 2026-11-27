@@ -8,7 +8,8 @@
 //!
 //! With the layout, its facts (`layout`, [`layout`]): those read from the pages and from
 //! the document alone, on the pages asked for, about the blocks a `range` names, with each
-//! range's extent and keeps (`range`), the minimum text size (`min_size`) and the styles
+//! range's extent and keeps (`range`), the minimum text size (`min_size`, one number; else
+//! the application's, [`Owned::min_text_size`]: one number or one per kind) and the styles
 //! allowed (`styles`).
 //!
 //! With `copies`, each copy compared with the reference it was made from ([`copies`], lane
@@ -105,7 +106,11 @@ pub fn check(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result
 
 /// [`check`] of the arguments as a document reads them ([`decks::read`]).
 fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<Done<Value>, ToolError> {
-    let wanted = match served(args) {
+    // The application's minimum text size (`docx_format(min_text_size=...)`), where the
+    // check gives no `min_size` (docx-agent's `if min_size is None: min_size =
+    // document.min_text_size`).
+    let application = version.owned.and_then(|owned| owned.min_text_size);
+    let wanted = match served(args, application.is_some()) {
         Ok(wanted) => wanted,
         Err(why) => return Err(not_supported(why, &args.doc)),
     };
@@ -119,10 +124,11 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
         (true, Some(layout)) => Some(layout),
         (false, _) => None,
     };
-    let minimum = match args.min_size.map(Value::from).as_ref().map(minimum_of).transpose() {
+    let given = match args.min_size.map(Value::from).as_ref().map(minimum_of).transpose() {
         Ok(minimum) => minimum.flatten(),
         Err(_) => return Err(not_supported(CHECK_ARGUMENTS, &args.doc)),
     };
+    let minimum = given.as_ref().or(application);
     let mut data = Map::new();
     let mut timing = Map::new();
     let mut warnings = Vec::new();
@@ -153,7 +159,7 @@ fn checked(args: &Check, version: &Version<'_>, cancel: &dyn Cancel) -> Result<D
             owned,
             scope: scope.as_ref(),
             docx: docx.as_deref(),
-            minimum: minimum.as_ref(),
+            minimum,
             cancel,
         };
         if let Some(why) = with_layout(
@@ -190,6 +196,7 @@ fn checked_scope(
                 ranges.len()
             ),
         )
+        .with_limit(MAX_RANGES, ranges.len())
         .at("range"));
     }
     if ranges.is_empty() {
@@ -465,8 +472,9 @@ fn heading_refused(error: AddressError, doc: &str) -> ToolError {
 }
 
 /// What the check reports, in the order asked (as given: a part named twice is said twice),
-/// when this handler answers it; else why not.
-fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
+/// when this handler answers it; else why not. `minimum`: the application sets a minimum
+/// text size, which the layout's facts measure as `min_size` does.
+fn served(args: &Check, minimum: bool) -> Result<Vec<CheckInclude>, &'static str> {
     let ranged = args
         .range
         .as_ref()
@@ -491,8 +499,10 @@ fn served(args: &Check) -> Result<Vec<CheckInclude>, &'static str> {
             _ => return Err(CHECK_ARGUMENTS),
         }
     }
-    // What `min_size`, `styles` and a range measure: the layout's facts (round 16, F8).
-    if (args.min_size.is_some() || args.styles.is_some() || ranged) && !wanted.contains(&CheckInclude::Layout) {
+    // What `min_size` (or the application's minimum), `styles` and a range measure: the
+    // layout's facts (round 16, F8; round 17, P6b).
+    let measured = args.min_size.is_some() || minimum || args.styles.is_some() || ranged;
+    if measured && !wanted.contains(&CheckInclude::Layout) {
         wanted.push(CheckInclude::Layout);
     }
     Ok(wanted)

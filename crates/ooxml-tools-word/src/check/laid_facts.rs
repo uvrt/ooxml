@@ -322,3 +322,45 @@ pub fn minimum_of(value: &Value) -> Result<Option<Minimum>, String> {
         other => Ok(Some(Minimum::One(points("", other)?))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{minimum_of, Minimum};
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn a_minimum_is_one_number_or_points_by_kind_with_nones_left_out() {
+        assert_eq!(minimum_of(&json!(null)), Ok(None));
+        assert_eq!(minimum_of(&json!(9)), Ok(Some(Minimum::One(9.0))));
+        let kinds = BTreeMap::from([("table".to_owned(), 8.5)]);
+        assert_eq!(
+            minimum_of(&json!({"table": 8.5, "caption": null})),
+            Ok(Some(Minimum::PerKind(kinds)))
+        );
+    }
+
+    #[test]
+    fn what_is_not_a_minimum_is_refused_in_docx_agents_words() {
+        let kinds = "body, table, footnote, endnote, header, footer, caption";
+        assert_eq!(
+            minimum_of(&json!({"chart": 9})),
+            Err(format!("min_text_size has no kind 'chart'; the kinds are {kinds}"))
+        );
+        assert_eq!(
+            minimum_of(&json!({})),
+            Err(format!(
+                "min_text_size is an empty mapping; name {kinds}, or give one number"
+            ))
+        );
+        assert_eq!(
+            minimum_of(&json!({"body": 0})),
+            Err(format!(
+                "min_text_size['body'] 0: points between 1 and 400, or a mapping of {kinds} to points"
+            ))
+        );
+        for bad in [json!(0), json!("9"), json!(true), json!(401)] {
+            assert!(minimum_of(&bad).is_err(), "{bad}");
+        }
+    }
+}

@@ -186,6 +186,7 @@ impl Call<'_> {
             rows_written: Some(&word.rows_written),
             made_by: Some(&word.made_by),
             tracking: self.tracking.as_deref(),
+            min_text_size: word.min_text_size.as_ref(),
         })
     }
 
