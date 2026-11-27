@@ -1,7 +1,6 @@
 """Lane P2c17, on the Rust host: every host session numbers its own documents (a second session's
 ``d1`` is its own), and every name a reply carries -- its undo and way-out calls, its summary, its
-data, its refs -- is one of its session's documents.  (The core's session alone, with no host
-names, keeps its own ids.)  Made-up documents only."""
+data, its refs -- is one of its session's documents.  Made-up documents only."""
 
 from __future__ import annotations
 
@@ -79,17 +78,3 @@ def test_a_reply_names_only_its_sessions_documents(toolbox):
         assert _names_in(result) <= hosts, (tool, _names_in(result), result.summary, result.data)
         seen |= _names_in(result)
     assert doc in seen, "the replies name the document (the deletion's undo call)"
-
-
-def test_a_reply_without_names_keeps_the_sessions_ids():
-    """The session alone (no host names) still names documents by its own ids."""
-    ooxml_core = pytest.importorskip("ooxml_core")
-    session = ooxml_core.Session()
-    doc = session.open(_report("A made-up report"), kind="docx", name="report.docx")
-    reply, _images, _app = session.call("word_read", json.dumps({"doc": doc}))
-    assert json.loads(reply)["doc"] == doc
-    first = ooxml_core.CallOptions(documents=ooxml_core.CallDocuments(names={"first": doc}))
-    named, _images, _app = session.call("word_read", json.dumps({"doc": "first"}), first)
-    assert json.loads(named)["doc"] == "first"
-    refused, _images, _app = session.call("word_read", json.dumps({"doc": doc}), first)
-    assert json.loads(refused)["error"]["code"] == "not_found"

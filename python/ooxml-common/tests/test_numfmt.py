@@ -3,8 +3,8 @@
 The table is :data:`ooxml_common.numfmt.MEASURED` (Excel for Mac 16.106, 2026-10-25);
 xlsx-agent runs the same table through its own ``classify_format``.  ooxml-edit reads codes
 with this module (``ooxml_edit.dates.is_date_code`` is :func:`~ooxml_common.numfmt.is_date_code`,
-from ooxml-edit 0.64.0); with it installed, the test below checks that it agrees on every
-code, so a copy creeping back in fails here.
+from ooxml-edit 0.64.0); ooxml-edit's ``tests/test_dates_common.py`` checks that it agrees on
+every code, so a copy creeping back in fails there.
 """
 
 from __future__ import annotations
@@ -39,15 +39,6 @@ EDIT_CASES = [
 def test_ooxml_edits_cases(code, is_date):
     assert is_date_code(code) is is_date
 
-
-def test_ooxml_edit_reads_every_code_as_excel_showed_it():
-    edit = pytest.importorskip("ooxml_edit.dates")
-    differs = {code for code, kind, _ in numfmt.MEASURED
-               if edit.is_date_code(code) is not (kind in numfmt.DATE_KINDS)}
-    assert differs == set()
-    for code, is_date in EDIT_CASES:
-        assert edit.is_date_code(code) is is_date
-    assert edit.is_date_code("0;[Red]d", 1)
 
 
 def test_a_section_is_asked_by_its_index():

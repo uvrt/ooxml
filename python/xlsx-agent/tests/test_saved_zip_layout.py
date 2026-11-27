@@ -4,7 +4,7 @@ tests build, saved without an edit, is its bytes; an untouched entry is copied b
 a data descriptor too, and a save adds no layout problem MS-FSSHTTPD 2.4.1's chunking meets
 (data descriptors, needless ZIP64) and keeps the input's entry order; one edit changes only
 the parts its ``Result.changed_parts`` names.  The shared chunk writer
-(``ooxml_core.chunk_file``, request 4) chunks every save by ZIP analysis, as the tests' own
+(``ooxml_edit.chunks.chunk_file``, request 4) chunks every save by ZIP analysis, as the tests' own
 check (``zipchunks``) does, and a one-cell save sends only the changed parts' chunks and the
 central directory."""
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import ooxml_core
+from ooxml_edit.chunks import chunk_file
 import pytest
 
 from filter_book import pivot_book, stock_book
@@ -47,7 +47,7 @@ def test_a_save_chunks_as_office_chunks(name):
     assert input_order(saved) == input_order(data)
     if not has_directories(data):
         assert saved == data
-    chunks = ooxml_core.chunk_file(saved)
+    chunks = chunk_file(saved)
     assert chunks.zip_analysed
     assert [(c.offset, c.size, None if c.random else c.signature) for c in chunks.chunks] == [
         (c.start, c.size, c.signature) for c in zip_chunks(saved)]
@@ -72,8 +72,8 @@ def test_one_edit_changes_the_parts_it_names(name):
     assert new_problems(data, edited) == []
     assert input_order(edited)[:len(input_order(data))] == input_order(data)
     assert changed_entries(data, edited) <= {p["part"] for p in made.changed_parts}
-    chunks = ooxml_core.chunk_file(edited)
-    delta = chunks.delta(ooxml_core.chunk_file(data).leaves())
+    chunks = chunk_file(edited)
+    delta = chunks.delta(chunk_file(data).leaves())
     travel = {chunks.chunks[i].name or chunks.chunks[i].kind for i in delta.new}
     assert travel == changed_entries(data, edited) | {"final"}
 

@@ -371,10 +371,10 @@ def test_not_recorded_and_counts_are_capped_and_counted(box):
 
 
 def test_a_recorded_value_goes_into_a_word_document_by_reference():
-    ooxml_core = pytest.importorskip("ooxml_core")
     docx_tools = pytest.importorskip("docx_agent.tools")
-    blank = bytes(ooxml_core.new_document(page=("A4", False), language="en-US", separators=(".", ","),
-                                          properties=(None, None, "2026-11-23T09:00:00Z")))
+    from blank_word import blank_word
+
+    blank = blank_word()
     with Toolbox([*docx_tools.TOOLS, *TOOLS], formats=[docx_tools.FORMAT, FORMAT],
                  groups=[*docx_tools.GROUPS, *GROUPS], workers=0) as both:
         session = both.session()

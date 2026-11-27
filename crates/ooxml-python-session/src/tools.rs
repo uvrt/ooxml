@@ -4,7 +4,7 @@
 //!
 //! Must not: dispatch a call.
 
-use crate::session::kind_of;
+use crate::errors::kind_of;
 use ooxml_tools::compact;
 use ooxml_tools_word::new_document::Blank;
 use pyo3::exceptions::PyValueError;

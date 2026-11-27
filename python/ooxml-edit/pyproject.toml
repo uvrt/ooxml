@@ -32,7 +32,9 @@ classifiers = [
 # every library shares (number format codes, the measured date names, the locale), standard
 # library only and never importing this package.  Neither is on PyPI: install ooxml-common
 # from its repository first (README, "Install").
-dependencies = ["lxml>=4.9", "ooxml-common>=0.45.2"]
+# ooxml-core: the Rust host behind the Toolbox (ooxml_edit.tools.hosted), reached only through this
+# package. Linux has wheels; macOS installs build it from its sdist.
+dependencies = ["lxml>=4.9", "ooxml-common>=0.45.2", "ooxml-core>=0.12.2"]
 
 [project.optional-dependencies]
 # markdown-it-py: tests only, to check ooxml_edit.markdown against the parser the format
@@ -71,7 +73,7 @@ files = ["src/ooxml_edit"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["lxml", "lxml.*", "ooxml_common", "ooxml_common.*"]
+module = ["lxml", "lxml.*", "ooxml_common", "ooxml_common.*", "ooxml_core"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

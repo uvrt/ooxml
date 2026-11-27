@@ -5,7 +5,7 @@ too, and a save adds no layout problem MS-FSSHTTPD 2.4.1's chunking meets (data
 descriptors, needless ZIP64) and keeps the input's entry order; one paragraph changes only
 the parts its ``Result.changed_parts`` names, and ``docProps/app.xml``
 where its measured counts changed (Word writes them on save too) -- never where they did
-not.  The shared chunk writer (``ooxml_core.chunk_file``, request 4) chunks every save by ZIP
+not.  The shared chunk writer (``ooxml_edit.chunks.chunk_file``, request 4) chunks every save by ZIP
 analysis, as the tests' own check (``zipchunks``) does, and a one-paragraph save sends only
 the changed parts' chunks and the central directory."""
 
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-import ooxml_core
+from ooxml_edit.chunks import chunk_file
 from conftest import FIXTURE_DIR
 from ooxml_edit.tools import Toolbox
 from docx_agent.tools import FORMAT, GROUPS, TOOLS
@@ -48,7 +48,7 @@ def test_a_save_chunks_as_office_chunks(box, reading_path):
     saved = _save(box, session, "same.docx")
     assert new_problems(data, saved) == []
     assert saved == data         # directory entries too: the Rust package copies them
-    chunks = ooxml_core.chunk_file(saved)
+    chunks = chunk_file(saved)
     assert chunks.zip_analysed
     assert _chunks(chunks) == [(c.start, c.size, c.signature) for c in zip_chunks(saved)]
 
@@ -71,8 +71,8 @@ def test_one_paragraph_changes_the_parts_it_names(box, name):
     assert new_problems(data, edited) == []
     assert input_order(edited)[:len(input_order(data))] == input_order(data)
     assert changed_entries(data, edited) <= {"word/document.xml", APP}
-    held = ooxml_core.chunk_file(data)
-    chunks = ooxml_core.chunk_file(edited)
+    held = chunk_file(data)
+    chunks = chunk_file(edited)
     delta = chunks.delta(held.leaves())
     travel = {chunks.chunks[i].name or chunks.chunks[i].kind for i in delta.new}
     assert travel == changed_entries(data, edited) | {"final"}

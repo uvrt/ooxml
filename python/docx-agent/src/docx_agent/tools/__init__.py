@@ -32,7 +32,6 @@ How to run them with each provider (Claude, OpenAI Responses, Chat Completions):
 from __future__ import annotations
 
 import dataclasses
-import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -73,12 +72,12 @@ HOST: dict[str, dict[str, Any]] = {**review.HOST, **structure.HOST, **objects.HO
 
 def _word_tools() -> list[Any]:
     """The Word tools from the Rust host's specs, in :data:`WORD_ORDER`."""
-    import ooxml_core
+    from ooxml_edit.tools.hosted import tool_specs
 
-    specs = {spec["name"]: spec for spec in json.loads(ooxml_core.tool_specs(KIND))}
+    specs = {spec["name"]: spec for spec in tool_specs(KIND)}
     missing = [name for name in WORD_ORDER if name not in specs]
     if missing:
-        raise RuntimeError(f"ooxml_core has no spec of {', '.join(missing)}: install the ooxml-core this "
+        raise RuntimeError(f"the Rust host has no spec of {', '.join(missing)}: install the ooxml-core this "
                            "docx-agent was built with")
     out = []
     for name in WORD_ORDER:

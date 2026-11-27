@@ -4,7 +4,7 @@
 //!
 //! Must not: change a document, or touch a Python object without the lock.
 
-use crate::session::to_py;
+use crate::errors::to_py;
 use ooxml_session::Opened;
 use ooxml_session_word::prelude::*;
 use ooxml_session_word::{BlockRefused, IdStateOf};

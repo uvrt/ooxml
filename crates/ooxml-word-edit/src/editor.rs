@@ -4,9 +4,8 @@
 //! the result from the change and the version after it ([`Edited`]): what it touched and
 //! the validation delta (design section 5, "Results"); every command followed by the
 //! records of placed values kept in the document ([`crate::provenance`]). A command may also
-//! run in a transaction its owner holds open ([`Editor::run_held`], a host's batch of several
-//! documents), or in a transaction a host's batch is handed ([`Editor::run_in`]): it then
-//! makes a version only the batch reads, published with the transaction's commit.
+//! run in a transaction a host's batch is handed ([`Editor::run_in`]): it then makes a
+//! version only the batch reads, published with the transaction's commit.
 //!
 //! Must not: hold anything but the store and the baseline; read the clock but through the
 //! store's port; run a command's effects outside its transaction.
@@ -19,7 +18,7 @@ use crate::validate::{problems, Delta, Problem};
 use crate::{EditError, Result};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, StoreError, Txn, TxnOwner};
+use ooxml_store::{Caller, Clock, Command, CommitTiming, Snapshot, Store, StoreConfig, Txn};
 use ooxml_word_model::ids::{LoadedState, VersionDelta};
 use std::sync::Arc;
 use std::time::Duration;
@@ -247,36 +246,6 @@ impl Editor {
             timing: committed.timing,
         };
         self.edited(committed.out, ran)
-    }
-
-    /// Run `command` as [`Editor::run_with`] does, in the transaction `owner` holds open
-    /// ([`Store::open_txn`]): validated and prepared on the version the owner reads, its
-    /// changes taken back where it refuses. The version it makes is the owner's alone until
-    /// the transaction is committed; numbered as that commit will number it.
-    ///
-    /// # Errors
-    /// The command's refusal, nothing changed; the store's when `owner` holds none.
-    pub fn run_held<C>(&self, owner: TxnOwner, command: &C, setup: &Setup) -> Result<Edited<C::Out>>
-    where
-        C: Command<WordDoc, Error = EditError>,
-    {
-        let started = self.clock.monotonic();
-        let ran = self.store.in_txn(owner, |tx| prepared(tx, command, setup));
-        let ran = ran.map_err(|error: StoreError<_, _>| EditError::from(error))?;
-        let (out, spaced) = ran.out?;
-        let ran = Ran {
-            previous: ran.changed.then_some(ran.before),
-            version: ran.after,
-            spaced: if ran.changed { spaced } else { 0 },
-            attempts: 1,
-            exclusive: false,
-            timing: CommitTiming {
-                held: Duration::ZERO,
-                waited: Duration::ZERO,
-                total: self.clock.monotonic().saturating_sub(started),
-            },
-        };
-        self.edited(out, ran)
     }
 
     /// Run `command` as [`Editor::run_with`] does, in `tx` (a host's batch's transaction,

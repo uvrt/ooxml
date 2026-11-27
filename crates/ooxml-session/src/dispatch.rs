@@ -11,7 +11,7 @@ use crate::context::{revision_date, CallCancel};
 use crate::format::{Deferred, Finished, FormatRun, LockSpent};
 use crate::session::Opened;
 use crate::undo::UNDO;
-use crate::{CallContext, DocId, DocKind, DocNames, Session, SessionError};
+use crate::{CallContext, DocId, DocKind, Session, SessionError};
 use ooxml_base::Cancel;
 use ooxml_store::OpTxn;
 use ooxml_tools::{Accepted, Refusal, ToolError, ToolResult, ToolSpec, WayOut};
@@ -37,8 +37,6 @@ pub(crate) struct CallState<'p> {
     /// The other documents the call names, by the names it gives them, at the versions
     /// pinned for it.
     others: Vec<(String, Opened)>,
-    /// The host's names for the documents the call names.
-    names: DocNames,
     /// The name the call gives its own document.
     named: String,
     /// What the call's edits made, as its document's format keeps it.
@@ -55,11 +53,10 @@ pub(crate) struct CallState<'p> {
 }
 
 impl<'p> CallState<'p> {
-    /// A call's state as it starts: what `context` names its documents by, the versions its
-    /// batch reads (`pinned`), its writes' `date`, whether its arguments were taken as meant
-    /// already, and the batch's transaction its edits run in.
+    /// A call's state as it starts: the versions its batch reads (`pinned`), its writes'
+    /// `date`, whether its arguments were taken as meant already, and the batch's transaction
+    /// its edits run in.
     fn new(
-        context: &CallContext,
         pinned: Option<&'p mut Pinned>,
         date: String,
         accepted: bool,
@@ -70,7 +67,6 @@ impl<'p> CallState<'p> {
             warnings: Vec::new(),
             pinned,
             others: Vec::new(),
-            names: context.names.clone(),
             named: String::new(),
             made: Mutex::new(None),
             date,
@@ -272,7 +268,7 @@ impl Session {
             .date
             .clone()
             .unwrap_or_else(|| revision_date(self.context.clock.now()));
-        let mut state = CallState::new(context, pinned, date, accepted, txn);
+        let mut state = CallState::new(pinned, date, accepted, txn);
         // a panic in the handler is the call's internal failure (crate::panics), never the host's
         let retry = arguments.clone();
         let run = AssertUnwindSafe(|| {
@@ -412,13 +408,13 @@ impl Session {
             arguments => spec.accept(arguments)?,
         };
         state.warnings.extend(notes);
-        let (named, doc) = self.document_of(spec, &arguments, &state.names, state.pinned.as_deref_mut())?;
-        state.others = self.others_of(spec, &arguments, &doc.id, &state.names, state.pinned.as_deref_mut())?;
+        let (named, doc) = self.document_of(spec, &arguments, state.pinned.as_deref_mut())?;
+        state.others = self.others_of(spec, &arguments, &doc.id, state.pinned.as_deref_mut())?;
         state.named = named;
         let tool = self
             .registry
             .get(name, doc.kind)
-            .ok_or_else(|| self.not_served(name, doc.kind, &state.names))?;
+            .ok_or_else(|| self.not_served(name, doc.kind))?;
         state
             .warnings
             .extend(spec.ignored_for(Some(doc.kind.as_str()), &mut arguments));
@@ -480,14 +476,14 @@ impl Session {
         Err(ToolError::refusal(Refusal::InvalidArguments, message, way_out))
     }
 
-    /// `name` refused for a `kind` document, with the documents it serves, as the call
-    /// names documents (`names`).
-    fn not_served(&self, name: &str, kind: DocKind, names: &DocNames) -> ToolError {
+    /// `name` refused for a `kind` document, with the documents it serves.
+    fn not_served(&self, name: &str, kind: DocKind) -> ToolError {
         let table = self.read_table();
-        let open = names.of(table
+        let open: Vec<String> = table
             .iter()
             .filter(|(_, d)| self.registry.get(name, d.kind).is_some())
-            .map(|(id, _)| id));
+            .map(|(id, _)| id.to_string())
+            .collect();
         drop(table);
         let message = format!("{name} does not serve {kind} documents yet");
         match WayOut::names(open) {

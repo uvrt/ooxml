@@ -1,6 +1,5 @@
-"""Lane P2c14: ``word_drawings`` served by the Rust session, an inserted picture's bytes
-asked of the host's blobs (``CallOptions(blobs=...)``): inserted, listed, resized and
-described; a blob that is not there refused.  Made-up documents and pictures only."""
+"""Lane P2c14: ``word_drawings`` on the Rust host, an inserted picture's bytes from the
+session's blobs: inserted, listed, resized and described; a blob that is not there refused.  Made-up documents and pictures only."""
 
 from __future__ import annotations
 

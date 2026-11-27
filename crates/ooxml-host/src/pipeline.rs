@@ -549,6 +549,13 @@ impl HostSession {
         }
     }
 
+    /// The context the application's own reads of the session's documents outside a tool run
+    /// with (the live view): no caller, the host's limits on a reply and on laying out.
+    #[must_use]
+    pub fn application_context(&self) -> CallContext {
+        self.context(None, None)
+    }
+
     /// The checks a changing call's reply carries, its format's of the version it left
     /// (else of the head), the tool's own checks kept over them.
     fn checks(&self, doc: &str, made: Option<&ooxml_session::CallMade>, result: &mut ToolResult<Value>) {

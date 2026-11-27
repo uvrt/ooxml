@@ -1,16 +1,14 @@
 //! Owns: [`CallEditor`], a document's editor as one call's handler is handed it: each edit
 //! runs through the editor as before (one command, one history step) -- or, in a host's
-//! batch, in the batch's transaction: the one it is handed ([`CallEditor::in_txn`], a batch
-//! of one document, optimistic: [`Editor::run_in`]) or the one it holds open
-//! ([`CallEditor::with_owner`], the Python host's batch: [`Editor::run_held`]), a savepoint per
-//! command, published with the batch's one commit -- and the version the call made is
-//! kept ([`Made`]) for the host: the call's own, whatever other calls commit to the document
-//! meanwhile (the head after the call may be theirs). The version a handler reads is the
+//! batch, in the transaction it is handed ([`CallEditor::in_txn`]: [`Editor::run_in`]), a
+//! savepoint per command, published with the batch's one commit -- and the version the call
+//! made is kept ([`Made`]) for the host: the call's own, whatever other calls commit to the
+//! document meanwhile (the head after the call may be theirs). The version a handler reads is the
 //! one its edits would run on ([`CallEditor::current`]).
 //!
 //! Must not: change how an edit runs, or outlive the call.
 
-use ooxml_store::{Caller, Command, OpTxn, Seq, Snapshot, Store, TxnOwner};
+use ooxml_store::{Caller, Command, OpTxn, Seq, Snapshot, Store};
 use ooxml_word_edit::touched::Touched;
 use ooxml_word_edit::validate::{Delta, Problem};
 use ooxml_word_edit::{EditError, Edited, Editor, IdsDelta, Setup, WordDoc};
@@ -52,11 +50,8 @@ pub struct CallEditor<'a> {
     editor: &'a Editor,
     /// How the call's edits write ([`Setup`]: text as given, or spaced by its language).
     setup: Setup,
-    /// The owner of the transaction the call's edits run in (a host's batch); `None`: each
+    /// The transaction the call's edits run in, handed to it (a host's batch); `None`: each
     /// edit commits on its own.
-    owner: Option<TxnOwner>,
-    /// The transaction the call's edits run in, handed to it (a host's batch of one
-    /// document); `None`: as `owner` says.
     txn: Option<&'a dyn OpTxn>,
     made: Mutex<Option<Made>>,
     /// The stand-ins its edits drew that were drawn as other values where they landed.
@@ -70,7 +65,6 @@ impl<'a> CallEditor<'a> {
         Self {
             editor,
             setup: Setup::default(),
-            owner: None,
             txn: None,
             made: Mutex::new(None),
             moved: Mutex::new(Vec::new()),
@@ -83,15 +77,8 @@ impl<'a> CallEditor<'a> {
         Self { setup, ..self }
     }
 
-    /// The same, its edits run in the transaction `owner` holds open (a host's batch;
+    /// The same, its edits run in `txn` (a host's batch, handed the batch's transaction;
     /// `None`: each commits on its own).
-    #[must_use]
-    pub fn with_owner(self, owner: Option<TxnOwner>) -> Self {
-        Self { owner, ..self }
-    }
-
-    /// The same, its edits run in `txn` (a host's batch of one document, handed the batch's
-    /// transaction; `None`: as [`CallEditor::with_owner`] says).
     #[must_use]
     pub fn in_txn(self, txn: Option<&'a dyn OpTxn>) -> Self {
         Self { txn, ..self }
@@ -101,24 +88,20 @@ impl<'a> CallEditor<'a> {
     /// document out for waits for the host, which measures it once after the batch's last op.
     #[must_use]
     pub fn in_batch(&self) -> bool {
-        self.owner.is_some() || self.txn.is_some()
+        self.txn.is_some()
     }
 
     /// The version the call's next edit runs on: the head, or in a host's batch the version
     /// its ops left.
     #[must_use]
     pub fn current(&self) -> Snapshot<WordDoc> {
-        let store = self.editor.store();
-        if let Some(current) = self.txn.and_then(|txn| txn.current::<WordDoc>()) {
-            return current;
-        }
-        self.owner
-            .and_then(|owner| store.txn_current(owner))
-            .unwrap_or_else(|| store.snapshot())
+        self.txn
+            .and_then(|txn| txn.current::<WordDoc>())
+            .unwrap_or_else(|| self.editor.store().snapshot())
     }
 
     /// Run `command` as `caller` through the editor ([`Editor::run_with`], as the call's
-    /// setup says; in a batch [`Editor::run_held`], the batch's caller making its step); a
+    /// setup says; in a batch [`Editor::run_in`], the batch's caller making its step); a
     /// version it made is the call's.
     ///
     /// # Errors
@@ -127,16 +110,15 @@ impl<'a> CallEditor<'a> {
     where
         C: Command<WordDoc, Error = EditError>,
     {
-        let edited = match (self.txn, self.owner) {
-            (Some(txn), _) => txn
+        let edited = match self.txn {
+            Some(txn) => txn
                 .with::<WordDoc, _>(|tx, current| {
                     let edited = self.editor.run_in(tx, current, command, &self.setup)?;
                     *current = Snapshot::clone(&edited.version);
                     Ok(edited)
                 })
                 .unwrap_or_else(|| Err(EditError::from(ooxml_store::Error::<WordDoc>::NotHeld)))?,
-            (None, Some(owner)) => self.editor.run_held(owner, command, &self.setup)?,
-            (None, None) => self.editor.run_with(caller, command, &self.setup)?,
+            None => self.editor.run_with(caller, command, &self.setup)?,
         };
         if edited.drawn.moved().next().is_some() {
             let mut moved = self.moved.lock().unwrap_or_else(PoisonError::into_inner);

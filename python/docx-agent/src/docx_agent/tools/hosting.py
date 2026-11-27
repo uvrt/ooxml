@@ -1,5 +1,6 @@
 """Word's Rust host (Phase 3, E1): the :attr:`~ooxml_edit.tools.DocumentFormat.host` of the docx
-format, which :mod:`ooxml_edit.tools.hosted` makes a toolbox's ``ooxml_core.Host`` with.
+format, which :mod:`ooxml_edit.tools.hosted` makes a toolbox's Rust host with
+(:func:`ooxml_edit.tools.hosted.rust_host`).
 
 The host lays Word documents out with the font folders and locale of the toolbox (or a
 session's own), its pages drawn by ``render`` with the same folders and the system's fonts;
@@ -42,16 +43,16 @@ class WordHosting:
         self.typography = bool(typography)
 
     def make(self, settings: str, pages: Any) -> Any:
-        """The ``ooxml_core.Host`` of a toolbox: ``settings`` (JSON text) as
-        :mod:`ooxml_edit.tools.hosted` writes them, its documents laid out with ``pages``."""
-        import ooxml_core
+        """The Rust host of a toolbox: ``settings`` (JSON text) as :mod:`ooxml_edit.tools.hosted`
+        writes them, its documents laid out with ``pages``."""
+        from ooxml_edit.tools.hosted import rust_host
 
         minimum = None if self.min_text_size is None else json.dumps(self.min_text_size)
-        return ooxml_core.Host(settings, pages=pages, min_text_size=minimum, typography=self.typography)
+        return rust_host(settings, pages=pages, min_text_size=minimum, typography=self.typography)
 
     def pages(self, font_dirs: Any, locale: Any) -> Any:
         """What documents are laid out and drawn with for ``font_dirs`` (``None``:
-        ``OOXML_FONT_DIRS``) and ``locale`` (``None``: en-US): an ``ooxml_core.PageSetup``."""
+        ``OOXML_FONT_DIRS``) and ``locale`` (``None``: en-US): docx2svg's page setup."""
         import docx2svg
         from docx2svg import rust
         from ooxml_common.fonts.office import user_font_dirs
@@ -80,30 +81,25 @@ class WordHosting:
     @staticmethod
     def refused(exc: BaseException) -> "tuple[str, str] | None":
         """An open the host refused, read: ``(why, message)``; ``None`` for anything else."""
-        import ooxml_core
+        from ooxml_edit.tools.hosted import open_refusal
 
-        if isinstance(exc, ooxml_core.OpenRefused):
-            message, why = exc.args
-            return why, message
-        if isinstance(exc, ooxml_core.StateRefused):
-            return "state", str(exc)
-        return None
+        return open_refusal(exc)
 
     @staticmethod
     def held_kinds() -> tuple[str, ...]:
         """The kinds whose documents the host's sessions name while the Python host holds them
         (until Phase 4 moves each to Rust)."""
-        import ooxml_core
+        from ooxml_edit.tools.hosted import host_held_kinds
 
-        return tuple(ooxml_core.Host.held_kinds())
+        return host_held_kinds()
 
     def catalogue(self) -> tuple[str, ...]:
         """The names of the host's tools (Word's and the session's own)."""
         with WordHosting._catalogue_lock:
             if WordHosting._catalogue is None:
-                import ooxml_core
+                from ooxml_edit.tools.hosted import host_tools
 
-                WordHosting._catalogue = tuple(ooxml_core.Host().tools())
+                WordHosting._catalogue = host_tools()
             return WordHosting._catalogue
 
 

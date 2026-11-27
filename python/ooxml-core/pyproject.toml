@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ooxml-core"
-description = "The Rust core of the ooxml packages: documents' layout owners, snapshots and Word's layout, as the module ooxml_core"
+description = "Internal: the Rust core of the ooxml packages (the module ooxml_core), used through ooxml-edit's facade (ooxml_edit.tools, ooxml_edit.chunks) and docx2svg; import those, never ooxml_core"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Evert Koks" }]

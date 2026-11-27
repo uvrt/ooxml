@@ -102,3 +102,55 @@ fn a_tracking_switch_beside_a_batch_never_lands_between_its_ops() {
         assert!(switched > 0);
     });
 }
+
+/// The document's `word/document.xml` at its head.
+fn body(s: &HostSession) -> String {
+    let head = s.session().format_doc(&DocId::nth(1)).unwrap().stored().head();
+    let bytes = head.package().read("word/document.xml").unwrap().unwrap();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Phase 3 E2 (the thread groups' test of a step group's revert, on the host): an atomic batch
+/// that switches tracking on, writes, and then fails publishes nothing -- the text, the tracking
+/// mode and undo as they were -- and one that applies is one step, which one undo takes back.
+#[test]
+fn an_atomic_batch_that_fails_leaves_the_text_the_tracking_mode_and_undo_as_they_were() {
+    let s = opened();
+    let targets = paragraphs(&s, 2);
+    let how = CallAs::default();
+    let set = |id: &str, text: &str| json!({"tool": "word_set_text", "arguments": {"doc": "d1", "target": id, "text": text}});
+    let first = s
+        .call("word_set_text", json!({"doc": "d1", "target": targets[0], "text": "kept"}), &how)
+        .unwrap();
+    assert!(!first.is_error(), "{:?}", first.to_json());
+    let before = body(&s);
+    let refused = s
+        .call(
+            "batch",
+            json!({"atomic": true, "ops": [
+                {"tool": "word_set_tracking", "arguments": {"doc": "d1", "on": true, "author": "Bo"}},
+                set(&targets[1], "gone"),
+                set("p:7FFFFFFF", "nowhere"),
+            ]}),
+            &how,
+        )
+        .unwrap();
+    assert!(refused.is_error(), "{:?}", refused.to_json());
+    assert_eq!(body(&s), before, "nothing of the batch is published");
+    let described = Value::Object(s.call("describe", json!({"doc": "d1"}), &how).unwrap().to_json());
+    assert_eq!(described["data"]["tracking"], Value::Null, "the tracking mode as it was");
+    // undo takes back the edit before the batch: the batch made no step
+    let undone = s.call("undo", json!({"doc": "d1"}), &how).unwrap();
+    assert!(!undone.is_error(), "{:?}", undone.to_json());
+    assert!(!body(&s).contains(">kept<"));
+    // a batch that applies is one step, which one undo takes back
+    let applied = s
+        .call("batch", json!({"atomic": true, "ops": [set(&targets[0], "one"), set(&targets[1], "two")]}), &how)
+        .unwrap();
+    assert!(!applied.is_error(), "{:?}", applied.to_json());
+    assert!(body(&s).contains(">one<") && body(&s).contains(">two<"));
+    let undone = s.call("undo", json!({"doc": "d1"}), &how).unwrap();
+    assert!(!undone.is_error(), "{:?}", undone.to_json());
+    let now = body(&s);
+    assert!(!now.contains(">one<") && !now.contains(">two<"));
+}

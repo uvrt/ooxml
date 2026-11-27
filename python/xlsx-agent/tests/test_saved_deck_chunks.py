@@ -1,4 +1,4 @@
-"""pptx-agent's saves through the shared chunk writer (``ooxml_core.chunk_file``; the design
+"""pptx-agent's saves through the shared chunk writer (``ooxml_edit.chunks.chunk_file``; the design
 page "CyberAI as an Office Client", request 4).  Here, not in pptx-agent's suite: xlsx-agent's
 test environment is the one that installs both pptx-agent and ooxml-core (tools/ci.py), and
 pptx-agent itself does not depend on the Rust core.
@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import ooxml_core
+from ooxml_edit.chunks import chunk_file
 import pytest
 
 from ooxml_edit.tools import Toolbox
@@ -36,7 +36,7 @@ def _chunks(chunks) -> list[tuple[int, int, bytes | None]]:
 @pytest.mark.parametrize("path", DECKS, ids=lambda p: p.name)
 def test_a_saved_deck_chunks_as_the_check_does(path):
     saved = Document.open(path.read_bytes()).to_bytes()
-    chunks = ooxml_core.chunk_file(saved)
+    chunks = chunk_file(saved)
     assert chunks.zip_analysed is (path.name not in NOT_ANALYSED)
     assert _chunks(chunks) == [(c.start, c.size, c.signature) for c in zip_chunks(saved)]
     assert chunks.root == (b"", len(saved))
@@ -52,8 +52,8 @@ def test_one_shape_sends_only_its_parts():
         assert box.dispatch(session, "save_document", {"doc": "d1", "name": "out.pptx",
                                                        "format": "pptx"}).ok
         edited = session.outputs[-1].data
-    chunks = ooxml_core.chunk_file(edited)
-    delta = chunks.delta(ooxml_core.chunk_file(data).leaves())
+    chunks = chunk_file(edited)
+    delta = chunks.delta(chunk_file(data).leaves())
     travel = {chunks.chunks[i].name or chunks.chunks[i].kind for i in delta.new}
     # the slide, docProps/app.xml (PowerPoint keeps its counts) and the central directory
     assert travel == {"ppt/slides/slide1.xml", "docProps/app.xml", "final"}

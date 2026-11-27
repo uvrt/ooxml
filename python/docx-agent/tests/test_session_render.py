@@ -10,9 +10,7 @@ from __future__ import annotations
 import multiprocessing
 import os
 
-import pytest
 
-pytest.importorskip("ooxml_core")
 
 from ooxml_edit.tools import Limits, Toolbox  # noqa: E402
 

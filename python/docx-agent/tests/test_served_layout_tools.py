@@ -1,5 +1,5 @@
 """Lane P2c13: ``word_template``'s upgrade served by the Rust session, which lays the versions
-out with the document's page engine (``CallOptions(layout=...)``)."""
+out with the document's page engine."""
 
 from __future__ import annotations
 

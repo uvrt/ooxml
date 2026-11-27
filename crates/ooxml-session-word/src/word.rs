@@ -435,9 +435,8 @@ impl Word {
     }
 
     /// The tracking mode held shared, for an edit's whole call or a host's batch's whole run:
-    /// `word_set_tracking` and a step group's revert wait until those holding it have
-    /// committed. (A panic while it is held leaves the plain value whole: the poison is
-    /// ignored.)
+    /// `word_set_tracking` waits until those holding it have committed. (A panic while it is
+    /// held leaves the plain value whole: the poison is ignored.)
     pub(crate) fn tracking_held(&self) -> RwLockReadGuard<'_, ()> {
         self.held.read().unwrap_or_else(PoisonError::into_inner)
     }
@@ -459,21 +458,9 @@ impl Word {
         Stored::<WordDoc, WordStore>::any(version)
     }
 
-    /// The head, or for the thread whose batch holds the document the version its ops left.
+    /// The head.
     pub(crate) fn head(&self) -> Snapshot<WordDoc> {
         self.stored.head()
-    }
-
-    /// The owner of the batch this thread holds on the document, if it holds one: its
-    /// calls' edits run in the batch's transaction.
-    pub(crate) fn batch_owner(&self) -> Option<ooxml_store::TxnOwner> {
-        self.stored.batch_owner()
-    }
-
-    /// The tracking author a step group's revert goes back to (`None`: untracked).
-    pub(crate) fn restore_tracking(&self, author: Option<String>) {
-        let _alone = self.tracking_alone();
-        self.set_tracking(author);
     }
 
     /// `version`'s problems against those the document opened with: what the save gate
@@ -504,9 +491,9 @@ impl FormatDoc for Word {
         caller: &Caller,
         tool: Option<&str>,
         update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32, bool), SessionError> {
-        let (version, changed, attempts, batch) = self.stored.update(caller, tool, update)?;
-        Ok((Self::any(version), changed, attempts, batch))
+    ) -> Result<(AnyVersion, bool, u32), SessionError> {
+        let (version, changed, attempts) = self.stored.update(caller, tool, update)?;
+        Ok((Self::any(version), changed, attempts))
     }
 
     fn readings(&self) -> Arc<dyn Any + Send + Sync> {
@@ -765,16 +752,6 @@ impl FormatDoc for Word {
         } else {
             Box::new(self.tracking_held())
         })
-    }
-
-    fn group_state(&self) -> Option<Arc<dyn Any + Send + Sync>> {
-        Some(Arc::new(self.tracking()))
-    }
-
-    fn restore_group(&self, state: &(dyn Any + Send + Sync)) {
-        if let Some(tracking) = state.downcast_ref::<Option<String>>() {
-            self.restore_tracking(tracking.clone());
-        }
     }
 
     fn as_any(&self) -> &dyn Any {
