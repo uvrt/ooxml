@@ -454,15 +454,21 @@ impl WordDoc {
         Ok(package)
     }
 
-    /// Whether the id of the block at `path` of `part` (in this version) has been written:
-    /// the version the transaction began on saves it there. An unwritten id counts as fresh
-    /// at its block's first write -- an id given at open has been seen by no reader of the
-    /// file, so the transaction that first writes its block keeps it whole (a text edit does
-    /// not renew its textId), as an edit that stamped the block itself kept the pair it drew;
-    /// later transactions renew as usual.
+    /// Whether the id of the block at `path` of `part` (in this version) has been written.
+    /// An unwritten id counts as fresh at its block's first write: an id given at open has
+    /// been seen by no reader of the file, so the write that first writes its block keeps it
+    /// whole (a text edit does not renew its textId), as an edit that stamped the block
+    /// itself kept the pair it drew. Fresh until the first change of the package writes it
+    /// (`transaction` false: a stamping edit's first write; a later one renews), or for the
+    /// whole transaction (`transaction` true: an edit that stamps nothing first, as
+    /// `_fill_cells` writes, every write of it).
     #[must_use]
-    pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
-        let base = self.begun.as_ref().unwrap_or(&self.package);
+    pub fn id_written(&self, part: &str, path: &[u32], transaction: bool) -> bool {
+        let base = if transaction {
+            self.begun.as_ref().unwrap_or(&self.package)
+        } else {
+            &self.package
+        };
         if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
             return true;
         }
