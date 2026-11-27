@@ -285,6 +285,18 @@ impl Package {
         })
     }
 
+    /// The part's bytes as a save writes them: an unwritten part's as it was, any other
+    /// part's as [`Package::read`] reads them.
+    ///
+    /// # Errors
+    /// As [`Package::read`].
+    pub fn read_saved(&self, name: &str) -> Result<Option<Arc<[u8]>>, OpcError> {
+        match self.part(name) {
+            None => Ok(None),
+            Some(content) => self.saved_bytes(content).map(Some),
+        }
+    }
+
     /// The size of the part's bytes where it is known without reading them: as stored (the
     /// entry's uncompressed size) or as put; `None` for a tree, or no such part.
     pub fn size(&self, name: &str) -> Option<u64> {

@@ -711,7 +711,8 @@ fn a_read_by_the_ids_an_open_gives_reads_the_same_blocks_after_edits() {
     let table = {
         let head = s.snapshot(&d).unwrap();
         let docx = head.word().unwrap().docx().unwrap();
-        docx.body().unwrap().ids.tables().iter().next().unwrap().id.clone()
+        let id = docx.body().unwrap().ids.tables().iter().next().unwrap().id.clone();
+        id
     };
     let (first, second) = (ids[0].clone(), ids[1].clone());
     let cell = format!("{table}/c0,1");

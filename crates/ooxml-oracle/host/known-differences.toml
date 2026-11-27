@@ -16,7 +16,10 @@
 # "structured-problems-2026-11-25" (one problems shape in every reply: an edit's
 # checks.validate gives the problems it added and fixed as {code, part, element, message,
 # severity}) or "optimistic-batches-2026-11-25" (a batch on one document runs optimistically,
-# holding nothing, and run again where it conflicts: what it says of itself says so) -- and its `cause`, citing the pull request that changed the answer.  An entry
+# holding nothing, and run again where it conflicts: what it says of itself says so) or
+# "stamp-on-open-2026-11-26" (every block of a document has a durable id from the first read:
+# the streams' ids by place are re-targeted by crates/ooxml-oracle/python/stamp_on_open.py, and
+# what the map cannot say -- the renames stamping made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry
 # without a cause, or without an allowed rule or decision, is refused.  Each entry is also a
 # release-notes line.  The Rust replayer (crates/ooxml-oracle/src/host_replay.rs) reads this
 # file's subset: `[[difference]]` tables of strings, integers and lists of strings.
