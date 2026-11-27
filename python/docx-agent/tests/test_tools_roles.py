@@ -295,7 +295,7 @@ def test_a_writer_a_reviewer_and_an_editor_in_chief_share_one_session(box):
     writer = session.view(roles=["review", "edit"], context={"agent": "writer-1"})
     reviewer = session.view(roles=["review"], context={"agent": "reviewer-1"})
     chief = session.view(roles=["review", "accept"], context={"agent": "chief-1"})
-    assert writer.entry("d1") is reviewer.entry("d1") is session.entry("d1")
+    assert writer.save("d1") == reviewer.save("d1") == session.save("d1"), "one document"
     assert box.dispatch(writer, "word_set_tracking",
                         {"doc": "d1", "on": True, "author": "Writer"}).ok
     assert box.dispatch(writer, "replace_text", {"doc": "d1", "find": "99.5%",
@@ -355,7 +355,7 @@ def test_a_reviewer_reads_many_blocks_in_one_read_batch(box):
     assert ["error" in answer for answer in answers] == [False, False, False, True]
     assert answers[1]["data"] == read.data
     assert answers[3]["error"]["details"]["role"] == "edit"
-    assert session.entry("d1").version == 0
+    assert session.save("d1").version == 0
 
 
 def test_a_writer_s_change_in_a_read_batch_is_sent_to_batch(box):
@@ -366,4 +366,4 @@ def test_a_writer_s_change_in_a_read_batch_is_sent_to_batch(box):
     refused, read = result.data["ops"]
     assert refused["error"]["code"] == "refused"
     assert refused["error"]["valid_options"] == ["batch", "word_set_text"]
-    assert "error" not in read and session.entry("d1").version == 0
+    assert "error" not in read and session.save("d1").version == 0

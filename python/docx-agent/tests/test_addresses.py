@@ -144,8 +144,9 @@ def test_word_read_takes_a_cell_a_row_and_open_spans(box, session):
 
 
 def test_a_span_takes_refs_at_both_ends(box, session):
-    doc, ids = opened(box, session, made(box))
-    session.entry(doc).refs.update(first=ids["Bravo"], last=ids["Charlie"])
+    doc = session.open(word_docs.blank(), "refs.docx")
+    for text, ref in (("Alpha", None), ("Bravo", "first"), ("Charlie", "last"), ("Delta", None)):
+        ok(box, session, "word_insert_markdown", doc=doc, at="end", markdown=text, **({"ref": ref} if ref else {}))
     text = ok(box, session, "word_read", doc=doc, range="$first..$last").data
     assert "Bravo" in text and "Charlie" in text and "Alpha" not in text and "Delta" not in text
     tail = ok(box, session, "word_read", doc=doc, range="$last..").data

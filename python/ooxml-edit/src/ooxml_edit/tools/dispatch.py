@@ -105,7 +105,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 from .. import provenance
 from ..errors import ArgumentError, ArgumentTypeError, UnitError
-from . import adapters, prompts, textfacts
+from . import adapters, hosted, prompts, textfacts
 from .hints import action_hints, tool_alias, tool_hints
 from .datasets import (DATASET_PREFIX, Dataset, DatasetEntry, check_dataset_id,
                        dataset_id, row_range, rows_text)
@@ -1016,7 +1016,8 @@ class Toolbox:
                  strict_first: Sequence[str] | None = None,
                  runner: Any = None, font_dirs: Any = None, locale: Any = None,
                  roles: str | Iterable[str] | None = None, prewarm: bool = True,
-                 numbers: Any = None, block_edits: str = "auto") -> None:
+                 numbers: Any = None, block_edits: str = "auto",
+                 _rust_host: bool | None = None) -> None:
         """``workers`` worker processes render and lay out (:class:`~.worker.WorkerPool`);
         ``None`` (the default) is what this process may use -- its CPUs and its container's
         CPU quota, at most eight (:func:`~.worker.default_workers`).  One call's views
@@ -1133,6 +1134,10 @@ class Toolbox:
         self._errors.update(error_map or {})
         self._warning_categories = tuple(category for fmt in self.formats.values()
                                          for category in fmt.warnings)
+        # Phase 3 E1: the Rust host behind this toolbox, where it runs its sessions
+        # (hosted.runs_on_host).  ``_rust_host`` is a test's seam for a toolbox with tools of
+        # its own; E1b deletes it together with the rule.
+        self._hosting = hosted.Hosting(self) if hosted.runs_on_host(self, _rust_host) else None
         for category in self._warning_categories:
             # Every occurrence reaches the collector, not only the first per location.  A
             # filter the application adds later for these categories takes precedence.
@@ -1150,6 +1155,13 @@ class Toolbox:
         :attr:`locale` (``None``: en-US) -- one user's or client's own; ``roles`` the
         toolbox's :attr:`roles` (``None``: all), to match the definitions sent for it;
         ``numbers`` the toolbox's :attr:`numbers` (``None``: the defaults)."""
+        if self._hosting is not None:
+            return self._hosting.session(
+                clock=clock, limits=limits or self.limits, on_output=on_output,
+                font_dirs=self.font_dirs if font_dirs is _TOOLBOX_DEFAULT else font_dirs,
+                locale=self.locale if locale is _TOOLBOX_DEFAULT else locale,
+                roles=self.roles if roles is _TOOLBOX_DEFAULT else roles,
+                numbers=self.numbers if numbers is _TOOLBOX_DEFAULT else numbers)
         return Session(self.formats.values(), clock=clock, limits=limits or self.limits,
                        on_output=on_output,
                        font_dirs=self.font_dirs if font_dirs is _TOOLBOX_DEFAULT else font_dirs,
@@ -1487,6 +1499,9 @@ class Toolbox:
         In a worker process that is still starting -- a main module with no ``__main__``
         guard, imported again there -- it stops that process instead (see
         :mod:`.worker`): the program's work does not run once more in each worker."""
+        refuse_while_bootstrapping()
+        if self._hosting is not None and _on_host(session):
+            return self._hosting.dispatch(session, name, arguments, roles=roles, context=context)
         return self._dispatch(session, name, arguments, roles=roles, context=context)
 
     def _dispatch(self, session: Session | SessionView, name: str, arguments: Any, *,
@@ -1674,6 +1689,9 @@ class Toolbox:
         the read's result is still of the document before the edit.  Every result is the
         one the calls in the order given would have."""
         refuse_while_bootstrapping()
+        if self._hosting is not None and _on_host(session):
+            return self._hosting.dispatch_many(session, calls, max_workers=max_workers, roles=roles,
+                                               context=context)
         if not calls:
             return []
         session, roles, caller = _caller(session, roles, context)
@@ -3663,6 +3681,12 @@ def _renamed(node: Any, alias: str, name: Any, where: str, notes: list[str]) -> 
     node[meant] = node.pop(alias)
     notes.append(f"{field} read as {meant}")
     return node
+
+
+def _on_host(session: Session | SessionView) -> bool:
+    """Whether ``session`` (a view's own) is the Rust host's (:mod:`.hosted`)."""
+    base = session.session if isinstance(session, SessionView) else session
+    return isinstance(base, hosted.HostedSession)
 
 
 def _caller(session: Session | SessionView, roles: Any,

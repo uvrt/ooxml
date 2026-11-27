@@ -67,7 +67,7 @@ def _all_ids(data: bytes) -> set[str]:
 def test_without_the_state_the_latest_deleted_ids_come_back_as_before(box):
     session, doc, gone = _deleted_at_the_end(box)
     later, again = _opened(box, session.save(doc).data)
-    assert later.entry(again).version == 0
+    assert later.save(again).version == 0
     made = _append(box, later, again, [f"New {k}." for k in range(6)])
     assert set(made) & set(gone)            # the stated limit, unchanged without a state
 
@@ -75,7 +75,7 @@ def test_without_the_state_the_latest_deleted_ids_come_back_as_before(box):
 def test_with_the_state_no_deleted_id_is_given_again_and_naming_one_says_deleted(box):
     session, doc, gone = _deleted_at_the_end(box)
     saved = session.save(doc)
-    version = session.entry(doc).version
+    version = session.save(doc).version
     later, again = _opened(box, saved.data, state=saved.state)
     made = _append(box, later, again, [f"New {k}." for k in range(30)])
     assert not set(made) & set(gone)
@@ -117,17 +117,17 @@ def test_no_value_the_document_ever_had_is_generated_after_the_reopen(box):
 
 def test_versions_go_on_from_the_saved_one(box):
     session, doc, _ = _deleted_at_the_end(box)
+    last = session.save(doc).version            # the highest version given: the head's
     ok(box, session, "undo", doc=doc)
     ok(box, session, "undo", doc=doc, redo=True)
-    entry = session.entry(doc)
-    saved_version, last = entry.history.version, entry.history.last_version
     saved = session.save(doc)
+    saved_version = saved.version
     later, again = _opened(box, saved.data, state=saved.state)
-    assert later.entry(again).history.version == saved_version
+    assert later.save(again).version == saved_version
     _append(box, later, again, ["Next."])
-    assert later.entry(again).history.version == last + 1
+    assert later.save(again).version == last + 1
     undone = box.dispatch(later, "undo", {"doc": again})
-    assert not undone.ok or later.entry(again).history.version == saved_version
+    assert not undone.ok or later.save(again).version == saved_version
 
 
 def test_a_state_survives_several_reopens_and_this_session_s_deletions_join_it(box):
@@ -216,7 +216,7 @@ def test_a_state_that_is_none_is_refused_with_the_way_out(box, state):
 def test_an_empty_state_is_no_state(box):
     session, doc, _ = _deleted_at_the_end(box)
     later, again = _opened(box, session.save(doc).data, state="")
-    assert later.entry(again).history.version == 0
+    assert later.save(again).version == 0
 
 
 # -- size ---------------------------------------------------------------------------------------

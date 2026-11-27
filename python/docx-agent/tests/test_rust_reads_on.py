@@ -21,6 +21,10 @@ from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
 import word_docs  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 
 @pytest.fixture(scope="module")
 def toolbox():
@@ -56,7 +60,7 @@ def test_a_new_version_is_handed_over_as_the_parts_that_changed(toolbox):
         assert before != _answer(toolbox, session, "word_read", {"doc": doc})
         found = _answer(toolbox, session, "find_text", {"doc": doc, "text": "Changed"})
         assert found["data"], found
-        assert session.entry(doc).version in reads.owned(session.entry(doc)).handle.versions
+        assert session.save(doc).version in reads.owned(session.entry(doc)).handle.versions
     finally:
         session.close(doc)
 

@@ -21,6 +21,10 @@ from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 
 import word_docs  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 REPORT = "# Part one\n\n" + "\n\n".join(f"Text {k}." for k in range(6)) + "\n\n| a | b |\n|---|---|\n| 1 | 2 |"
 
 

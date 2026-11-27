@@ -182,6 +182,44 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(serial)
 
 
+# -- the Python host, until E2 -------------------------------------------------------------------
+#
+# Since Phase 3 E1 a toolbox of docx-agent's tools runs on the Rust host (ooxml_edit.tools.hosted).
+# A test of the Python host's own mirror of a Word document -- session.entry, its handle and
+# snapshot, docx_agent.rust.reads -- is marked ``python_host`` (on the test or its module): its
+# toolboxes run on the Python host, which E2 deletes together with those tests.
+
+
+def _on_python_host(request):
+    from ooxml_edit.tools import hosted
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(hosted, "runs_on_host", lambda toolbox, forced=None: False)
+        yield
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _python_host_module(request):
+    if request.node.get_closest_marker("python_host") is None:
+        yield
+        return
+    yield from _on_python_host(request)
+
+
+@pytest.fixture(autouse=True)
+def _python_host_test(request):
+    marked = request.node.get_closest_marker("python_host") is not None
+    if not marked or any(m.name == "python_host" for m in _marks(request.module)):
+        yield               # (none, or the module's: _python_host_module)
+        return
+    yield from _on_python_host(request)
+
+
+def _marks(module) -> list:
+    marks = getattr(module, "pytestmark", [])
+    return marks if isinstance(marks, list) else [marks]
+
+
 # -- faces ----------------------------------------------------------------------------------
 #
 # The fixtures are laid out (by docx2svg) in the faces Word uses -- Calibri, Cambria,
@@ -236,7 +274,24 @@ def _skip_if_the_session_laid_a_face_absent(call) -> None:
     pages = existing_pages(owned) if owned is not None else None
     if pages is None:
         return
-    grades, _, _ = pages.lay_out(call.entry.snapshot()).coverage()
+    _skip_if_laid_with_a_face_absent(pages.lay_out(call.entry.snapshot()))
+
+
+def _skip_if_the_host_laid_a_face_absent(session, doc) -> None:
+    # A check of the layout on the Rust host: the document's bytes now laid out by an engine
+    # of the session's font folders, the faces its coverage grades missing or substituted.
+    import docx2svg
+    from docx2svg import rust
+
+    from docx_agent.rust.engines import font_dirs_of
+
+    base = getattr(session, "session", session)
+    engine = rust.word_pages(docx2svg.ConvertOptions(font_dirs=font_dirs_of(base)))
+    _skip_if_laid_with_a_face_absent(engine.lay_out(base.save(doc).data))
+
+
+def _skip_if_laid_with_a_face_absent(laid) -> None:
+    grades, _, _ = laid.coverage()
     missing = [family for family, grade, *_ in grades if grade == "missing"]
     if missing:
         pytest.skip(f"a face this document is laid out in is not installed here: {', '.join(missing)}")
@@ -268,3 +323,21 @@ def _skip_where_faces_are_absent(request, monkeypatch):
         return served
 
     monkeypatch.setattr(rust_reads, "serve_check", checked_serve_check)
+
+    from ooxml_edit.tools import hosted
+
+    dispatch = hosted.Hosting.dispatch
+
+    def checked_dispatch(self, session, name, arguments, **given):
+        # The same on the Rust host (Phase 3 E1): a check's reflow coverage and warnings, or,
+        # for a check of the layout or of ranges alone, the faces of the document laid out.
+        result = dispatch(self, session, name, arguments, **given)
+        data = (result.data or {}) if name == "check" and result.ok else {}
+        reflow = data.get("reflow") if isinstance(data, dict) else None
+        if isinstance(reflow, dict):
+            _skip_if_a_check_says_a_face_is_absent(reflow.get("coverage"), data.get("layout_warnings"))
+        elif isinstance(data, dict) and ("layout" in data or "range" in data) and result.doc:
+            _skip_if_the_host_laid_a_face_absent(session, result.doc)
+        return result
+
+    monkeypatch.setattr(hosted.Hosting, "dispatch", checked_dispatch)

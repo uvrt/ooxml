@@ -17,6 +17,10 @@ from ooxml_edit.tools import Toolbox  # noqa: E402
 from docx_agent.tools import FORMAT, GROUPS, TOOLS  # noqa: E402
 from conftest import FIXTURE_DIR  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 #: A few fixtures, and a template saved as a .docx (its main part retyped on a .dotx save).
 FIXTURES = sorted({*sorted((FIXTURE_DIR).rglob("*.docx"))[:6],
                    *(FIXTURE_DIR).rglob("template-saved-as-docx.docx")})

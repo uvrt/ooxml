@@ -208,10 +208,9 @@ def test_the_summary_names_a_few_blocks_and_says_where_the_rest_are(box):
 
 def test_a_preview_changes_nothing_and_says_what_each_would_do(box):
     session, table = _with_new_table(box)
-    entry = session.entry("d1")
-    version, data = entry.version, word_docs.saved(session, "d1")
+    version, data = session.save("d1").version, word_docs.saved(session, "d1")
     preview = ok(box, session, "word_changes", action="preview", all=True)
-    assert entry.version == version and word_docs.saved(session, "d1") == data
+    assert session.save("d1").version == version and word_docs.saved(session, "d1") == data
     assert preview.summary.startswith("Preview, nothing changed:")
     assert preview.data["accept"].get("removed") is None
     assert preview.data["reject"]["removed"]["tables"][0]["id"] == table

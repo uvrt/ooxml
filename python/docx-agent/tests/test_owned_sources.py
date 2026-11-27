@@ -15,6 +15,10 @@ from ooxml_edit.tools import OwnedDocument, Toolbox  # noqa: E402
 import test_tables_from_data as data  # noqa: E402
 from test_tables_from_data import call, ds_put, ok  # noqa: E402
 
+# The Python host's own serving of a Word document (its adapters, owner and mirror), which Phase 3 E2
+# deletes with these tests; their calls' answers are the host goldens' (replayed by the Rust host).
+pytestmark = pytest.mark.python_host
+
 
 @pytest.fixture(scope="module")
 def box():

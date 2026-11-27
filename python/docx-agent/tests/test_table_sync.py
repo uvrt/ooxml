@@ -152,10 +152,10 @@ def test_gone_keys_removed_on_request(toolbox):
 
 def test_nothing_to_change_is_no_change(toolbox):
     session, table = _table(toolbox, made(6), {"same": made(6), "fewer": made(6, drop=(2,))})
-    version = session.entry("d1").version
+    version = session.save("d1").version
     for name in ("same", "fewer"):
         result = _sync(toolbox, session, table, **{"from": f"d:{name}"})
-        assert result.ok and result.changed == [] and session.entry("d1").version == version
+        assert result.ok and result.changed == [] and session.save("d1").version == version
         assert "nothing changed" in result.warnings[0]
     assert result.data["missing"] == {"count": 1, "keys": ["Q7-002"]}
 
@@ -241,13 +241,13 @@ def test_rows_like_a_row_merged_across_columns_taken_are_refused_first(toolbox):
     assert toolbox.dispatch(session, "word_edit_table", {"doc": "d1", "table": table, "action": "merge",
                                                          "first": {"row": 3, "col": 1},
                                                          "last": {"row": 3, "col": 2}}).ok
-    version = session.entry("d1").version
+    version = session.save("d1").version
     result = _sync(toolbox, session, table, **{"from": "d:next"})
     assert not result.ok and result.error.field == "from_columns", result.to_json()
     assert result.error.message.startswith("new rows are made like row 3")
     assert "merged across columns 1, 2" in result.error.message and "title, issue" in result.error.message
     assert result.error.details["from_columns"] == ["code", "title", "", "checked"]
-    assert session.entry("d1").version == version                       # nothing changed
+    assert session.save("d1").version == version                       # nothing changed
     # the way out works
     result = _sync(toolbox, session, table, **{"from": "d:next", "from_columns": ["code", "title", "", "checked"]})
     assert result.ok and result.data["added"]["keys"] == ["Q7-004"], result.to_json()
