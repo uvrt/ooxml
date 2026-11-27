@@ -13,8 +13,7 @@
 //! The reader keys each block as it reads it, by its place ([`KeyOf`]); a block it reads
 //! where no index keys it is named by its path.
 //!
-//! Must not: key a memo (keys name blocks; memos are keyed by content, ADR-008), or name a
-//! text box's blocks (no story's index holds them).
+//! Must not: key a memo (keys name blocks; memos are keyed by content, ADR-008).
 
 use crate::docx::{Kept as DocxKept, StoryPart, VersionNames};
 use crate::ids::{BlockKey, StoryIx, StoryTable};

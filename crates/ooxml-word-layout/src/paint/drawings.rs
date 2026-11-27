@@ -67,8 +67,8 @@ pub enum SlotName {
     /// Its run: the slot is named below it (an inline one as it, a floating one by its
     /// `wp:anchor[n]` or a VML shape's own path).
     Anchored(ooxml_word_model::ids::Anchor),
-    /// Its path and its paragraph's, where no story's index holds the paragraph (a text
-    /// box's, until RD1).
+    /// Its path and its paragraph's, where no story's index holds the paragraph (one of a
+    /// part no index holds).
     Path {
         /// Its path.
         path: Text,

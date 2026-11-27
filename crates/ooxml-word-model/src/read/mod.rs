@@ -87,8 +87,9 @@ pub(crate) trait KeyOf {
 }
 
 /// Where a container's blocks are read: below a place a story's index holds (each block
-/// keyed from it), or by path (a text box's blocks, their steps below their drawing until
-/// RD1 keys text-box blocks; a part no index holds; a table read on its own).
+/// keyed from it), or by path (a text box's blocks, by their steps below their paragraph,
+/// keyed once read where the paragraph is keyed: `paragraph::key_text_boxes`; a part no
+/// index holds; a table read on its own).
 #[derive(Clone)]
 pub(crate) enum At<'k> {
     /// At this place (child indexes from the part's root) of the part `keys` keys.

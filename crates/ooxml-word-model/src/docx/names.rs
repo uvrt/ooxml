@@ -233,6 +233,14 @@ impl VersionNames {
 /// (below the root, beside the body) by a walk from the root.
 pub(crate) fn block_path(part: &StoryPart, place: &[u32]) -> Option<String> {
     let root = part.root();
+    if let Some((host, content)) = text_box_of(root, place) {
+        // a text box's block: below its paragraph's path, as the drawing readers name it
+        let host_path = block_path(part, place.get(..=host)?)?;
+        let paragraph = element_at(root, place.get(..=host)?)?;
+        let steps = crate::read::paths::text_box_path(paragraph, place.get(host + 1..=content)?)?;
+        let content_element = element_at(root, place.get(..=content)?)?;
+        return path_below(content_element, format!("{host_path}/{steps}"), place.get(content + 1..)?);
+    }
     if let Some(path) = note_path(root, place) {
         return path;
     }
@@ -280,4 +288,21 @@ fn element_at<'a>(from: &'a Arc<Element>, place: &[u32]) -> Option<&'a Arc<Eleme
     place
         .iter()
         .try_fold(from, |node, k| node.children().get(*k as usize)?.as_element())
+}
+
+/// Where the block at `place` is in a text box: the depth (an index into `place`) of the
+/// paragraph holding the innermost text box it is in and of that text box's content
+/// (`w:txbxContent`); `None` for a block in no text box.
+fn text_box_of(root: &Arc<Element>, place: &[u32]) -> Option<(usize, usize)> {
+    let mut node: &Element = root;
+    let (mut host, mut content) = (None, None);
+    for (depth, k) in place.iter().enumerate() {
+        node = node.children().get(*k as usize)?.as_element()?;
+        match node.name().local() {
+            "p" if depth + 1 < place.len() => host = Some(depth),
+            "txbxContent" => content = host.map(|h| (h, depth)),
+            _ => {}
+        }
+    }
+    content
 }

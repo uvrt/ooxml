@@ -28,7 +28,7 @@ use ooxml_xml::{Element, Node};
 use std::sync::Arc;
 
 /// The child indexes of `parent`'s children named `name` (by local name), in order.
-fn named<'a>(parent: &'a Arc<Element>, name: &'a str) -> impl Iterator<Item = u32> + 'a {
+fn named<'a>(parent: &'a Element, name: &'a str) -> impl Iterator<Item = u32> + 'a {
     indexed(parent).filter(move |(_, c)| local(c) == name).map(|(j, _)| j)
 }
 
@@ -76,7 +76,7 @@ fn word(text: &str) -> bool {
 }
 
 /// An element's child elements with their node indexes.
-fn indexed(element: &Arc<Element>) -> impl Iterator<Item = (u32, &Arc<Element>)> + '_ {
+fn indexed(element: &Element) -> impl Iterator<Item = (u32, &Arc<Element>)> + '_ {
     element
         .children()
         .iter()
@@ -88,7 +88,7 @@ fn indexed(element: &Arc<Element>) -> impl Iterator<Item = (u32, &Arc<Element>)>
 }
 
 /// Where `found` is among `parent`'s descendants: the child indexes down to it.
-fn place_below(parent: &Arc<Element>, found: &Element) -> Option<Vec<u32>> {
+fn place_below(parent: &Element, found: &Element) -> Option<Vec<u32>> {
     for (k, node) in indexed(parent) {
         if std::ptr::eq(&**node, found) {
             return Some(vec![k]);
@@ -103,7 +103,7 @@ fn place_below(parent: &Arc<Element>, found: &Element) -> Option<Vec<u32>> {
 
 /// The first descendant of `node` (not itself) named `name`, in document order, with its
 /// child indexes below `node`.
-fn first_below<'a>(node: &'a Arc<Element>, name: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
+fn first_below<'a>(node: &'a Element, name: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
     for (k, child) in indexed(node) {
         if local(child) == name {
             return Some((child, vec![k]));
@@ -118,7 +118,7 @@ fn first_below<'a>(node: &'a Arc<Element>, name: &str) -> Option<(&'a Arc<Elemen
 
 /// `parent`'s `w:tr` or `w:tc` children, those inside a `w:sdt`'s `w:sdtContent` or a
 /// `w:customXml` too, each with its child indexes below `parent` (`row_level`).
-fn row_level<'a>(parent: &'a Arc<Element>, name: &str, at: &[u32], out: &mut Vec<(&'a Arc<Element>, Vec<u32>)>) {
+fn row_level<'a>(parent: &'a Element, name: &str, at: &[u32], out: &mut Vec<(&'a Arc<Element>, Vec<u32>)>) {
     for (k, node) in indexed(parent) {
         let mut here = at.to_vec();
         here.push(k);
@@ -138,7 +138,7 @@ fn row_level<'a>(parent: &'a Arc<Element>, name: &str, at: &[u32], out: &mut Vec
 
 /// A run's floating (`anchor`) or inline (`inline`) DrawingML objects, in order, each the
 /// `wp:anchor` or `wp:inline` element (`_anchors`, `_inlines`).
-fn run_drawings<'a>(run: &'a Arc<Element>, name: &str) -> Vec<&'a Element> {
+fn run_drawings<'a>(run: &'a Element, name: &str) -> Vec<&'a Element> {
     indexed(run)
         .filter(|(_, node)| RUN_OBJECTS.contains(&local(node)))
         .filter_map(|(_, node)| {
@@ -154,7 +154,7 @@ fn run_drawings<'a>(run: &'a Arc<Element>, name: &str) -> Vec<&'a Element> {
 
 /// Where a drawing's group members are counted: the group an anchor or inline drawing
 /// shows, else the node itself (`_members`).
-fn members(node: &Arc<Element>) -> Option<(&Arc<Element>, Vec<u32>)> {
+fn members(node: &Element) -> Option<(&Arc<Element>, Vec<u32>)> {
     if !matches!(local(node), "anchor" | "inline") {
         return None;
     }
@@ -166,8 +166,8 @@ fn members(node: &Arc<Element>) -> Option<(&Arc<Element>, Vec<u32>)> {
 
 /// Every section's `w:sectPr` of a main part's `root`, in document order: each
 /// paragraph's (`w:pPr/w:sectPr`), then the body's own (`_sections`).
-fn sections(root: &Arc<Element>) -> Vec<(&Arc<Element>, Vec<u32>)> {
-    fn walk<'a>(node: &'a Arc<Element>, at: &mut Vec<u32>, out: &mut Vec<(&'a Arc<Element>, Vec<u32>)>) {
+fn sections(root: &Element) -> Vec<(&Arc<Element>, Vec<u32>)> {
+    fn walk<'a>(node: &'a Element, at: &mut Vec<u32>, out: &mut Vec<(&'a Arc<Element>, Vec<u32>)>) {
         for (k, child) in indexed(node) {
             at.push(k);
             if local(node) == "pPr" && local(child) == "sectPr" {
@@ -192,6 +192,14 @@ fn sections(root: &Arc<Element>) -> Vec<(&Arc<Element>, Vec<u32>)> {
 /// hold (an edited tree, a synthetic step such as Word's own footnote separator).
 #[must_use]
 pub fn resolve_path<'a>(root: &'a Arc<Element>, path: &str) -> Option<(&'a Arc<Element>, Vec<u32>)> {
+    let place = resolve_within(root, path, None)?;
+    Some((descend(root, &place)?, place))
+}
+
+/// The place (child indexes from `root`) of the element `path` names below `root`: a path
+/// a reader wrote relative to an element (a text box's blocks', below their paragraph).
+#[must_use]
+pub fn place_below_path(root: &Element, path: &str) -> Option<Vec<u32>> {
     resolve_within(root, path, None)
 }
 
@@ -199,14 +207,11 @@ pub fn resolve_path<'a>(root: &'a Arc<Element>, path: &str) -> Option<(&'a Arc<E
 /// indexed step among the part's block container's children found from the ids' counts.
 #[must_use]
 pub fn resolve_in<'a>(root: &'a Arc<Element>, path: &str, ids: &PartIds) -> Option<(&'a Arc<Element>, Vec<u32>)> {
-    resolve_within(root, path, Some(ids))
+    let place = resolve_within(root, path, Some(ids))?;
+    Some((descend(root, &place)?, place))
 }
 
-fn resolve_within<'a>(
-    root: &'a Arc<Element>,
-    path: &str,
-    ids: Option<&PartIds>,
-) -> Option<(&'a Arc<Element>, Vec<u32>)> {
+fn resolve_within(root: &Element, path: &str, ids: Option<&PartIds>) -> Option<Vec<u32>> {
     if path.is_empty() {
         return None;
     }
@@ -220,28 +225,31 @@ fn resolve_within<'a>(
             }
             return None;
         }
-        let (next, below) = if number == 0 && step.name == "sectPr" && local(root) == "document" {
+        let (next, below): (&Element, Vec<u32>) = if number == 0 && step.name == "sectPr" && local(root) == "document" {
             let k = step.index?;
-            sections(root).into_iter().nth(k.checked_sub(1)?)?
+            let (found, at) = sections(root).into_iter().nth(k.checked_sub(1)?)?;
+            (found, at)
         } else if let Some(id) = step.note {
             indexed(node)
                 .find(|(_, c)| local(c) == step.name && attr(c, "id") == Some(id))
-                .map(|(k, c)| (c, vec![k]))?
+                .map(|(k, c)| (&**c, vec![k]))?
         } else if let Some(k) = step.index {
             let k = k.checked_sub(1)?;
             match step.name {
                 "tr" | "tc" => {
                     let mut found = Vec::new();
                     row_level(node, step.name, &[], &mut found);
-                    found.into_iter().nth(k)?
+                    let (found, at) = found.into_iter().nth(k)?;
+                    (found, at)
                 }
                 "anchor" | "inline" if local(node) == "r" => {
                     let wanted = *run_drawings(node, step.name).get(k)?;
                     let at = place_below(node, wanted)?;
-                    (descend(node, &at)?, at)
+                    (wanted, at)
                 }
                 _ => {
-                    let (base, mut at) = members(node).unwrap_or((node, Vec::new()));
+                    let (base, mut at): (&Element, Vec<u32>) =
+                        members(node).map_or((node, Vec::new()), |(g, at)| (&**g, at));
                     let container = ids.filter(|ids| at.is_empty() && place == ids.container());
                     let j = match container {
                         Some(ids) => u32::try_from(ids.container_child(step.name, k + 1)?).ok()?,
@@ -256,12 +264,111 @@ fn resolve_within<'a>(
             if number == 0 && local(node) == step.name {
                 continue;
             }
-            first_below(node, step.name)?
+            let (found, at) = first_below(node, step.name)?;
+            (found, at)
         };
         node = next;
         place.extend(below);
     }
-    Some((node, place))
+    Some(place)
+}
+
+/// The path a text box's content (`w:txbxContent`) at `below` (child indexes) under the
+/// paragraph `paragraph` is read at, relative to the paragraph, as the run and drawing
+/// readers write it and [`resolve_path`] finds it again: the paragraph-level containers'
+/// steps down to the run, the run's object (`wp:anchor[k]`/`wp:inline[k]` among the run's
+/// DrawingML objects, or a VML object's own steps), a group's members, and the content
+/// (`wps:txbx/w:txbxContent`, `v:textbox/w:txbxContent`). `None` where `below` is not such a
+/// content.
+#[must_use]
+pub fn text_box_path(paragraph: &Element, below: &[u32]) -> Option<String> {
+    let mut steps: Vec<String> = Vec::new();
+    let (mut node, mut at) = (paragraph, below);
+    // the paragraph-level containers, down to the run
+    let run = loop {
+        let (child, k, rest) = next(node, at)?;
+        let name = local(child);
+        steps.push(format!("w:{name}[{}]", same_before(node, k, name)));
+        (node, at) = (child, rest);
+        if name == "r" {
+            break child;
+        }
+        if name == "sdt" {
+            let (content, _, rest) = next(node, at).filter(|(c, ..)| local(c) == "sdtContent")?;
+            steps.push("w:sdtContent[1]".to_owned());
+            (node, at) = (content, rest);
+        }
+    };
+    let (object, k, mut at) = next(run, at)?;
+    if !RUN_OBJECTS.contains(&local(object)) {
+        return None;
+    }
+    if drawing_element(object).is_some() {
+        // down to the drawing's wp:anchor or wp:inline
+        let mut frame = object;
+        while !matches!(local(frame), "anchor" | "inline") {
+            (frame, _, at) = next(frame, at)?;
+        }
+        let kind = local(frame);
+        let n = run_drawings(run, kind).iter().position(|d| std::ptr::eq(*d, frame))? + 1;
+        steps.push(format!("wp:{kind}[{n}]"));
+        let (graphic, _, rest) = next(frame, at).filter(|(c, ..)| local(c) == "graphic")?;
+        let (data, _, rest) = next(graphic, rest).filter(|(c, ..)| local(c) == "graphicData")?;
+        let (mut content, _, mut rest) = next(data, rest)?;
+        loop {
+            match local(content) {
+                "wsp" => {
+                    let (txbx, _, rest) = next(content, rest).filter(|(c, ..)| local(c) == "txbx")?;
+                    next(txbx, rest).filter(|(c, _, rest)| local(c) == "txbxContent" && rest.is_empty())?;
+                    steps.push("wps:txbx/w:txbxContent".to_owned());
+                    return Some(steps.join("/"));
+                }
+                "graphicFrame" => {
+                    let (graphic, _, inner) = next(content, rest).filter(|(c, ..)| local(c) == "graphic")?;
+                    let (data, _, inner) = next(graphic, inner).filter(|(c, ..)| local(c) == "graphicData")?;
+                    (content, _, rest) = next(data, inner)?;
+                }
+                "wgp" | "grpSp" => {
+                    let (member, j, inner) = next(content, rest)?;
+                    let name = local(member);
+                    let prefix = match name {
+                        "wsp" => "wps",
+                        "pic" => "pic",
+                        "grpSp" | "graphicFrame" => "wpg",
+                        _ => return None,
+                    };
+                    steps.push(format!("{prefix}:{name}[{}]", same_before(content, j, name)));
+                    (content, rest) = (member, inner);
+                }
+                _ => return None,
+            }
+        }
+    }
+    // a VML object: its own steps, its shape's, then the text box's
+    let name = local(object);
+    let prefix = if name == "AlternateContent" { "mc" } else { "w" };
+    let (shape, inner) = super::vml::vml_shape(object)?;
+    let mut below_shape = at;
+    let mut walked = object;
+    while !std::ptr::eq(walked, shape) {
+        (walked, _, below_shape) = next(walked, below_shape)?;
+    }
+    let (textbox, _, rest) = next(shape, below_shape).filter(|(c, ..)| local(c) == "textbox")?;
+    next(textbox, rest).filter(|(c, _, rest)| local(c) == "txbxContent" && rest.is_empty())?;
+    steps.push(format!("{prefix}:{name}[{}]/{inner}/v:textbox/w:txbxContent", same_before(run, k, name)));
+    Some(steps.join("/"))
+}
+
+/// `node`'s child element at the first index of `at`, that index, and the rest of `at`.
+fn next<'a, 'p>(node: &'a Element, at: &'p [u32]) -> Option<(&'a Element, u32, &'p [u32])> {
+    let (&k, rest) = at.split_first()?;
+    Some((node.children().get(k as usize)?.as_element()?, k, rest))
+}
+
+/// The 1-based count, among `parent`'s child elements up to the one at index `k`, of those
+/// named `name` (by local name): a reader's step index.
+fn same_before(parent: &Element, k: u32, name: &str) -> usize {
+    indexed(parent).take_while(|(j, _)| *j <= k).filter(|(_, c)| local(c) == name).count()
 }
 
 /// The element at child indexes `at` below `node`.

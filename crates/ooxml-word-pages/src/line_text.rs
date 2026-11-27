@@ -36,14 +36,17 @@ pub enum ItemPlace {
 }
 
 impl ItemPlace {
-    /// The place of an item painted for `anchor` with `path`: its anchor; else below the
-    /// paragraph `host` holding it (a text box's item: its drawing's paragraph); else its
-    /// path.
+    /// The place of an item painted for `anchor` with `path`: below the paragraph `host`
+    /// holding it (a text box's item: its drawing's paragraph), by its name (its anchor's,
+    /// else `path`); else its anchor; else its path.
     #[must_use]
     pub fn of(names: &VersionNames, anchor: Option<Anchor>, path: &str, host: Option<Anchor>) -> ItemPlace {
-        if let Some(anchor) = anchor {
-            return ItemPlace::Anchored(anchor);
-        }
+        let anchor = match (anchor, host) {
+            (Some(anchor), None) => return ItemPlace::Anchored(anchor),
+            (anchor, _) => anchor,
+        };
+        let named = anchor.and_then(|a| names.path(a));
+        let path = named.as_deref().unwrap_or(path);
         let below = host.and_then(|host| {
             let named = names.path(Anchor::whole(host.block))?;
             let rest = path.strip_prefix(named.as_str())?.strip_prefix('/')?;
@@ -110,16 +113,23 @@ pub struct LinePlace {
 impl LinePlace {
     /// The place of a line of the paragraph named `name`, of `story` (a header's or
     /// footer's kind), read by key through the version's `names`; a text box's line by
-    /// its `host` paragraph's, the box's own tables read from its path (until RD1).
+    /// its `host` paragraph's, in a table where its name (its key's path) steps through a
+    /// cell.
     #[must_use]
     pub fn of(names: &VersionNames, name: &ItemName, host: Option<Anchor>, story: Option<&'static str>) -> LinePlace {
-        let paragraph = name.anchor().or(host).map(|a| a.block);
+        let in_box = host.is_some();
+        let paragraph = host.or(name.anchor()).map(|a| a.block);
         let at = paragraph.and_then(|key| In::of(names, key));
+        let named = match name.anchor().filter(|_| in_box) {
+            Some(anchor) => names.path(anchor),
+            None => name.path().map(str::to_owned),
+        };
         let story = story.unwrap_or_else(|| match paragraph {
             Some(key) => story_of(names, key),
-            None => name.path().map_or("body", story_kind),
+            None => named.as_deref().map_or("body", story_kind),
         });
-        let in_table = at.as_ref().is_some_and(In::in_table) || name.path().is_some_and(|p| p.contains("/w:tc["));
+        let in_table =
+            at.as_ref().is_some_and(In::in_table) || named.as_deref().is_some_and(|p| p.contains("/w:tc["));
         let kind = match story {
             "body" if in_table => "table",
             "footnotes" => "footnote",
@@ -128,7 +138,7 @@ impl LinePlace {
         };
         let row = at.as_ref().and_then(|at| at.row);
         let cell = at
-            .filter(|at| at.in_cell && name.anchor().is_some())
+            .filter(|at| at.in_cell && !in_box && name.anchor().is_some())
             .and_then(|at| Some((at.cell()?, paragraph?)));
         LinePlace { story, kind, row, cell }
     }

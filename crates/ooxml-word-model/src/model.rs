@@ -215,9 +215,9 @@ pub struct Paragraph {
     /// Its block's key in its story (`None`: a paragraph no story's index holds -- a text
     /// box's, one the layout makes); a joined paragraph's is its first's.
     pub key: Option<BlockKey>,
-    /// Where no story's index holds it, the path it is named by: a text box's (its steps
-    /// below its drawing, until RD1 keys text-box blocks), one the layout makes, one of a
-    /// part no index holds. `None` with a key.
+    /// Where no story's index holds it, the path it is named by: one the layout makes, one
+    /// of a part no index holds (a text box's block is keyed: `read::paragraph`). `None` with
+    /// a key.
     pub unkeyed: Option<Text>,
     /// `w14:paraId`.
     pub para_id: Option<Text>,
@@ -315,8 +315,8 @@ pub struct Table {
     /// Its block's key in its story (`None`: a table no story's index holds); each part of
     /// a table the final view parts has the table's.
     pub key: Option<BlockKey>,
-    /// Where no story's index holds it, the path it is named by (a text box's table, its
-    /// steps below its drawing until RD1; one of a part no index holds). `None` with a key.
+    /// Where no story's index holds it, the path it is named by (one of a part no index
+    /// holds, a table read on its own). `None` with a key.
     pub unkeyed: Option<Text>,
     /// Where no story's index holds it, the path its cells are named below: the path it was
     /// read at (a text box's top-level table is named below its drawing's paragraph once
