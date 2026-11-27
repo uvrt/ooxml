@@ -173,7 +173,41 @@ fn walk(e: &Element, path: &mut Vec<u32>, tables: &mut Vec<Vec<u32>>, out: &mut 
     }
 }
 
-fn reference(story: &str, root: &Element) -> Named {
+/// The ids that name their blocks (a paragraph's or row's valid paraId, the first of its
+/// value; a table's first row's; a rowless table's place), with their entries; and whether
+/// every paragraph and row has such an id.
+fn durable(found: &[FoundB], repeats: &[usize], named: &Named) -> (Vec<(String, Entry)>, bool) {
+    let good = |raw: &Option<String>, repeat: usize| raw.as_deref().is_some_and(valid_long_hex) && repeat == 0;
+    let mut out: Vec<(String, Entry)> = named
+        .paragraphs
+        .iter()
+        .filter(|p| p.2 == IdState::Ok)
+        .map(|p| (p.0.clone(), Entry::Paragraph(p.3)))
+        .collect();
+    let mut stamped = named.paragraphs.iter().all(|p| p.2 == IdState::Ok);
+    let mut number = 0;
+    for (path, kind, _, _) in found {
+        if *kind != 't' {
+            continue;
+        }
+        let rows: Vec<bool> = found
+            .iter()
+            .zip(repeats)
+            .filter(|((_, k, _, owner), _)| *k == 'r' && owner.as_ref() == Some(path))
+            .map(|((_, _, raw, _), r)| good(raw, *r))
+            .collect();
+        stamped &= rows.iter().all(|ok| *ok);
+        if rows.first().is_none_or(|ok| *ok) {
+            if let Some(t) = named.tables.get(number) {
+                out.push((t.0.clone(), Entry::Table(number)));
+            }
+        }
+        number += 1;
+    }
+    (out, stamped)
+}
+
+fn reference(story: &str, root: &Element) -> (Named, Vec<(String, Entry)>, bool) {
     let mut found: Vec<FoundB> = Vec::new();
     walk(root, &mut Vec::new(), &mut Vec::new(), &mut found);
     let mut seen: HashMap<String, usize> = HashMap::new();
@@ -182,7 +216,10 @@ fn reference(story: &str, root: &Element) -> Named {
         .map(|(_, _, raw, _)| match raw {
             None => 0,
             Some(r) => {
-                let c = seen.entry(r.to_uppercase()).or_insert(0);
+                // a repeat by value, whatever the spelling
+                let by_value =
+                    ooxml_word_model::ids::hex_value(r).map_or_else(|| r.to_uppercase(), |v| format!("{v:08X}"));
+                let c = seen.entry(by_value).or_insert(0);
                 *c += 1;
                 *c - 1
             }
@@ -199,20 +236,23 @@ fn reference(story: &str, root: &Element) -> Named {
             continue;
         }
         let index = paragraphs.len();
-        let (id, state) = match raw {
-            None => (format!("p@{story}/{index}"), IdState::Missing),
-            Some(r) if *repeat > 0 => (format!("{prefix}p:{r}#{repeat}"), IdState::Repeat),
-            Some(r) if valid_long_hex(r) => (format!("{prefix}p:{r}"), IdState::Ok),
-            Some(r) => (format!("{prefix}p:{r}"), IdState::Invalid),
+        // named by the paraId as written, whatever its state
+        let id = format!("{prefix}p:{}", raw.as_deref().unwrap_or_default());
+        let state = match raw {
+            None => IdState::Missing,
+            Some(_) if *repeat > 0 => IdState::Repeat,
+            Some(r) if valid_long_hex(r) => IdState::Ok,
+            Some(_) => IdState::Invalid,
         };
         paragraphs.push((id, path.clone(), state, index, raw.clone()));
     }
     let tables = reference_tables(story, &prefix, &found, &repeats);
-    Named { paragraphs, tables }
+    let named = Named { paragraphs, tables };
+    let (ids, stamped) = durable(&found, &repeats, &named);
+    (named, ids, stamped)
 }
 
 fn reference_tables(story: &str, prefix: &str, found: &[FoundB], repeats: &[usize]) -> Vec<NamedT> {
-    let good = |raw: &Option<String>, repeat: usize| raw.clone().filter(|r| valid_long_hex(r) && repeat == 0);
     let mut tables = Vec::new();
     for (path, kind, _, _) in found {
         if *kind != 't' {
@@ -225,19 +265,18 @@ fn reference_tables(story: &str, prefix: &str, found: &[FoundB], repeats: &[usiz
             .map(|((p, _, raw, _), r)| (p, raw, *r))
             .collect();
         let number = tables.len();
-        let id = match rows.first().and_then(|(_, raw, r)| good(raw, *r)) {
-            Some(first) => format!("{prefix}t:{first}"),
+        // a table by its first row's paraId as written; one without rows by its place
+        let id = match rows.first() {
+            Some((_, raw, _)) => format!("{prefix}t:{}", raw.as_deref().unwrap_or_default()),
             None => format!("t@{story}/{number}"),
         };
         let row_ids = rows
             .iter()
-            .enumerate()
-            .map(|(k, (p, raw, r))| {
-                let rid = match good(raw, *r) {
-                    Some(raw) => format!("{prefix}tr:{raw}"),
-                    None => format!("{id}/r{k}"),
-                };
-                ((*p).clone(), rid)
+            .map(|(p, raw, _)| {
+                (
+                    (*p).clone(),
+                    format!("{prefix}tr:{}", raw.as_deref().unwrap_or_default()),
+                )
             })
             .collect();
         tables.push((id, path.clone(), row_ids));
@@ -292,27 +331,22 @@ fn placed_as_named(ids: &PartIds) {
 }
 
 fn check(story: &str, ids: &PartIds, root: &Element, rng: &mut Rng) {
-    let want = reference(story, root);
+    let (want, durable, all_ok) = reference(story, root);
     assert_eq!(named(ids), want);
     assert_eq!(ids.paragraphs().len(), want.paragraphs.len());
-    let mut first: HashMap<&str, Entry> = HashMap::new();
     for (k, (id, path, ..)) in want.paragraphs.iter().enumerate() {
-        first.entry(id).or_insert(Entry::Paragraph(k));
         assert_eq!(ids.at(path), Some(Entry::Paragraph(k)));
         assert_eq!(ids.paragraphs().get(k).map(|p| p.id), Some(id.clone()));
     }
     placed_as_named(ids);
     for (k, (id, path, _)) in want.tables.iter().enumerate() {
-        first.entry(id).or_insert(Entry::Table(k));
         assert_eq!(ids.at(path), Some(Entry::Table(k)));
         assert_eq!(ids.table_at(path).map(|t| t.id), Some(id.clone()));
     }
-    for (id, entry) in &first {
+    for (id, entry) in &durable {
         assert_eq!(ids.get(id), Some(*entry), "{id}");
     }
     assert_eq!(ids.get("p:00C0FFEE"), None);
-    let all_ok = want.paragraphs.iter().all(|p| p.2 == IdState::Ok)
-        && want.tables.iter().all(|t| t.2.iter().all(|(_, r)| r.contains("tr:")));
     assert_eq!(ids.fully_stamped(), all_ok);
     // queries by place, against a scan
     let paths: Vec<Vec<u32>> = want

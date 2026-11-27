@@ -365,9 +365,19 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
         .paragraphs()
         .iter()
         .map(|p| p.id.clone())
-        .take(3)
+        .take(4)
         .collect();
-    let ops: Vec<SetText> = ids
+    // both written once first: an id given at open stays fresh for the whole transaction
+    // that first writes its part (a batch's later ops keep it, serial runs renew it)
+    let first = SetText {
+        target: ooxml_word_model::address::Address::from(ids[3].clone()),
+        text: "Written first.".to_owned(),
+        policy: RevisionPolicy::Untracked,
+    };
+    for editor in [&batched, &single] {
+        editor.run(&Caller::anonymous(), &first).unwrap();
+    }
+    let ops: Vec<SetText> = ids[..3]
         .iter()
         .map(|id| SetText {
             target: ooxml_word_model::address::Address::from(id.clone()),
@@ -378,7 +388,7 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
     let done = batched
         .run(&Caller::anonymous(), &ooxml_store::Batch::new(ops.clone()))
         .unwrap();
-    assert_eq!(done.version.seq(), Seq(1), "one version for the batch");
+    assert_eq!(done.version.seq(), Seq(2), "one version for the batch");
     assert!(done.out.iter().all(Result::is_ok));
     let mut last = None;
     for op in &ops {
@@ -395,7 +405,7 @@ fn a_batch_is_one_step_and_an_atomic_batch_refuses_whole() {
     assert!(batched
         .run(&Caller::anonymous(), &ooxml_store::Batch::atomic(bad.clone()))
         .is_err());
-    assert_eq!(batched.store().snapshot().seq(), Seq(1));
+    assert_eq!(batched.store().snapshot().seq(), Seq(2));
     // not atomic: the refused op is reported, the others commit
     let done = batched
         .run(&Caller::anonymous(), &ooxml_store::Batch::new(bad))

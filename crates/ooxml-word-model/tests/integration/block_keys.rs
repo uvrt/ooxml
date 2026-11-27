@@ -399,8 +399,14 @@ fn keys_round_trip_in_every_version_of_random_lineages_and_durable_ones_survive_
                 if !key.durable() {
                     continue;
                 }
+                // the same paraId by value, whatever its spelling
                 if let Some(id) = after.ids.id_of_key(key) {
-                    assert!(id.as_str().eq_ignore_ascii_case(&p.id), "{id} was {}", p.id);
+                    assert_eq!(
+                        id.para_id(),
+                        BlockId::parse(&p.id).ok().and_then(|b| b.para_id()),
+                        "{id} was {}",
+                        p.id
+                    );
                 }
             }
             (root, part) = (next, after);

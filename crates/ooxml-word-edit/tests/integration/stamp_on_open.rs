@@ -231,18 +231,6 @@ fn an_id_given_at_open_counts_as_fresh_at_its_blocks_first_write() {
     assert_ne!(text_id(second.version.doc(), &target), given, "a later write renews it");
 }
 
-/// The textId of the paragraph `id` (`p:<paraId>`) of the body, as `doc` holds it.
-fn text_id(doc: &WordDoc, id: &str) -> String {
-    let docx = doc.docx().unwrap();
-    let body = docx.body().unwrap();
-    let found = body.ids.paragraphs().iter().find(|p| p.id == id).unwrap();
-    found
-        .element
-        .attribute(Some(ooxml_word_model::ids::W14), "textId")
-        .unwrap()
-        .to_owned()
-}
-
 #[test]
 fn an_id_never_written_stays_fresh_for_the_whole_transaction_that_first_writes_its_part() {
     // main's ruling (ST2, Q1): a textId renews against the version last written; one given at

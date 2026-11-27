@@ -444,7 +444,8 @@ fn text_is_found_within_the_paragraphs_an_address_holds() {
 }
 
 /// A row inside a row content control is one of its table's rows, as Word counts it
-/// (Table.Rows.Count is 2 for this table, Word 16.106; lane ph1-quirks): `/r1` names it.
+/// (Table.Rows.Count is 2 for this table, Word 16.106; lane ph1-quirks): its `tr:` id names
+/// it (a row by its place, `/r1`, is refused since stamp on open).
 #[test]
 fn a_row_inside_a_row_content_control_is_counted_as_word_counts_it() {
     let cell = |id: &str, text: &str| {
@@ -460,7 +461,7 @@ fn a_row_inside_a_row_content_control_is_counted_as_word_counts_it() {
     let call = WordComments {
         doc: "d1".into(),
         action: CommentAction::Add,
-        items: Some(vec![new_item(Some("t:7B000001/r1"), None, "On a row", None)]),
+        items: Some(vec![new_item(Some("tr:7B000004"), None, "On a row", None)]),
         author: Some("Reviewer".into()),
         open_only: None,
         cursor: None,
