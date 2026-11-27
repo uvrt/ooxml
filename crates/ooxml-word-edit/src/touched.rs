@@ -242,16 +242,35 @@ pub fn touched(before: &WordDoc, after: &WordDoc) -> Result<Vec<Touched>> {
     touched_of(before, after, &after.delta_from(before))
 }
 
-/// [`touched`], from `delta`, what `after` changed against `before`.
+/// [`touched`], from `delta`, what `after` changed against `before`. Where `before` holds
+/// parts read with ids given at open, what changed is read against its bytes as saved: the
+/// change writes those ids, and its bytes are what `touched` names.
 ///
 /// # Errors
 /// When `before` or `after` cannot be read as a Word document.
 pub fn touched_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> Result<Vec<Touched>> {
     let docx = after.docx()?;
+    // a first write: read against the bytes as saved (the old side's names never reach the
+    // entries: a section is named by the new side's blocks)
+    let first_write = before.package().has_unwritten() && !after.package().has_unwritten();
+    let old_docx = if first_write {
+        Arc::new(Docx::open(&before.package().as_saved())?)
+    } else {
+        before.docx()?
+    };
+    let saved_delta;
+    let delta = if first_write {
+        let mut stories = ooxml_word_model::ids::StoryTable::new();
+        saved_delta = VersionDelta::between(&old_docx, &docx, &mut stories);
+        &saved_delta
+    } else {
+        delta
+    };
+    let old_docx = &old_docx;
     let mut out = Vec::new();
     for part in delta.changed_parts() {
         if part == docx.main {
-            if let Some(sections) = body_sections(before, &docx, delta)? {
+            if let Some(sections) = body_sections(old_docx, &docx, delta)? {
                 out.extend(sections.into_iter().map(|section| Touched {
                     part: part.to_owned().into(),
                     section,
@@ -264,13 +283,30 @@ pub fn touched_of(before: &WordDoc, after: &WordDoc, delta: &VersionDelta) -> Re
             section: None,
         });
     }
+    // back to a version read with ids given at open (an undo to it): each part whose bytes
+    // go back to the ones it was read from, unwritten again
+    if after.package().has_unwritten() {
+        let listed: std::collections::HashSet<&str> = delta.changed_parts().into_iter().collect();
+        let (old, new) = (before.package(), after.package());
+        for part in new.unwritten() {
+            let back = old
+                .part(&part)
+                .is_some_and(|a| new.part(&part).is_some_and(|b| !a.saved().same(b.saved())));
+            if back && !listed.contains(part.as_str()) {
+                out.push(Touched {
+                    part: part.into(),
+                    section: None,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.part.cmp(&b.part));
+    }
     Ok(out)
 }
 
 /// The body's changed heading sections, and a plain entry when something outside the
 /// blocks changed too (or no section did); `None` when either version has no body.
-fn body_sections(before: &WordDoc, docx: &Docx, delta: &VersionDelta) -> Result<Option<Vec<Option<Section>>>> {
-    let old_docx = before.docx()?;
+fn body_sections(old_docx: &Docx, docx: &Docx, delta: &VersionDelta) -> Result<Option<Vec<Option<Section>>>> {
     let (Some(old_story), Some(new_story)) = (old_docx.body(), docx.body()) else {
         return Ok(None);
     };

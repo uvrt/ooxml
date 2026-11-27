@@ -19,6 +19,22 @@ use std::sync::Arc;
 /// The largest edit distance searched for within one element's children.
 pub const MAX_EDITS: usize = 1024;
 
+/// `new`, sharing with `old` (a tree of the same part in a version before) every subtree the
+/// two have alike: `old` with the differences applied, by path copying; `new` itself where
+/// there is no `old` or the two differ at the root.
+#[must_use]
+pub fn shared_with(old: Option<Tree>, new: Tree) -> Tree {
+    let Some(old) = old else { return new };
+    let mut shared = old;
+    for patch in diff(&shared, &new) {
+        match patch.apply(&shared) {
+            Ok(next) => shared = next,
+            Err(_) => return new,
+        }
+    }
+    new.with_root(std::sync::Arc::clone(shared.root()))
+}
+
 /// Patches that, applied in order to `old`, give a tree equal to `new`. Empty when the two
 /// are equal.
 pub fn diff(old: &Tree, new: &Tree) -> Vec<Patch> {

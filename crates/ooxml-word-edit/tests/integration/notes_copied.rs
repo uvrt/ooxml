@@ -13,13 +13,13 @@ use ooxml_word_edit::{
     StylePolicy, Tracking, UnmappedPolicy,
 };
 
-/// chart-places.docx: `p@body/0` holds footnote 1's reference, `p@body/1` anchors the text
-/// box whose first paragraph is `p@body/2`.
+/// chart-places.docx: its body's first paragraph (`p@body/0` read unstamped) holds footnote
+/// 1's reference, the second anchors the text box whose first paragraph is the third.
 fn copy(block: &str, at: &str, policy: RevisionPolicy) -> CopyBlocks {
     CopyBlocks {
         source: CopySource::Own,
-        range: CopyRange::Blocks(block.to_owned()),
-        at: at.into(),
+        range: CopyRange::Blocks(ids(block)),
+        at: ids(at).as_str().into(),
         policy,
         styles: StylePolicy::default(),
         style_map: Vec::new(),
@@ -27,6 +27,11 @@ fn copy(block: &str, at: &str, policy: RevisionPolicy) -> CopyBlocks {
         lists: ListPolicy::default(),
         bookmarks: BookmarkPolicy::default(),
     }
+}
+
+/// `text` with the fixture's blocks named as the document names them (stamped at open).
+fn ids(text: &str) -> String {
+    crate::common::now(&fixture("generated/charts/chart-places.docx"), text)
 }
 
 fn policies() -> [RevisionPolicy; 2] {
@@ -66,7 +71,7 @@ fn blocks_holding_a_note_reference_copied_into_a_text_box_are_refused_with_the_p
             };
             assert_eq!(field, "at");
             assert!(message.contains("text box"), "{message}");
-            assert_eq!(options, ["before:p@body/1", "after:p@body/1"], "{at}");
+            assert_eq!(options, [ids("before:p@body/1"), ids("after:p@body/1")], "{at}");
             // the way out works, and no reference lands in a text box
             for way_out in options {
                 let editor = crate::common::editor(&fixture("generated/charts/chart-places.docx"));
@@ -98,9 +103,9 @@ fn blocks_holding_a_note_reference_moved_into_a_text_box_are_refused_with_the_an
     for policy in policies() {
         for after in [true, false] {
             let moved = |target: &str| MoveBlocks {
-                blocks: Moving::Blocks(ooxml_word_model::address::Address::from("p@body/0".to_owned())),
-                after: (after.then(|| target.to_owned())).map(ooxml_word_model::address::Address::from),
-                before: ((!after).then(|| target.to_owned())).map(ooxml_word_model::address::Address::from),
+                blocks: Moving::Blocks(ooxml_word_model::address::Address::from(ids("p@body/0"))),
+                after: (after.then(|| ids(target))).map(ooxml_word_model::address::Address::from),
+                before: ((!after).then(|| ids(target))).map(ooxml_word_model::address::Address::from),
                 policy: policy.clone(),
             };
             let editor = editor(&fixture("generated/charts/chart-places.docx"));
@@ -115,7 +120,7 @@ fn blocks_holding_a_note_reference_moved_into_a_text_box_are_refused_with_the_an
             };
             assert_eq!(field, if after { "after" } else { "before" });
             assert!(message.contains("text box"), "{message}");
-            assert_eq!(options, ["p@body/1"]);
+            assert_eq!(options, [ids("p@body/1")]);
             // the way out works (after the anchoring paragraph; before it the block already is)
             if after {
                 editor.run(&Caller::anonymous(), &moved("p@body/1")).unwrap();

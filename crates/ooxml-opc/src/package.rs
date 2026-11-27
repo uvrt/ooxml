@@ -1,8 +1,10 @@
 //! Owns: [`Package`], an OPC package as a persistent value. Each part is a [`PartVersion`]:
 //! raw (its archive entry, never inflated or parsed unless read; parsed at most once, the
-//! tree then shared by every version), a tree, or bytes. A new version shares every part it
-//! did not change. Saving copies untouched entries raw and writes the rest in the write
-//! contract's form, compressed as Python's zipfile compresses them.
+//! tree then shared by every version), a tree, bytes, or unwritten (read as a tree made from
+//! it, saved as it was: a format that adds to a part in memory, ids say, writes it only
+//! when it writes the part anyway). A new version shares every part it did not change.
+//! Saving copies untouched entries raw and writes the rest in the write contract's form,
+//! compressed as Python's zipfile compresses them.
 //!
 //! Must not: know any format's parts beyond OPC's own (relationships and content types are
 //! in their own modules), or change a part in place.
@@ -24,18 +26,59 @@ pub enum PartVersion {
     Tree(Tree),
     /// Bytes put in place (touched).
     Bytes(Arc<[u8]>),
+    /// Read as a tree made from the part as it was, saved as it was ([`Unwritten`]).
+    Unwritten(Unwritten),
+}
+
+/// A part read as one tree and saved as another form of it: the part as it was (an
+/// archive entry, a tree or bytes), and the tree made from it that every reader is given.
+/// Its content, as a key, is the tree's ([`PartVersion::same`]): writing it
+/// ([`Package::written`]) changes what a save writes, never what a reader reads.
+#[derive(Debug, Clone)]
+pub struct Unwritten {
+    /// What a save writes: never itself unwritten.
+    saved: Arc<PartVersion>,
+    tree: Tree,
+}
+
+impl Unwritten {
+    /// The part as a save writes it.
+    #[must_use]
+    pub fn saved(&self) -> &PartVersion {
+        &self.saved
+    }
+
+    /// The tree it is read as.
+    #[must_use]
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
 }
 
 impl PartVersion {
     /// Whether `self` and `other` are the same content by identity: the same archive entry
     /// (and its shared tree), the same tree allocation, or the same bytes allocation. What
     /// a store asks to decide that two versions agree on a part without reading it.
+    /// An unwritten part is its tree: the same as the tree written in its place.
     pub fn same(&self, other: &PartVersion) -> bool {
         match (self, other) {
             (PartVersion::Raw(a), PartVersion::Raw(b)) => a.index == b.index && Arc::ptr_eq(&a.tree, &b.tree),
             (PartVersion::Tree(a), PartVersion::Tree(b)) => a.ptr_eq(b),
             (PartVersion::Bytes(a), PartVersion::Bytes(b)) => Arc::ptr_eq(a, b),
+            (PartVersion::Unwritten(a), PartVersion::Unwritten(b)) => a.tree.ptr_eq(&b.tree),
+            (PartVersion::Unwritten(a), PartVersion::Tree(b)) | (PartVersion::Tree(b), PartVersion::Unwritten(a)) => {
+                a.tree.ptr_eq(b)
+            }
             _ => false,
+        }
+    }
+
+    /// What a save writes of it: itself, or an unwritten part's form as it was.
+    #[must_use]
+    pub fn saved(&self) -> &PartVersion {
+        match self {
+            PartVersion::Unwritten(unwritten) => &unwritten.saved,
+            other => other,
         }
     }
 
@@ -65,7 +108,10 @@ impl std::hash::Hash for PartIdentity {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match &self.0 {
             PartVersion::Raw(raw) => (0u8, raw.index, Arc::as_ptr(&raw.tree) as usize).hash(state),
-            PartVersion::Tree(tree) => (1u8, 0usize, Arc::as_ptr(tree.root()) as usize).hash(state),
+            // an unwritten part is keyed as its tree ([`PartVersion::same`])
+            PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. }) => {
+                (1u8, 0usize, Arc::as_ptr(tree.root()) as usize).hash(state);
+            }
             PartVersion::Bytes(bytes) => (2u8, 0usize, bytes.as_ptr() as usize).hash(state),
         }
     }
@@ -178,15 +224,16 @@ impl Package {
         changed
     }
 
-    /// Whether the part `name` (normalised) holds the same content here and in `other`.
+    /// Whether the part `name` (normalised) saves the same content here and in `other`.
     fn same_content(&self, name: &str, other: &Package) -> bool {
         let (Some(mine), Some(theirs)) = (self.slots.get(name), other.slots.get(name)) else {
             return false;
         };
-        if mine.content.same(&theirs.content) {
+        let (mine, theirs) = (mine.content.saved(), theirs.content.saved());
+        if mine.same(theirs) {
             return true;
         }
-        match (&mine.content, &theirs.content) {
+        match (mine, theirs) {
             (PartVersion::Tree(a), PartVersion::Tree(b)) => return a == b,
             (PartVersion::Raw(raw), PartVersion::Tree(tree)) | (PartVersion::Tree(tree), PartVersion::Raw(raw)) => {
                 if let Some(Ok(parsed)) = raw.tree.get() {
@@ -204,7 +251,17 @@ impl Package {
             }
             _ => {}
         }
-        matches!((self.read(name), other.read(name)), (Ok(Some(x)), Ok(Some(y))) if x == y)
+        matches!((self.saved_bytes(mine), other.saved_bytes(theirs)), (Ok(x), Ok(y)) if x == y)
+    }
+
+    /// The bytes a save writes of `content`, one of this package's parts.
+    fn saved_bytes(&self, content: &PartVersion) -> Result<Arc<[u8]>, OpcError> {
+        Ok(match content.saved() {
+            PartVersion::Raw(raw) => self.inflate(raw.index)?.into(),
+            PartVersion::Tree(tree) => tree.write().into(),
+            PartVersion::Bytes(bytes) => Arc::clone(bytes),
+            PartVersion::Unwritten(unwritten) => unwritten.tree.write().into(),
+        })
     }
 
     /// Whether the package has the part `name` (any spelling of it).
@@ -217,14 +274,27 @@ impl Package {
         self.slots.get(&normalize(name)).map(|s| &s.content)
     }
 
-    /// The part's current bytes: as stored (inflated), as its tree writes, or as put.
+    /// The part's current bytes: as stored (inflated), as its tree writes (an unwritten
+    /// part's tree too: what it is read as), or as put.
     pub fn read(&self, name: &str) -> Result<Option<Arc<[u8]>>, OpcError> {
         Ok(match self.part(name) {
             None => None,
             Some(PartVersion::Raw(raw)) => Some(self.inflate(raw.index)?.into()),
-            Some(PartVersion::Tree(tree)) => Some(tree.write().into()),
+            Some(PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. })) => Some(tree.write().into()),
             Some(PartVersion::Bytes(bytes)) => Some(Arc::clone(bytes)),
         })
+    }
+
+    /// The part's bytes as a save writes them: an unwritten part's as it was, any other
+    /// part's as [`Package::read`] reads them.
+    ///
+    /// # Errors
+    /// As [`Package::read`].
+    pub fn read_saved(&self, name: &str) -> Result<Option<Arc<[u8]>>, OpcError> {
+        match self.part(name) {
+            None => Ok(None),
+            Some(content) => self.saved_bytes(content).map(Some),
+        }
     }
 
     /// The size of the part's bytes where it is known without reading them: as stored (the
@@ -233,33 +303,112 @@ impl Package {
         match self.part(name)? {
             PartVersion::Raw(raw) => self.entry(raw.index).ok().map(|e| e.meta().size),
             PartVersion::Bytes(bytes) => u64::try_from(bytes.len()).ok(),
-            PartVersion::Tree(_) => None,
+            PartVersion::Tree(_) | PartVersion::Unwritten(_) => None,
         }
     }
 
     /// The part's tree: parsed once for a raw part (and shared by every version that has
-    /// the part untouched), parsed from bytes put in place, or the tree put in place.
+    /// the part untouched), parsed from bytes put in place, or the tree put in place (an
+    /// unwritten part's tree).
     pub fn tree(&self, name: &str) -> Result<Option<Tree>, OpcError> {
         let name = normalize(name);
         let Some(slot) = self.slots.get(&name) else {
             return Ok(None);
         };
+        self.tree_of(&name, &slot.content).map(Some)
+    }
+
+    /// The tree a save writes of the part `name`: an unwritten part's as it was (parsed
+    /// once, as [`Package::tree`] parses it), any other part's as [`Package::tree`] reads it.
+    ///
+    /// # Errors
+    /// As [`Package::tree`].
+    pub fn saved_tree(&self, name: &str) -> Result<Option<Tree>, OpcError> {
+        let name = normalize(name);
+        let Some(slot) = self.slots.get(&name) else {
+            return Ok(None);
+        };
+        self.tree_of(&name, slot.content.saved()).map(Some)
+    }
+
+    /// `content`'s tree, `name` its part's.
+    fn tree_of(&self, name: &str, content: &PartVersion) -> Result<Tree, OpcError> {
         let xml = |e| OpcError::Xml {
-            part: name.clone(),
+            part: name.to_owned(),
             error: e,
         };
-        match &slot.content {
-            PartVersion::Tree(tree) => Ok(Some(tree.clone())),
-            PartVersion::Bytes(bytes) => parse(bytes, &self.limits.xml).map(Some).map_err(xml),
+        match content {
+            PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. }) => Ok(tree.clone()),
+            PartVersion::Bytes(bytes) => parse(bytes, &self.limits.xml).map_err(xml),
             PartVersion::Raw(raw) => raw
                 .tree
                 .get_or_init(|| {
                     self.inflate(raw.index)
                         .and_then(|b| parse(&b, &self.limits.xml).map_err(xml))
                 })
-                .clone()
-                .map(Some),
+                .clone(),
         }
+    }
+
+    /// A version whose part `name` (which must exist) is read as `tree` and saved as it is
+    /// now ([`Unwritten`]); a part unwritten already keeps its saved form.
+    ///
+    /// # Errors
+    /// [`OpcError::NoPart`] when the package has no part `name`.
+    pub fn with_unwritten(&self, name: &str, tree: Tree) -> Result<Package, OpcError> {
+        let key = normalize(name);
+        let slot = self.slots.get(&key).ok_or_else(|| OpcError::NoPart(key.clone()))?;
+        let saved = match &slot.content {
+            PartVersion::Unwritten(unwritten) => Arc::clone(&unwritten.saved),
+            other => Arc::new(other.clone()),
+        };
+        self.replaced(&key, PartVersion::Unwritten(Unwritten { saved, tree }))
+    }
+
+    /// The names of the unwritten parts, in archive order.
+    pub fn unwritten(&self) -> Vec<String> {
+        let mut named: Vec<(u64, &str)> = self
+            .slots
+            .iter()
+            .filter(|(_, s)| matches!(s.content, PartVersion::Unwritten(_)))
+            .map(|(n, s)| (s.order, n))
+            .collect();
+        named.sort_unstable();
+        named.into_iter().map(|(_, n)| n.to_owned()).collect()
+    }
+
+    /// This version as its bytes are: every unwritten part its saved form, the tree it is
+    /// read as left aside.
+    #[must_use]
+    pub fn as_saved(&self) -> Package {
+        let mut next = self.clone();
+        for (name, slot) in self.slots.iter() {
+            if let PartVersion::Unwritten(unwritten) = &slot.content {
+                let slot = Slot {
+                    content: (*unwritten.saved).clone(),
+                    ..slot.clone()
+                };
+                next.slots = next.slots.insert(name, slot).0;
+            }
+        }
+        next
+    }
+
+    /// A version with every unwritten part written: each one its tree, the content every
+    /// reader read already (the same by identity), saved as that tree writes.
+    #[must_use]
+    pub fn written(&self) -> Package {
+        let mut next = self.clone();
+        for (name, slot) in self.slots.iter() {
+            if let PartVersion::Unwritten(unwritten) = &slot.content {
+                let slot = Slot {
+                    content: PartVersion::Tree(unwritten.tree.clone()),
+                    ..slot.clone()
+                };
+                next.slots = next.slots.insert(name, slot).0;
+            }
+        }
+        next
     }
 
     /// A version with the part `name` (which must exist) as `tree`.
@@ -366,9 +515,11 @@ impl Package {
         slots.sort_unstable_by_key(|(_, s)| s.order);
         let mut w = Writer::new();
         for (name, slot) in slots {
-            match (&slot.content, slot.entry) {
+            match (slot.content.saved(), slot.entry) {
                 (PartVersion::Raw(raw), _) => w.copy(&self.archive, self.entry(raw.index)?)?,
-                (PartVersion::Tree(tree), entry) => self.write_part(&mut w, name, entry, &tree.write())?,
+                (PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. }), entry) => {
+                    self.write_part(&mut w, name, entry, &tree.write())?;
+                }
                 (PartVersion::Bytes(bytes), entry) => self.write_part(&mut w, name, entry, bytes)?,
             }
         }

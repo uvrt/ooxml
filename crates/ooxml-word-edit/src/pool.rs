@@ -161,6 +161,16 @@ impl Ids {
         }
     }
 
+    /// These ids with each seed's draws gone as far as `cursors` say (the ids given when
+    /// the document was opened: [`ooxml_word_model::WordPackage::open`]).
+    #[must_use]
+    pub fn with_cursors(mut self, cursors: &BTreeMap<String, usize>) -> Ids {
+        if !cursors.is_empty() {
+            Arc::make_mut(&mut self.cursors).extend(cursors.iter().map(|(s, k)| (s.clone(), *k)));
+        }
+        self
+    }
+
     /// These ids with what the document had before it was saved and opened again
     /// (`earlier`): its values in the pool, its cursors, its highest and retired drawing
     /// numbers, its replacements and renames.

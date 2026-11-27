@@ -84,3 +84,82 @@ pub fn engine_with(paint: Arc<dyn CacheBudget>) -> PageEngine {
 pub const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml""#;
 
 pub const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
+
+/// `package` read as a session reads a document it opens: every block without an id given
+/// one ([`ooxml_word_model::WordPackage::open`]); a stamped package's trees are its own.
+pub fn read(package: &ooxml_opc::Package) -> ooxml_word_model::WordPackage {
+    ooxml_word_model::WordPackage::open(package.clone()).0
+}
+
+/// Each block id a reading of `package` without stamping gives (positional `p@body/3`,
+/// `t@body/0`, a repeat) that the document opened -- every block stamped in memory -- names
+/// otherwise, the longest first.
+pub fn stamped_ids(package: &ooxml_opc::Package) -> Vec<(String, String)> {
+    use ooxml_word_model::ids::{story_name, PartIds};
+    let word = read(package);
+    let Ok(Some(main)) = ooxml_word_model::parts::main_part(package) else {
+        return Vec::new();
+    };
+    let names = |ids: PartIds| {
+        let mut out: Vec<String> = ids.paragraphs().iter().map(|p| p.id).collect();
+        for table in ids.tables().iter() {
+            out.push(table.id.clone());
+            out.extend(table.rows.iter().map(|(_, r)| r.clone()));
+        }
+        out
+    };
+    let mut renamed = Vec::new();
+    for part in ooxml_word_model::parts::parts(package).unwrap_or_default() {
+        let story = story_name(&main, &part);
+        let (Ok(Some(old)), Ok(Some(new))) = (package.tree(&part), word.tree(&part)) else {
+            continue;
+        };
+        let pairs = names(PartIds::new(&story, old.root()))
+            .into_iter()
+            .zip(names(PartIds::new(&story, new.root())));
+        renamed.extend(pairs.filter(|(a, b)| a != b));
+    }
+    renamed.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+    renamed
+}
+
+/// `value` (a call's arguments, an expected reply) with every old id of `package`
+/// ([`stamped_ids`]) in its strings as the document names it now.
+pub fn now(package: &ooxml_opc::Package, value: serde_json::Value) -> serde_json::Value {
+    let renamed = stamped_ids(package);
+    fn walk(value: serde_json::Value, renamed: &[(String, String)]) -> serde_json::Value {
+        use serde_json::Value;
+        match value {
+            Value::String(text) => Value::String(named(&text, renamed)),
+            Value::Array(items) => Value::Array(items.into_iter().map(|v| walk(v, renamed)).collect()),
+            Value::Object(map) => Value::Object(
+                map.into_iter()
+                    .map(|(k, v)| (named(&k, renamed), walk(v, renamed)))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+    walk(value, &renamed)
+}
+
+/// `text` with every old id of `renamed` as it is named now.
+fn named(text: &str, renamed: &[(String, String)]) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    'scan: while !rest.is_empty() {
+        for (old, new) in renamed {
+            if let Some(after) = rest.strip_prefix(old.as_str()) {
+                if !after.starts_with(|c: char| c.is_ascii_digit()) {
+                    out.push_str(new);
+                    rest = after;
+                    continue 'scan;
+                }
+            }
+        }
+        let mut chars = rest.chars();
+        out.extend(chars.next());
+        rest = chars.as_str();
+    }
+    out
+}

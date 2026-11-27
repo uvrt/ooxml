@@ -221,7 +221,9 @@ fn every_address_of_the_cases_resolves_and_is_refused_as_before() {
         let Ok(package) = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()) else {
             continue;
         };
-        let Ok(docx) = Docx::open(&package) else { continue };
+        let Ok(docx) = Docx::open(&crate::WordPackage::open(package).0) else {
+            continue;
+        };
         for raw in &addresses {
             let address = Address::parse(raw);
             let mut differ = |what: &str| differences.push(format!("{}: {raw:?}: {what}", document.display()));

@@ -67,7 +67,7 @@ pub(crate) fn limited(
     .unwrap();
     let doc = editor.store().snapshot().doc().clone();
     let versions = Versions::new();
-    let version = Version::new("a.docx", package, number, &versions)
+    let version = Version::new("a.docx", doc.package(), number, &versions)
         .with_owned(Some(Owned {
             doc: &doc,
             opened: &doc,
@@ -331,7 +331,7 @@ fn a_version_laid_out_is_summarised_whole_past_the_limit_on_laying_out() {
     // whole however long its pages take to paint
     let (first, _) = versions();
     let layout = EnginePages::of(engine());
-    layout.laid(&first, &Never).unwrap();
+    layout.laid(&crate::common::read(&first), &Never).unwrap();
     let limit = LayoutLimit {
         cancel: &Past,
         timeout: Duration::from_millis(1),

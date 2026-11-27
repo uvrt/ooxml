@@ -107,7 +107,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
         } else {
             edited(&xml).ok_or("no paragraph text to edit")?
         };
-        let next = package.with_bytes(main, Arc::from(changed));
+        let package = ooxml_word_model::WordPackage::open(package).0;
+        let next =
+            ooxml_word_model::WordPackage::open_after(package.with_bytes(main, Arc::from(changed)), Some(&package)).0;
         let mut model = Model::new(Arc::new(Unlimited), KEY);
         let start = Instant::now();
         let opened = model.open(&package).map_err(|e| e.to_string())?;

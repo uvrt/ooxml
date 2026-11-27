@@ -262,8 +262,12 @@ fn a_trial_from_a_version_before_a_style_edit_is_not_laid_out_and_changes_nothin
     let mut kept = engine();
     let before = kept.lay_out_bytes(Arc::clone(&first)).unwrap().unwrap();
     let after = kept.lay_out_bytes(Arc::clone(&second)).unwrap().unwrap();
-    let opened =
-        |bytes: &Arc<[u8]>| ooxml_opc::Package::open(Arc::clone(bytes), &ooxml_base::Limits::default()).unwrap();
+    let opened = |bytes: &Arc<[u8]>| {
+        ooxml_word_model::WordPackage::open(
+            ooxml_opc::Package::open(Arc::clone(bytes), &ooxml_base::Limits::default()).unwrap(),
+        )
+        .0
+    };
     let never = Never;
     let trial = kept
         .trial(&opened(&package(PLAIN, 40, Some(7))), &before, &never)

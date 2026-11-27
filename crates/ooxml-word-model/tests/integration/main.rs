@@ -13,4 +13,5 @@ mod marks;
 mod model;
 mod origins;
 mod relationships;
+mod stamped_open;
 mod story_paths;

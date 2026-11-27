@@ -155,7 +155,7 @@ fn unregistered(tool: &str, arguments: &Value, editing: &Editing<'_>) -> Option<
 /// `d2`, which a call may name: the document opened again (`reference_copy`) or the file
 /// `reference_file`; its package, and the document as a session opens one (its ids
 /// stamped, their renames kept) where it opens.
-fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<WordDoc>)> {
+fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(ooxml_word_model::WordPackage, Option<WordDoc>)> {
     let other: Option<Arc<[u8]>> = match case.get("reference_file").and_then(Value::as_str) {
         Some(path) => std::fs::read(path).ok().map(Arc::from),
         None => case
@@ -166,6 +166,11 @@ fn other_document(bytes: &Arc<[u8]>, case: &Value) -> Option<(Package, Option<Wo
     };
     let package = other.and_then(|b| Package::open(b, &Limits::default()).ok())?;
     let word = WordDoc::open(package.clone(), Arc::new(Unlimited)).ok();
+    // read as a session reads it: as its editor holds it, else stamped as an open stamps it
+    let package = word.as_ref().map_or_else(
+        || ooxml_word_model::WordPackage::open(package).0,
+        |w| w.package().clone(),
+    );
     Some((package, word))
 }
 
@@ -279,14 +284,15 @@ pub(crate) fn tool_case(
 /// The parts of `doc` that differ from `package`'s, by name, as text.
 fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<String, Value> {
     let mut parts = Map::new();
+    // as saved: a part read with the ids given at open and not written is the input's
     for name in doc.package().part_names() {
-        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
+        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b.saved()));
         if same {
             continue;
         }
         let bytes = doc
             .package()
-            .read(&name)
+            .read_saved(&name)
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
@@ -296,7 +302,11 @@ fn changed_parts(package: &Package, doc: &ooxml_word_edit::WordDoc) -> Map<Strin
 }
 
 /// The other document a case names (`d2`), as a reading tool is handed it.
-fn other_version<'a>(package: &'a Package, word: Option<&'a WordDoc>, versions: &'a Versions) -> Version<'a> {
+fn other_version<'a>(
+    package: &'a ooxml_word_model::WordPackage,
+    word: Option<&'a WordDoc>,
+    versions: &'a Versions,
+) -> Version<'a> {
     Version::new("copy.docx", package, 1, versions).with_word(word)
 }
 

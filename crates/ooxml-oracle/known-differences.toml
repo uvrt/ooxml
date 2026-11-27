@@ -627,3 +627,11 @@ word = "n/a"
 cause = """the reference's message drops the opening quote (python-quirks.md): docx-agent says \
 "#12ab9z' is neither a hex colour nor a theme colour (...)"; the Rust core quotes the value \
 whole ("'#12ab9z' is ..."), as its other refusals do."""
+
+# stamp-on-open-2026-11-26 (user decision; phase3-stamp-on-open-design.md, lane ph3-st1): every block
+# of a document has a durable id from the first read -- one without a valid and unique paraId is
+# given one in memory when the document is opened, and written with the first change. The cases
+# that named blocks by place were re-targeted (python/stamp_on_open.py; cases/stamp-on-open-renamed.jsonl
+# maps each old case id to its new one) and their goldens blessed with that source; no entry here
+# covers them: against docx-agent, which names such blocks by place until its first edit stamps
+# them, the gates run on the goldens only.

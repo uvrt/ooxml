@@ -20,8 +20,10 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{
-    drawing_numbers, load_state, used_long_hex, BlockId, DocumentId, LoadedState, PartsDelta, StoryTable, VersionDelta,
+    block_and_drawing_ids, drawing_numbers, load_state, BlockId, DocumentId, IdPool, LoadedState, PartsDelta,
+    StoryTable, VersionDelta,
 };
+use ooxml_word_model::WordPackage;
 use ooxml_xml::{Patch, PatchError, Tree};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,7 +35,7 @@ fn set_below(
     value: &str,
 ) -> Option<Arc<ooxml_xml::Element>> {
     let Some((&k, rest)) = at.split_first() else {
-        let head = crate::stamping::with_attribute(element.head(), name, value);
+        let head = ooxml_word_model::stamp::with_attribute(element.head(), name, value);
         return Some(Arc::new(ooxml_xml::Element::from_head(
             Arc::new(head),
             element.children().clone(),
@@ -111,7 +113,7 @@ pub struct Shared {
 /// A Word document at one version.
 #[derive(Debug, Clone)]
 pub struct WordDoc {
-    package: Package,
+    package: WordPackage,
     ids: Ids,
     reading: Arc<Mutex<Lazy<Docx>>>,
     tally: Arc<Mutex<Lazy<Tally>>>,
@@ -126,6 +128,15 @@ pub struct WordDoc {
     spaced: usize,
     /// Whether the transaction writes its text as given ([`Setup::as_given`]).
     as_given: bool,
+    /// The package the transaction working on this version began on: an id it read with
+    /// ids given at open and not written is fresh for the whole transaction
+    /// ([`WordDoc::id_written`]).
+    begun: Option<WordPackage>,
+    /// Whether an edit of the transaction working on this version has stamped its document
+    /// (`stamping::stamp_document`, a no-op on a document stamped at open): a block found
+    /// after it was found stamped ([`WordDoc::id_written`]). The transaction's own, shared by
+    /// the versions it makes and begun afresh with the next.
+    stamped: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// How a run's transaction writes ([`ooxml_store::DocModel::set_up`]).
@@ -138,7 +149,8 @@ pub struct Setup {
 
 impl WordDoc {
     /// The document whose first version is `package`: its ids read from every story part,
-    /// its caches within `budget`.
+    /// each block without a durable id given one in memory ([`WordPackage::open`]), its
+    /// caches within `budget`.
     ///
     /// # Errors
     /// [`EditError`] when the package is not a Word document a reading can open.
@@ -156,15 +168,18 @@ impl WordDoc {
         budget: Arc<dyn CacheBudget>,
         earlier: &EarlierIds,
     ) -> Result<WordDoc, EditError> {
+        let (package, pool) = WordPackage::open(package);
         let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
         let docx = Arc::new(Docx::open_keeping(&package, kept)?);
-        Ok(WordDoc::of_docx(package, docx, budget, earlier))
+        Ok(WordDoc::of_docx(package, docx, budget, &pool, earlier))
     }
 
     /// The document whose first version is `package`, opened again with the id state saved
     /// beside its bytes (`docx-ids.1.`, docx-agent's round 38), read against its story
-    /// parts as they are parsed once: the ids it had and what the state recorded beside
-    /// them (the versions, each retired id and who retired it).
+    /// parts as they are saved (the ids given at open are not the bytes'): the ids it had
+    /// and what the state recorded beside them (the versions, each retired id and who
+    /// retired it). An id the state retired that the open gave again (a state written with
+    /// a document's stamping undone) is live, not retired.
     ///
     /// # Errors
     /// As [`WordDoc::open`]; [`EditError::IdState`] when the state is not these bytes'.
@@ -173,19 +188,37 @@ impl WordDoc {
         budget: Arc<dyn CacheBudget>,
         state: &str,
     ) -> Result<(WordDoc, LoadedState), EditError> {
+        let (package, pool) = WordPackage::open(package);
         let kept = Arc::new(ooxml_word_model::docx::Kept::new(Arc::clone(&budget)));
         let docx = Arc::new(Docx::open_keeping(&package, kept)?);
-        let loaded = {
-            let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
+        let mut loaded = {
+            let mut saved = Vec::with_capacity(docx.parts.len());
+            for part in &docx.parts {
+                saved.extend(package.saved_tree(&part.part)?);
+            }
+            let roots: Vec<&ooxml_xml::Element> = saved.iter().map(|t| &**t.root()).collect();
             load_state(state, &roots)?
         };
+        let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
+        let (live, _) = block_and_drawing_ids(&roots);
+        loaded.gone.retain(|value, _| !live.contains(value));
         let earlier = EarlierIds::of_state(&loaded);
-        Ok((WordDoc::of_docx(package, docx, budget, &earlier), loaded))
+        Ok((WordDoc::of_docx(package, docx, budget, &pool, &earlier), loaded))
     }
 
-    fn of_docx(package: Package, docx: Arc<Docx>, budget: Arc<dyn CacheBudget>, earlier: &EarlierIds) -> WordDoc {
+    /// The first version: `package` read as `docx`, its ids the pool its blocks' ids were
+    /// drawn from at open (`pool`) and what it had before (`earlier`).
+    fn of_docx(
+        package: WordPackage,
+        docx: Arc<Docx>,
+        budget: Arc<dyn CacheBudget>,
+        pool: &IdPool,
+        earlier: &EarlierIds,
+    ) -> WordDoc {
         let roots: Vec<&ooxml_xml::Element> = docx.parts.iter().map(|p| &**p.root()).collect();
-        let ids = Ids::opened(used_long_hex(&roots), drawing_numbers(&roots)).with_earlier(earlier);
+        let ids = Ids::opened(pool.values().clone(), drawing_numbers(&roots))
+            .with_cursors(pool.cursors())
+            .with_earlier(earlier);
         WordDoc {
             package,
             ids,
@@ -195,6 +228,8 @@ impl WordDoc {
             redrawn: redrawn::Redrawn::default(),
             spaced: 0,
             as_given: false,
+            begun: None,
+            stamped: Arc::default(),
             shared: Arc::new(Shared {
                 sequences: Sequences::default(),
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
@@ -206,9 +241,22 @@ impl WordDoc {
         }
     }
 
-    /// The package.
+    /// Whether `part`'s ids given at open have been written in the version the transaction
+    /// working on this version began on (every part has, but one read with ids given at
+    /// open and not written since).
+    fn begun_written(&self, part: &str) -> bool {
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_)))
+    }
+
+    /// Note that an edit of the transaction stamped the document ([`WordDoc::id_written`]).
+    pub(crate) fn note_stamped(&self) {
+        self.stamped.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The package, as every reader reads it.
     #[must_use]
-    pub fn package(&self) -> &Package {
+    pub fn package(&self) -> &WordPackage {
         &self.package
     }
 
@@ -310,7 +358,7 @@ impl WordDoc {
         let reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner).handed_on();
         let tally = self.tally.lock().unwrap_or_else(PoisonError::into_inner).handed_on();
         WordDoc {
-            package,
+            package: WordPackage::edited(package),
             ids,
             reading: Arc::new(Mutex::new(Lazy::Pending(reading))),
             tally: Arc::new(Mutex::new(Lazy::Pending(tally))),
@@ -319,6 +367,8 @@ impl WordDoc {
             redrawn: self.redrawn.clone(),
             spaced: self.spaced,
             as_given: self.as_given,
+            begun: self.begun.clone(),
+            stamped: Arc::clone(&self.stamped),
         }
     }
 
@@ -361,6 +411,14 @@ impl WordDoc {
         let mut added = IdsChange::default();
         for draw in draws {
             let value = match &draw.from {
+                DrawFrom::Renewed { part, .. } if !self.begun_written(part) => continue,
+                DrawFrom::Renewed { seed, .. } => {
+                    let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
+                    ids.apply(&change);
+                    added.values.extend(change.values);
+                    added.cursors.extend(change.cursors);
+                    values.into_iter().next().ok_or_else(stale)?
+                }
                 DrawFrom::Seed(seed) => {
                     let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
                     ids.apply(&change);
@@ -412,7 +470,7 @@ impl WordDoc {
     fn people(&self, add: Option<&str>, tidy: Option<&str>) -> Result<Package, ModelError> {
         let unreadable = |e: EditError| ModelError::Unreadable(e.to_string());
         let main = self.docx().map_err(unreadable)?.main.clone();
-        let mut package = self.package.clone();
+        let mut package = self.package.package().clone();
         if let Some(author) = add {
             package = crate::people::with_person(&package, &main, author)?;
         }
@@ -422,6 +480,103 @@ impl WordDoc {
             }
         }
         Ok(package)
+    }
+
+    /// Whether the id of the block at `path` of `part` (in this version) has been written.
+    /// An unwritten id counts as fresh at its block's first write: an id given at open has
+    /// been seen by no reader of the file, so an edit that writes its block keeps it whole (a
+    /// text edit does not renew its textId), as an edit that stamped the block itself kept
+    /// the pair it drew -- until an edit of the transaction has stamped its document, after
+    /// which a block found was found stamped and renews as usual.
+    #[must_use]
+    pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
+        if self.stamped.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
+            return true;
+        }
+        let tree = self.package.tree(part).ok().flatten();
+        let now = tree.as_ref().and_then(|t| {
+            ooxml_word_model::docx::at_path(t.root(), path)
+                .and_then(|e| e.attribute(Some(crate::names::W14), "paraId"))
+                .map(str::to_owned)
+        });
+        now.is_none_or(|now| self.para_id_written(part, &now))
+    }
+
+    /// [`WordDoc::id_written`] of the block of `part` whose paraId is `para_id`.
+    #[must_use]
+    pub fn para_id_written(&self, part: &str, para_id: &str) -> bool {
+        if self.stamped.load(std::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        let base = self.begun.as_ref().unwrap_or(&self.package);
+        if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
+            return true;
+        }
+        let Some(now) = ooxml_word_model::ids::hex_value(para_id) else {
+            return true;
+        };
+        // a value the open gave is never one the saved part holds (draws skip those)
+        base.saved_tree(part)
+            .ok()
+            .flatten()
+            .is_some_and(|saved| ooxml_word_model::ids::used_long_hex(&[&**saved.root()]).contains(&now))
+    }
+
+    /// The package with `part` put in place as another writer wrote it (`tree`), every
+    /// part read with ids given at open written (the package changes), and the ids: a story
+    /// part whose blocks lack ids read stamped and kept unwritten, a block the part held the
+    /// same before keeping its ids, the rest drawn from this version's ledger
+    /// ([`ooxml_word_model::stamp::received`]).
+    fn received(&self, part: &str, tree: &Tree) -> Result<(Package, Ids), ModelError> {
+        let before = self.package.tree(part).ok().flatten();
+        let package = self.package.written().with_new_tree(part, tree.clone());
+        let main = ooxml_word_model::parts::main_part(&package)?;
+        let story = match &main {
+            Some(main) if *main == ooxml_opc::name::normalize(part) => Some("body".to_owned()),
+            Some(main) => ooxml_word_model::parts::story_parts(&package, main)?
+                .iter()
+                .any(|p| *p == ooxml_opc::name::normalize(part))
+                .then(|| ooxml_word_model::ids::story_name(main, part)),
+            None => None,
+        };
+        let Some(story) = story else {
+            return Ok((package, self.ids.clone()));
+        };
+        // the values every other story part holds, and those the part holds itself
+        let mut held = std::collections::HashSet::new();
+        for name in ooxml_word_model::parts::parts(&package)? {
+            if let Some(other) = package.tree(&name)? {
+                held.extend(ooxml_word_model::ids::used_long_hex(&[&**other.root()]));
+            }
+        }
+        let mut ids = self.ids.clone();
+        let sequences = &self.shared.sequences;
+        let mut draw = |seed: &str, count: usize| {
+            let (values, change) = ids.draw(seed, count, sequences);
+            ids.apply(&change);
+            Ok::<_, std::convert::Infallible>(values)
+        };
+        let name = ooxml_opc::name::normalize(part);
+        let found = ooxml_word_model::stamp::received(
+            (&story, &name),
+            before.as_ref().map(Tree::root),
+            tree.root(),
+            &|value| held.contains(&value),
+            &mut draw,
+        );
+        let Ok(found) = found;
+        match found {
+            Some(stamp) => {
+                // what the part kept, stamped as before, is the version before's own
+                let stamped = ooxml_xml::shared_with(before, tree.with_root(stamp.root));
+                Ok((package.with_unwritten(part, stamped)?, ids))
+            }
+            None => Ok((package, self.ids.clone())),
+        }
     }
 
     fn with_tree(

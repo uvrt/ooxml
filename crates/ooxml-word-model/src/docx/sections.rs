@@ -461,7 +461,9 @@ mod tests {
             let Ok(package) = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()) else {
                 continue;
             };
-            let Ok(docx) = Docx::open(&package) else { continue };
+            let Ok(docx) = Docx::open(&crate::WordPackage::open(package).0) else {
+                continue;
+            };
             let Some(body) = docx.body() else { continue };
             let mut whole = Vec::new();
             every_break(&docx, body.root(), &mut Vec::new(), &mut Vec::new(), &mut whole);

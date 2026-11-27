@@ -5,7 +5,7 @@
 use ooxml_base::{DigestKey, Limits};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
-use ooxml_word_model::{Model, WordDocument};
+use ooxml_word_model::{Model, WordDocument, WordPackage};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
 
@@ -100,8 +100,13 @@ pub fn package_bytes(parts: &Parts) -> Vec<u8> {
     w.finish(b"").unwrap()
 }
 
-/// The package.
-pub fn package(parts: &Parts) -> Package {
+/// The package as opened: every block without an id given one ([`WordPackage::open`]).
+pub fn package(parts: &Parts) -> WordPackage {
+    WordPackage::open(raw_package(parts)).0
+}
+
+/// The package as its bytes have it.
+pub fn raw_package(parts: &Parts) -> Package {
     Package::open(Arc::from(package_bytes(parts)), &Limits::default()).unwrap()
 }
 

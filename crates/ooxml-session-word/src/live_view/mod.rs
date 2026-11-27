@@ -403,7 +403,7 @@ fn points(value: ooxml_base::Q) -> f64 {
 /// cancellation).
 fn spared(
     layout: &dyn WordLayout,
-    package: (&ooxml_opc::Package, &str),
+    package: (&ooxml_word_model::WordPackage, &str),
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Result<Spare, ToolError> {
     let engine = Arc::new(EnginePages::of(layout.seed().spare()));

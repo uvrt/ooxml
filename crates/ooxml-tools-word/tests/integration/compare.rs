@@ -44,8 +44,10 @@ fn package() -> Package {
 fn reply(arguments: Value) -> Value {
     let (mine, copy) = (package(), package());
     let versions = (Versions::new(), Versions::new());
+    let copy = crate::common::read(&copy);
     let other = Version::new("b.docx", &copy, 1, &versions.1);
     let others = [("d2", other)];
+    let mine = crate::common::read(&mine);
     let version = Version::new("a.docx", &mine, 1, &versions.0).with_others(Others::new(&others));
     let (args, _) = WordCompareBlocks::accept(arguments, Some("docx")).unwrap();
     match word_compare_blocks(&args, &version, &Never) {
@@ -64,8 +66,11 @@ fn tables_and_paragraphs_compare_as_docx_agent_compares_them() {
         json!({"doc": "d1", "blocks": ["t@body/1", "t@body/0"], "reference": {"block": "t@body/0"}}),
         json!({"doc": "d1", "blocks": ["p:20000010", "t@body/1"], "reference": {"doc": "d2", "block": "p:10000008"}}),
     ];
+    // the replies name the made-up document's blocks as an unstamped reading did: as it
+    // is read now (stamped at open), the same blocks
+    let now = |value: Value| crate::common::now(&package(), value);
     for (call, want) in calls.into_iter().zip(golden) {
-        assert_eq!(reply(call), want);
+        assert_eq!(reply(now(call)), now(want));
     }
 }
 
@@ -90,8 +95,10 @@ fn word_follow_sample_reads_an_empty_report_as_the_default() {
 fn an_unknown_block_is_refused_and_a_cursor_pages() {
     let refused = reply(json!({"doc": "d1", "blocks": ["p:NOSUCH"], "reference": {"block": "p:10000008"}}));
     assert!(refused["error"].as_str().unwrap().contains("p:NOSUCH"), "{refused}");
-    let paged =
-        reply(json!({"doc": "d1", "blocks": ["t@body/1"], "reference": {"block": "t@body/0"}, "cursor": "c15"}));
+    let paged = reply(crate::common::now(
+        &package(),
+        json!({"doc": "d1", "blocks": ["t@body/1"], "reference": {"block": "t@body/0"}, "cursor": "c15"}),
+    ));
     assert_eq!(paged["data"]["differences"].as_array().unwrap().len(), 4);
 }
 
@@ -104,6 +111,7 @@ fn compare_on_a_long_document() {
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).unwrap());
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).unwrap();
     let versions = Versions::new();
+    let package = crate::common::read(&package);
     let version = Version::new("long.docx", &package, 1, &versions);
     let start = std::time::Instant::now();
     let docx = version.docx().unwrap();

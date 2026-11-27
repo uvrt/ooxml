@@ -418,17 +418,26 @@ fn a_tracked_edit_rebased_past_another_keeps_the_ids_drawn_where_it_lands() {
 fn a_tracked_edit_reads_the_root_declarations_it_relies_on() {
     // an untracked edit stamps the document first, as the seed's earlier edits did
     let stamp = Edit::Set(SetText {
-        target: ooxml_word_model::address::Address::from("p@body/29".to_owned()),
+        target: ooxml_word_model::address::Address::from(crate::common::now(
+            &fixture("samplelib/sample-long.docx"),
+            "p@body/29",
+        )),
         text: "gamma 0".to_owned(),
         policy: RevisionPolicy::Untracked,
     });
     let first = Edit::Set(SetText {
-        target: ooxml_word_model::address::Address::from("p@body/0".to_owned()),
+        target: ooxml_word_model::address::Address::from(crate::common::now(
+            &fixture("samplelib/sample-long.docx"),
+            "p@body/0",
+        )),
         text: "alpha 3".to_owned(),
         policy: tracked("Writer 3"),
     });
     let set = Edit::Set(SetText {
-        target: ooxml_word_model::address::Address::from("p@body/5".to_owned()),
+        target: ooxml_word_model::address::Address::from(crate::common::now(
+            &fixture("samplelib/sample-long.docx"),
+            "p@body/5",
+        )),
         text: "alpha 5".to_owned(),
         policy: tracked("Writer 5"),
     });

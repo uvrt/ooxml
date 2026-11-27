@@ -17,9 +17,9 @@ use crate::error::PagesError;
 use crate::support;
 use crate::LaidVersion;
 use ooxml_base::Cancel;
-use ooxml_opc::Package;
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::DocumentLayout;
+use ooxml_word_model::WordPackage;
 use std::time::Instant;
 
 /// A trial layout: its facts, and its layout with the version it was laid out from.
@@ -63,7 +63,7 @@ impl PageEngine {
     /// Its Word parts do not open; [`PagesError::Stopped`] where `cancel` stopped it.
     pub fn trial<'v>(
         &mut self,
-        package: &Package,
+        package: &WordPackage,
         from: &'v LaidVersion,
         cancel: &dyn Cancel,
     ) -> Result<Option<Trial<'v>>, PagesError> {

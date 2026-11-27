@@ -52,7 +52,7 @@ pub use walk::{at_path, live_paths, Found};
 
 use crate::ids::{story_name, PartIds, W};
 use crate::parts::{main_part, story_parts};
-use crate::WordError;
+use crate::{WordError, WordPackage};
 use facts::PartFacts;
 use ooxml_opc::Package;
 use ooxml_xml::{Element, Tree};
@@ -187,7 +187,7 @@ impl Docx {
     ///
     /// # Errors
     /// [`WordError`] when the package has no main part or a part is not XML.
-    pub fn open(package: &Package) -> Result<Docx, WordError> {
+    pub fn open(package: &WordPackage) -> Result<Docx, WordError> {
         Docx::open_after(package, None)
     }
 
@@ -196,7 +196,7 @@ impl Docx {
     ///
     /// # Errors
     /// As [`Docx::open`].
-    pub fn open_keeping(package: &Package, kept: Arc<Kept>) -> Result<Docx, WordError> {
+    pub fn open_keeping(package: &WordPackage, kept: Arc<Kept>) -> Result<Docx, WordError> {
         Docx::read(package, None, kept)
     }
 
@@ -205,7 +205,7 @@ impl Docx {
     ///
     /// # Errors
     /// As [`Docx::open`].
-    pub fn open_after(package: &Package, before: Option<&Docx>) -> Result<Docx, WordError> {
+    pub fn open_after(package: &WordPackage, before: Option<&Docx>) -> Result<Docx, WordError> {
         let latest = before.map_or_else(|| Arc::new(Kept::default()), |b| Arc::clone(&b.kept));
         Docx::read(package, before, latest)
     }
@@ -230,7 +230,7 @@ impl Docx {
     }
 
     /// `package` read, taking from `before` its parts kept, what its versions keep in `latest`.
-    fn read(package: &Package, before: Option<&Docx>, latest: Arc<Kept>) -> Result<Docx, WordError> {
+    fn read(package: &WordPackage, before: Option<&Docx>, latest: Arc<Kept>) -> Result<Docx, WordError> {
         let main = main_part(package)?.ok_or_else(|| WordError::NoMainPart(String::new()))?;
         let mut names = vec![main.clone()];
         names.extend(story_parts(package, &main)?);
@@ -258,7 +258,7 @@ impl Docx {
         }
         let (styles, style_order) = read_styles(package, &main)?;
         Ok(Docx {
-            package: package.clone(),
+            package: package.package().clone(),
             main,
             parts,
             styles,

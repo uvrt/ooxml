@@ -284,7 +284,12 @@ fn after(n: usize) -> After {
 
 #[test]
 fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_before() {
-    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let opened = |bytes: Vec<u8>| {
+        ooxml_word_model::WordPackage::open(
+            ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
+        )
+        .0
+    };
     let mut kept = engine();
     let first = kept
         .lay_out(&opened(package(&paragraphs(120, None))), None)
@@ -348,7 +353,12 @@ fn body_delta(document: DocumentId, base: u64, version: u64) -> VersionDelta {
 
 #[test]
 fn a_delta_is_taken_for_the_change_only_from_the_version_given_last() {
-    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let opened = |bytes: Vec<u8>| {
+        ooxml_word_model::WordPackage::open(
+            ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
+        )
+        .0
+    };
     let (document, other) = (DocumentId::fresh(), DocumentId::fresh());
     let versions: Vec<_> = (0..6).map(|k| opened(package(&paragraphs(60, Some(10 + k))))).collect();
     let mut kept = engine();
@@ -390,7 +400,12 @@ fn a_delta_is_taken_for_the_change_only_from_the_version_given_last() {
 
 #[test]
 fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
-    let opened = |bytes: Vec<u8>| ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
+    let opened = |bytes: Vec<u8>| {
+        ooxml_word_model::WordPackage::open(
+            ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
+        )
+        .0
+    };
     let mut kept = engine();
     let first = kept
         .lay_out(&opened(package(&paragraphs(120, None))), None)
@@ -426,14 +441,15 @@ fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
 fn a_version_with_the_last_ones_parts_is_the_last_version() {
     let mut kept = engine();
     let bytes: Arc<[u8]> = Arc::from(package(&paragraphs(40, None)));
-    let opened = ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()).unwrap();
+    let opened =
+        ooxml_word_model::WordPackage::open(ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()).unwrap()).0;
     let first = kept.lay_out(&opened, None).unwrap().unwrap();
     let again = kept.lay_out(&opened.clone(), None).unwrap().unwrap();
     assert!(Arc::ptr_eq(&first, &again));
     let stats = kept.stats();
     assert_eq!((stats.kept, stats.full, stats.relaid), (1, 1, 0), "{stats:?}");
     let touched: Arc<[u8]> = Arc::from(document_xml(&paragraphs(40, Some(3))).into_bytes());
-    let edited = opened.with_bytes("word/document.xml", touched);
+    let edited = read_after(opened.with_bytes("word/document.xml", touched), &opened);
     let next = kept.lay_out(&edited, None).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&first, &next));
     assert_eq!(kept.stats().kept, 1);
@@ -1033,9 +1049,18 @@ fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
     );
 }
 
+/// `package`, a version made from `before`, read as a session reads it: a part it shares
+/// with `before` stamped as there.
+fn read_after(package: ooxml_opc::Package, before: &ooxml_word_model::WordPackage) -> ooxml_word_model::WordPackage {
+    ooxml_word_model::WordPackage::open_after(package, Some(before)).0
+}
+
 /// `bytes` opened as a package, as a session holds a version.
-fn opened(bytes: Vec<u8>) -> ooxml_opc::Package {
-    ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap()
+fn opened(bytes: Vec<u8>) -> ooxml_word_model::WordPackage {
+    ooxml_word_model::WordPackage::open(
+        ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
+    )
+    .0
 }
 
 #[test]
@@ -1045,7 +1070,10 @@ fn a_version_given_as_a_package_says_which_part_it_changed() {
     let large = r#"<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="40"/></w:rPr></w:rPrDefault></w:docDefaults>"#;
     let first = opened(package_styled(&body, None));
     let styles = format!(r#"<w:styles {W}>{large}</w:styles>"#);
-    let edited = first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes()));
+    let edited = read_after(
+        first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes())),
+        &first,
+    );
     let mut kept = engine();
     kept.lay_out(&first, None).unwrap().unwrap();
     let again = kept.lay_out(&edited, None).unwrap().unwrap();
@@ -1065,9 +1093,12 @@ fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_lay
     let first = opened(package(body));
     let rels = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData" Target="diagrams/data1.xml"/></Relationships>"#;
     let data = r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:ptLst><dgm:pt modelId="0" type="doc"/></dgm:ptLst><dgm:cxnLst/></dgm:dataModel>"#;
-    let edited = first
-        .with_bytes("word/diagrams/data1.xml", Arc::from(data.as_bytes()))
-        .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes()));
+    let edited = read_after(
+        first
+            .with_bytes("word/diagrams/data1.xml", Arc::from(data.as_bytes()))
+            .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes())),
+        &first,
+    );
     let mut kept = engine();
     let before = kept.lay_out(&first, None).unwrap().unwrap();
     assert!(!before.said().warnings.is_empty());

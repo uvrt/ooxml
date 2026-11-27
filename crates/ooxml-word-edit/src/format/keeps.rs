@@ -19,7 +19,6 @@ use crate::blocks::{blocks_of, resolve_block, BlockKind};
 use crate::names::W;
 use crate::work::{scope_above, Work};
 use crate::{EditError, Result, WordDoc};
-use ooxml_opc::Package;
 use ooxml_word_model::address::Address;
 use ooxml_word_model::address::{expand_heading, scope_paragraphs};
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, Formatting};
@@ -287,7 +286,12 @@ pub fn keep_writes(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> R
 ///
 /// # Errors
 /// As [`keep_plan`]'s; the main part not XML.
-pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> Result<Option<Package>> {
+pub fn kept_package(
+    doc: &WordDoc,
+    docx: &Docx,
+    address: &Address,
+    on: bool,
+) -> Result<Option<ooxml_word_model::WordPackage>> {
     let plan = keep_plan(doc, docx, address, on)?;
     if plan.changes.is_empty() {
         return Ok(None);
@@ -309,5 +313,7 @@ pub fn kept_package(doc: &WordDoc, docx: &Docx, address: &Address, on: bool) -> 
         let patch = Patch::splice(NodePath(parent), last as usize, vec![old], vec![Node::Element(new)]);
         tree = patch.apply(&tree).map_err(|_| EditError::no_element(main.clone()))?;
     }
-    Ok(Some(doc.package().with_new_tree(&main, tree)))
+    Ok(Some(ooxml_word_model::WordPackage::edited(
+        doc.package().with_new_tree(&main, tree),
+    )))
 }

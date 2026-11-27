@@ -369,7 +369,9 @@ fn every_block_of_every_corpus_story_round_trips_by_key_id_and_path() {
         let Ok(package) = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()) else {
             continue;
         };
-        let Ok(docx) = Docx::open(&package) else { continue };
+        let Ok(docx) = Docx::open(&ooxml_word_model::WordPackage::open(package).0) else {
+            continue;
+        };
         let mut stories = StoryTable::new();
         let names = VersionNames::new(&docx, &mut stories);
         for part in &docx.parts {
@@ -454,7 +456,7 @@ fn names_cost() {
     };
     let bytes = std::fs::read(file).unwrap();
     let package = ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap();
-    let docx = Docx::open(&package).unwrap();
+    let docx = Docx::open(&ooxml_word_model::WordPackage::open(package).0).unwrap();
     let mut stories = StoryTable::new();
     let names = VersionNames::new(&docx, &mut stories);
     let body = names.part(StoryIx::BODY).unwrap();

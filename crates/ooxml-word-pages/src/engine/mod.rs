@@ -52,7 +52,7 @@ use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
 use ooxml_word_model::ids::{Anchor, VersionDelta, VersionRef};
 use ooxml_word_model::value::Text;
-use ooxml_word_model::Model;
+use ooxml_word_model::{Model, WordPackage};
 use ooxml_zip::Archive;
 use parts::{facts_source, new_layout, pictures_of, say, SayWith};
 use std::sync::Arc;
@@ -177,7 +177,10 @@ pub struct PageDigests {
 /// The package a version was read from, kept to read the next one against.
 struct Source {
     archive: Arc<Archive>,
+    /// The package as given.
     package: Package,
+    /// It as read, stamped at open ([`WordPackage::open`]).
+    read: WordPackage,
 }
 
 /// Where an engine's memory is counted: what the version in use needs (its memos, never
@@ -348,15 +351,18 @@ impl PageEngine {
     /// The package or its Word parts do not open.
     pub fn lay_out_bytes(&mut self, bytes: Arc<[u8]>) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         let archive = Arc::new(Archive::read(bytes, &self.limits.zip).map_err(ooxml_opc::OpcError::from)?);
-        let package = match self.source.take() {
-            Some(before) => self.next_package(&before, &archive)?,
+        let before = self.source.take();
+        let package = match &before {
+            Some(before) => self.next_package(before, &archive)?,
             None => Package::open(Arc::clone(archive.bytes()), &self.limits)?,
         };
+        let (read, _) = WordPackage::open_after(package.clone(), before.as_ref().map(|b| &b.read));
         self.source = Some(Source {
             archive,
-            package: package.clone(),
+            package,
+            read: read.clone(),
         });
-        self.lay_out(&package, None)
+        self.lay_out(&read, None)
     }
 
     /// Lay out the version of the last one given with `parts` put in place (bytes) or
@@ -381,11 +387,13 @@ impl PageEngine {
                 None => package,
             };
         }
+        let (read, _) = WordPackage::open_after(package.clone(), Some(&source.read));
         self.source = Some(Source {
             archive: source.archive,
-            package: package.clone(),
+            package,
+            read: read.clone(),
         });
-        self.lay_out(&package, None)
+        self.lay_out(&read, None)
     }
 
     /// `package` with `name` as `bytes`: a tree, parsed once, where the part is XML.
@@ -452,7 +460,7 @@ impl PageEngine {
     /// Its Word parts do not open.
     pub fn lay_out(
         &mut self,
-        package: &Package,
+        package: &WordPackage,
         delta: Option<&VersionDelta>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.lay_out_within(package, delta, None)
@@ -467,7 +475,7 @@ impl PageEngine {
     /// engine then lays the next version out from the one it laid out before.
     pub fn lay_out_until(
         &mut self,
-        package: &Package,
+        package: &WordPackage,
         cancel: &dyn Cancel,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
         self.lay_out_within(package, None, Some(cancel))
@@ -500,7 +508,7 @@ impl PageEngine {
     /// published to its seed, whatever the outcome.
     fn lay_out_within(
         &mut self,
-        package: &Package,
+        package: &WordPackage,
         delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
@@ -511,7 +519,7 @@ impl PageEngine {
 
     fn lay_out_given(
         &mut self,
-        package: &Package,
+        package: &WordPackage,
         delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
@@ -525,7 +533,7 @@ impl PageEngine {
         }
         let started = Instant::now();
         let document = generation.model.open(package)?;
-        let opened = generation.opened.replace(package.clone());
+        let opened = generation.opened.replace(package.package().clone());
         self.stats.open_time += started.elapsed();
         if generation.model.stats().context_changed && generation.new_context(&self.locale, &self.budgets.held) {
             cause = Some(context_cause(&self.changed));
@@ -591,9 +599,10 @@ impl PageEngine {
         // not with every version kept.
         drop(previous);
         generation.last = Some(Arc::clone(&version));
-        generation.laid_from = Some(package.clone());
+        generation.laid_from = Some(package.package().clone());
         // Published before the sweep: the version before, no longer held there, is swept.
-        self.seed.publish(Some((package.clone(), Arc::clone(&version))));
+        self.seed
+            .publish(Some((package.package().clone(), Arc::clone(&version))));
         let swept = generation.sweep();
         self.stats.swept += swept as u64;
         Ok(Ok(version))

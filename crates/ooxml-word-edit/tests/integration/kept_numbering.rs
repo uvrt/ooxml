@@ -61,7 +61,7 @@ fn editor_within(budget: Arc<dyn CacheBudget>) -> Editor {
 
 /// `doc`'s `numbering_skips_level` as kept, and as a document opened afresh reads it.
 fn warm_and_cold(doc: &WordDoc) -> (Vec<SkippedLevel>, Vec<SkippedLevel>) {
-    let cold = WordDoc::open(doc.package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
+    let cold = WordDoc::open(doc.package().package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
     (
         numbering_skips_level(doc).unwrap(),
         numbering_skips_level(&cold).unwrap(),

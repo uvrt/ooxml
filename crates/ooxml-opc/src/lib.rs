@@ -19,5 +19,5 @@ pub use content_types::{ContentTypes, CONTENT_TYPES_NS, CONTENT_TYPES_PART};
 pub use error::OpcError;
 pub use name::PartName;
 pub use ooxml_base::Limits;
-pub use package::{Package, PartIdentity, PartVersion, RawPart};
+pub use package::{Package, PartIdentity, PartVersion, RawPart, Unwritten};
 pub use rels::{Relationship, Relationships, RELS_NS};

@@ -64,14 +64,15 @@ pub fn tool_case(bytes: &Arc<[u8]>, case: &Value) -> Result<Value, String> {
     let head = editor.store().snapshot();
     let doc = head.doc();
     let mut parts = Map::new();
+    // as saved: a part read with the ids given at open and not written is the input's
     for name in doc.package().part_names() {
-        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
+        let same = matches!((package.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b.saved()));
         if same {
             continue;
         }
         let bytes = doc
             .package()
-            .read(&name)
+            .read_saved(&name)
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));

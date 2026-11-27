@@ -48,7 +48,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let main = "word/document.xml";
     let xml = package.read(main).map_err(|e| e.to_string())?.ok_or("no main part")?;
-    let next = package.with_bytes(main, Arc::from(edited(&xml).ok_or("nothing to edit")?));
+    let package = ooxml_word_model::WordPackage::open(package).0;
+    let next = ooxml_word_model::WordPackage::open_after(
+        package.with_bytes(main, Arc::from(edited(&xml).ok_or("nothing to edit")?)),
+        Some(&package),
+    )
+    .0;
     let (mut full_best, mut relayout_best, mut open_best) = (f64::MAX, f64::MAX, f64::MAX);
     let (mut page_facts_best, mut facts_best) = (f64::MAX, f64::MAX);
     let mut report = json!({});

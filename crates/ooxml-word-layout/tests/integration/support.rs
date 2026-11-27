@@ -158,12 +158,16 @@ pub fn engine() -> WordLayout {
 
 /// Open `body` in `model`.
 pub fn open(model: &mut Model, body: &str, settings: Option<&str>) -> WordDocument {
-    model.open(&package(body, settings)).unwrap()
+    model
+        .open(&ooxml_word_model::WordPackage::open(package(body, settings)).0)
+        .unwrap()
 }
 
 /// Open `body` with `parts` in `model`.
 pub fn open_with(model: &mut Model, body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> WordDocument {
-    model.open(&package_with(body, settings, parts)).unwrap()
+    model
+        .open(&ooxml_word_model::WordPackage::open(package_with(body, settings, parts)).0)
+        .unwrap()
 }
 
 /// A floating drawing `cx` x `cy` twips at the column's and paragraph's offsets `x`, `y`

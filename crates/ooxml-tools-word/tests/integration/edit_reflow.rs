@@ -7,7 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::check::{versions, Past};
-use crate::common::{engine, Never, Still, Unlimited};
+use crate::common::{engine, read, Never, Still, Unlimited};
 use ooxml_opc::Package;
 use ooxml_store::{Caller, StoreConfig};
 use ooxml_tools_word::{
@@ -57,7 +57,7 @@ fn an_edit_after_the_version_was_laid_out_reports_its_reflow() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    let laid = layout.laid(&package, &Never).unwrap();
+    let laid = layout.laid(&read(&package), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
     let pages = laid.page_count();
@@ -82,7 +82,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&package, &Never).unwrap();
+    layout.laid(&read(&package), &Never).unwrap();
     let theirs = edit(&editor, "Another writer's text");
     let made = edit(&editor, &"longer text ".repeat(400));
     let before = &made.before;
@@ -102,7 +102,7 @@ fn an_engine_busy_laying_another_version_out_is_not_waited_for() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&package, &Never).unwrap();
+    layout.laid(&read(&package), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let busy = layout.engine().lock().unwrap();
     let spared = reflow(&layout, &LastCheck::default(), &made, None).expect("measured on a spare");
@@ -127,14 +127,14 @@ fn a_busy_engine_says_stale_past_twenty_pages_and_a_stop_on_the_spare() {
     let package = long(24);
     let long_one = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&package, &Never).unwrap();
+    layout.laid(&read(&package), &Never).unwrap();
     let made = edit(&long_one, "Shorter");
     let busy = layout.engine().lock().unwrap();
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
     drop(busy);
     let (package, _) = versions();
     let short_one = editor(package.clone());
-    layout.laid(&package, &Never).unwrap();
+    layout.laid(&read(&package), &Never).unwrap();
     let made = edit(&short_one, &"longer text ".repeat(400));
     let limit = LayoutLimit {
         cancel: &Past,
@@ -162,22 +162,23 @@ fn a_style_edit_reports_its_reflow_on_the_engine_and_on_a_spare_alike() {
     // engine's own measure is the spare's, which lays both out fresh.
     let (package, _) = versions();
     let after = restyled(&package);
+    let (before, after) = (read(&package), read(&after));
     let measure = |layout: &EnginePages| {
         let from = EditedFrom {
             version: 0,
-            package: &package,
+            package: &before,
         };
         let aliases = Default::default();
         reflow_after_edit(layout, &LastCheck::default(), from, &after, &aliases, (None, &Never))
     };
     let layout = EnginePages::of(engine());
-    let laid = layout.laid(&package, &Never).unwrap();
+    let laid = layout.laid(&read(&package), &Never).unwrap();
     let own = measure(&layout).expect("measured");
     assert_eq!(own["pages"][0], json!(laid.page_count()), "{own}");
     assert!(own["pages"][1].as_u64().unwrap() > laid.page_count() as u64, "{own}");
     assert_eq!(own["changed"][0], json!(1), "{own}");
     let spare = EnginePages::of(engine());
-    spare.laid(&package, &Never).unwrap();
+    spare.laid(&read(&package), &Never).unwrap();
     let _busy = spare.engine().lock().unwrap();
     assert_eq!(measure(&spare), Some(own));
 }
@@ -189,7 +190,8 @@ fn long(count: usize) -> Package {
     let at = xml.find("<w:body>").unwrap() + "<w:body>".len();
     let breaks = r#"<w:p><w:r><w:br w:type="page"/></w:r></w:p>"#.repeat(count);
     let longer = format!("{}{breaks}{}", &xml[..at], &xml[at..]);
-    package.with_bytes("word/document.xml", Arc::from(longer.into_bytes()))
+    // read once, its ids given (and written): the editor opened on it reads its trees
+    read(&package.with_bytes("word/document.xml", Arc::from(longer.into_bytes()))).written()
 }
 
 #[test]
@@ -197,7 +199,7 @@ fn a_version_before_of_more_than_twenty_pages_is_stale() {
     let package = long(24);
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    assert!(layout.laid(&package, &Never).unwrap().page_count() > 20);
+    assert!(layout.laid(&read(&package), &Never).unwrap().page_count() > 20);
     let made = edit(&editor, "Shorter");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
 }
@@ -207,7 +209,7 @@ fn laying_the_version_made_out_past_the_limit_is_said() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&package, &Never).unwrap();
+    layout.laid(&read(&package), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let limit = LayoutLimit {
         cancel: &Past,
@@ -242,7 +244,7 @@ fn edits_with_their_reflow_timed_alone_and_with_twenty_four_writers() {
     for measured in [false, true] {
         let editor = editor(package.clone());
         let layout = EnginePages::of(engine());
-        layout.laid(&package, &Never).unwrap();
+        layout.laid(&read(&package), &Never).unwrap();
         let calls: Vec<(Duration, bool)> = (0..20)
             .map(|i| {
                 timed_call(

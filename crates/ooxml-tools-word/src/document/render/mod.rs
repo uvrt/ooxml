@@ -165,7 +165,7 @@ pub(super) struct Drawer<'a> {
 /// The version a call lays out, and its layout once made.
 struct Laying<'a> {
     owned: crate::Owned<'a>,
-    package: &'a ooxml_opc::Package,
+    package: &'a ooxml_word_model::WordPackage,
     cancel: &'a dyn Cancel,
     laid: std::cell::OnceCell<std::sync::Arc<LaidVersion>>,
 }

@@ -66,6 +66,7 @@ fn sample() -> Package {
 fn find(args: &FindText) -> Result<Value, Value> {
     let versions = Versions::new();
     let package = sample();
+    let package = crate::common::read(&package);
     let version = Version::new("a.docx", &package, 1, &versions);
     find_text(args, &version, &Never)
         .map(|d| json!({"summary": d.summary, "data": d.data, "next": d.next_cursor, "total": d.total}))
@@ -75,6 +76,7 @@ fn find(args: &FindText) -> Result<Value, Value> {
 fn inspect(target: &str, layout: Option<bool>) -> Result<Value, Value> {
     let versions = Versions::new();
     let package = sample();
+    let package = crate::common::read(&package);
     let version = Version::new("a.docx", &package, 1, &versions);
     let args = WordInspect {
         doc: "d1".into(),

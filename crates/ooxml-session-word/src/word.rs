@@ -172,7 +172,7 @@ impl Holds<WordDoc> for WordStore {
     }
 
     fn put_tree(part: String, tree: Tree) -> Change {
-        Change::Put {
+        Change::Received {
             part: Arc::from(part),
             tree,
         }

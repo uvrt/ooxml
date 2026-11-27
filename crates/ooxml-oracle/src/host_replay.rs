@@ -81,17 +81,19 @@ pub struct Known {
     /// The tool design rule that makes the new answer right (rule 1), where it is one.
     pub rule: Option<i64>,
     /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
-    /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`).
+    /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`,
+    /// `stamp-on-open-2026-11-26`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 3] = [
+pub const DECISIONS: [&str; 4] = [
     "structured-problems-2026-11-25",
     "optimistic-batches-2026-11-25",
     "limits-in-details-2026-11-25",
+    "stamp-on-open-2026-11-26",
 ];
 
 /// The known differences in `text` (the TOML subset the file uses: `[[difference]]` tables

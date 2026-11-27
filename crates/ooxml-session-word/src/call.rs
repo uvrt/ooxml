@@ -17,8 +17,10 @@ use ooxml_session::{CallContext, Deferred, Opened};
 use ooxml_store::{Caller, OpTxn};
 use ooxml_tools::{Failure, FormatCall, Run, ToolError, ToolResult};
 use ooxml_tools_word::{CallEditor, Editing, Made, Others, Version};
+use ooxml_word_model::WordPackage;
 use serde_json::{Map, Value};
 use std::any::Any;
+use std::cell::OnceCell;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a Word document's host hands a call beside the rest of its context
@@ -315,7 +317,8 @@ impl Call<'_> {
             Some(kept) => (&kept.rows_written, &kept.made_by),
             None => (&word.rows_written, &word.made_by),
         };
-        let others = self.other_versions();
+        let read: Vec<OnceCell<WordPackage>> = self.others.iter().map(|_| OnceCell::new()).collect();
+        let others = self.other_versions(&read);
         let editing = Editing::new(
             &editor,
             self.caller,
@@ -362,10 +365,12 @@ impl Call<'_> {
     /// The version the call reads as a reading tool reads it: with the other documents it
     /// names and the session's own reading of the version.
     pub(crate) fn read<R>(&self, run: impl FnOnce(&Version<'_>) -> R) -> R {
-        let others = self.other_versions();
+        let read: Vec<OnceCell<WordPackage>> = self.others.iter().map(|_| OnceCell::new()).collect();
+        let others = self.other_versions(&read);
+        let mine = OnceCell::new();
         let version = self
             .doc
-            .version_of()
+            .version_of(&mine)
             .with_placer(self.placer)
             .with_others(
                 Others::new(&others)
@@ -381,10 +386,11 @@ impl Call<'_> {
     }
 
     /// [`Call::others`] as a tool reads them.
-    fn other_versions(&self) -> Vec<(&str, Version<'_>)> {
+    fn other_versions<'r>(&'r self, read: &'r [OnceCell<WordPackage>]) -> Vec<(&'r str, Version<'r>)> {
         self.others
             .iter()
-            .map(|(id, o)| (id.as_str(), o.version_of()))
+            .zip(read)
+            .map(|((id, o), read)| (id.as_str(), o.version_of(read)))
             .collect()
     }
 }

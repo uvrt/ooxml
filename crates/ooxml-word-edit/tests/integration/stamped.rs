@@ -1,23 +1,25 @@
 //! Every version a command makes through the editor has every paragraph and table row of every
-//! story stamped (`stamping::Stamped`): Word drops every paraId of a document holding one row
-//! without a paraId when it saves it (crates/ooxml-oracle/word/observations/
-//! paraid-durability.json, factors "row"), so a command that stamps nothing itself -- cells
-//! written as `_fill_cells` writes them -- still leaves the fixture's unstamped row stamped; the
-//! same command run on the store alone (no editor) leaves it as it was. And what that costs per
+//! story stamped, as saved (`stamping::Stamped`): Word drops every paraId of a document holding
+//! one row without a paraId when it saves it (crates/ooxml-oracle/word/observations/
+//! paraid-durability.json, factors "row"). The fixture's unstamped row is stamped when it is
+//! opened and written with the first change of any part, a command's through the editor or
+//! the store alone: cells written as `_fill_cells` writes them, stamping nothing themselves,
+//! leave every block stamped as saved. And what that costs per
 //! edit on a long document: `STAMPED_BENCH=<path to a .docx> cargo test --release -p
 //! ooxml-word-edit --test integration -- --ignored --nocapture stamped::`; and what the first
 //! edit of an unstamped document costs (it stamps every block): `STAMPED_FIRST=<path to a
 //! .docx>` (`STAMPED_ROUNDS`, 3 by default) with the same command.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::common::{editor, fixture, written};
+use crate::common::{editor, fixture};
 use ooxml_store::Caller;
 use ooxml_word_edit::{CellAxis, CellWrite, RevisionPolicy, SetCells, SetText, WordDoc};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The story parts' paragraphs and rows without a paraId, and the paraIds held twice.
+/// The story parts' paragraphs and rows without a paraId, and the paraIds held twice, as
+/// saved.
 fn unstamped(doc: &WordDoc) -> (usize, usize) {
     let (mut missing, mut repeated) = (0, 0);
     let mut seen = HashSet::new();
@@ -27,10 +29,12 @@ fn unstamped(doc: &WordDoc) -> (usize, usize) {
             || n.starts_with("word/footer")
             || ["word/footnotes.xml", "word/endnotes.xml", "word/comments.xml"].contains(&n)
     };
-    for (name, bytes) in written(doc) {
+    let saved = ooxml_opc::Package::open(Arc::from(doc.package().save().unwrap()), &Default::default()).unwrap();
+    for name in saved.part_names() {
         if !story(&name) {
             continue;
         }
+        let bytes = saved.read(&name).unwrap().unwrap();
         let xml = String::from_utf8(bytes.to_vec()).unwrap();
         for open in xml.split('<').skip(1) {
             let head = open.split('>').next().unwrap_or("");
@@ -71,11 +75,12 @@ fn a_command_that_stamps_nothing_leaves_every_block_stamped() {
     let docx = before.doc().docx().unwrap();
     let table = docx.parts[0].ids.tables().iter().next().unwrap().id.clone();
 
-    // the store alone runs the command as it is: the row is left without its id
+    // the store alone runs the command as it is: the row is written with the id it was
+    // given at open all the same
     let bare = editor(&bytes);
     let alone = bare.store().run(&Caller::anonymous(), &fill(&table)).unwrap();
     assert!(alone.changed);
-    assert_ne!(unstamped(alone.version.doc()).0, 0);
+    assert_eq!(unstamped(alone.version.doc()), (0, 0));
 
     let done = shared.run(&Caller::anonymous(), &fill(&table)).unwrap();
     assert!(done.changed);

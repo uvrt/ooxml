@@ -8,7 +8,7 @@
 
 use super::Docx;
 use crate::WordError;
-use ooxml_opc::Package;
+use crate::WordPackage;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -32,7 +32,7 @@ impl Versions {
     ///
     /// # Errors
     /// As [`Docx::open`].
-    pub fn docx(&self, version: u64, package: &Package) -> Result<Arc<Docx>, WordError> {
+    pub fn docx(&self, version: u64, package: &WordPackage) -> Result<Arc<Docx>, WordError> {
         let latest = {
             let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some((_, found)) = kept.iter().find(|(v, _)| *v == version) {

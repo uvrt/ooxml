@@ -51,6 +51,15 @@ fn paragraph(id: &str, text: &str) -> String {
     format!(r#"<w:p w14:paraId="{id}" w14:textId="77777777"><w:r><w:t>{text}</w:t></w:r></w:p>"#)
 }
 
+/// A body whose bookmark has no end (a problem of its own; a paragraph id given twice is
+/// stamped as the part is read).
+fn unpaired() -> String {
+    format!(
+        r#"{}<w:p w14:paraId="22222222" w14:textId="77777777"><w:bookmarkStart w:id="5" w:name="open"/><w:r><w:t>two</w:t></w:r></w:p>"#,
+        paragraph("11111111", "one")
+    )
+}
+
 fn document(body: &str) -> String {
     format!("<w:document {NS}><w:body>{body}</w:body></w:document>")
 }
@@ -384,9 +393,8 @@ fn the_save_gate_refuses_new_problems_and_parts_given_feed_the_ledger() {
         .unwrap();
     assert!(s.validation(&d).unwrap().unwrap().new.is_empty());
     s.save_checked(&d).unwrap();
-    // parts given that repeat a paragraph id: a new problem, and saving is refused
-    let twice = format!("{}{}", paragraph("11111111", "one"), paragraph("11111111", "two"));
-    put(&s, &d, &twice, &CallContext::default());
+    // parts given with a bookmark without its end: a new problem, and saving is refused
+    put(&s, &d, &unpaired(), &CallContext::default());
     match s.save_checked(&d) {
         Err(SessionError::NewProblems { new }) => assert!(!new.is_empty()),
         other => panic!("{other:?}"),
@@ -419,17 +427,17 @@ fn a_check_of_the_document_alone_is_the_sessions() {
     assert_eq!(data["app_findings"], Value::Null);
     let parts: Vec<&String> = data["timing"].as_object().unwrap().keys().collect();
     assert_eq!(parts, ["validate", "fields"]);
-    // a repeated paragraph id: a new problem, against the problems the document opened with
-    let twice = format!("{}{}", paragraph("11111111", "one"), paragraph("11111111", "two"));
-    put(&s, &d, &twice, &CallContext::default());
+    // a bookmark without its end: a new problem, against the problems the document opened
+    // with (a repeated paragraph id given is stamped as it is read: no problem)
+    put(&s, &d, &unpaired(), &CallContext::default());
     let validate = &call(&s, "check", asked, &CallContext::default())["data"]["validate"];
     assert_eq!(validate["new"].as_array().unwrap().len(), 1);
     // (each problem in the one problems shape: user decision 2026-11-25)
-    assert_eq!(validate["new"][0]["code"], "paraid-repeated");
+    assert_eq!(validate["new"][0]["code"], "bookmark-unpaired");
     assert!(validate["new"][0]["message"]
         .as_str()
         .unwrap()
-        .starts_with("[paraid-repeated]"));
+        .starts_with("[bookmark-unpaired]"));
     assert_eq!(validate["problems"], validate["new"]);
     // what needs the layout's facts is the host's where it hands no layout; a reflow too
     for asked in [
@@ -691,7 +699,7 @@ fn a_value_written_by_reference_is_kept_on_its_paragraph() {
 /// `t@body/0` and its cells) names the block it named before, as docx-agent's view follows
 /// its renames -- after a table's edit, then a paragraph's.
 #[test]
-fn a_read_follows_the_renames_an_edit_made() {
+fn a_read_by_the_ids_an_open_gives_reads_the_same_blocks_after_edits() {
     let s = session();
     let cell = |text: &str| format!("<w:tc><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>");
     let body = format!(
@@ -701,18 +709,28 @@ fn a_read_follows_the_renames_an_edit_made() {
         cell("c"),
         cell("d")
     );
-    s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
+    let d = s.open(docx(&body), DocKind::Docx, "a.docx").unwrap();
     let context = as_caller("w1");
+    // the blocks unstamped in the bytes have their ids from the first read, and keep them
+    let ids = paragraph_ids(&s, &d);
+    let table = {
+        let head = s.snapshot(&d).unwrap();
+        let docx = head.word().unwrap().docx().unwrap();
+        let id = docx.body().unwrap().ids.tables().iter().next().unwrap().id.clone();
+        id
+    };
+    let (first, second) = (ids[0].clone(), ids[1].clone());
+    let cell = format!("{table}/c0,1");
     let edits = [
-        json!({"tool": "word_edit_table", "doc": "d1", "table": "t@body/0", "action": "insert_row", "index": 1}),
-        json!({"tool": "word_set_text", "doc": "d1", "target": "p@body/0", "text": "first"}),
+        json!({"tool": "word_edit_table", "doc": "d1", "table": table, "action": "insert_row", "index": 1}),
+        json!({"tool": "word_set_text", "doc": "d1", "target": first, "text": "first"}),
     ];
     for edit in edits {
         let mut arguments = edit.clone();
         let tool = arguments.as_object_mut().unwrap().remove("tool").unwrap();
         let done = call(&s, tool.as_str().unwrap(), arguments, &context);
         assert_eq!(done["ok"], json!(true), "{done}");
-        for (target, text) in [("p@body/1", "two"), ("t@body/0/c0,1", "b"), ("t@body/0", "a")] {
+        for (target, text) in [(second.as_str(), "two"), (cell.as_str(), "b"), (table.as_str(), "a")] {
             let reads = [
                 ("word_inspect", json!({"doc": "d1", "target": target})),
                 ("word_read", json!({"doc": "d1", "range": target})),
@@ -727,7 +745,7 @@ fn a_read_follows_the_renames_an_edit_made() {
         let span = call(
             &s,
             "word_read",
-            json!({"doc": "d1", "range": "p@body/1..t@body/0"}),
+            json!({"doc": "d1", "range": format!("{second}..{table}")}),
             &context,
         );
         assert!(span.to_string().contains("two"), "after {tool}: {span}");
@@ -907,4 +925,57 @@ fn nothing_to_undo_lists_the_steps_nearest_the_head_and_says_how_many_were_left_
         json!({"tool": "undo", "arguments": {"doc": "d1"}})
     );
     assert_eq!(redo["error"]["valid_options"][0]["yours"], json!(true));
+}
+
+/// Every paragraph's id the session reads, in order.
+fn paragraph_ids(session: &Session, doc: &DocId) -> Vec<String> {
+    let head = session.snapshot(doc).unwrap();
+    let docx = head.word().unwrap().docx().unwrap();
+    docx.body().unwrap().ids.paragraphs().iter().map(|p| p.id).collect()
+}
+
+#[test]
+fn parts_given_without_ids_are_read_stamped_and_keep_the_ids_of_what_they_kept() {
+    // the stamp-on-open design's refresh rule for a host's commit of parts: a story part
+    // whose blocks lack ids is stamped in memory (saved as given until the next edit), a
+    // block the part held the same before keeping its ids, a command never meeting a block
+    // without one
+    let unstamped = |text: &str| format!("<w:p><w:r><w:t>{text}</w:t></w:r></w:p>");
+    let s = session();
+    let first = format!("{}{}{}", unstamped("one"), unstamped("two"), unstamped("three"));
+    let d = s.open(docx(&first), DocKind::Docx, "a.docx").unwrap();
+    let opened = paragraph_ids(&s, &d);
+    assert!(opened.iter().all(|id| id.starts_with("p:")), "{opened:?}");
+    // given again without ids: "two" changed, a paragraph added before it
+    let given = format!(
+        "{}{}{}{}",
+        unstamped("one"),
+        unstamped("new"),
+        unstamped("TWO"),
+        unstamped("three")
+    );
+    put(&s, &d, &given, &CallContext::default());
+    let now = paragraph_ids(&s, &d);
+    assert!(now.iter().all(|id| id.starts_with("p:")), "{now:?}");
+    assert_eq!(
+        (&now[0], &now[3]),
+        (&opened[0], &opened[2]),
+        "kept: {opened:?} -> {now:?}"
+    );
+    assert!(
+        !opened.contains(&now[1]) && !opened.contains(&now[2]),
+        "{opened:?} -> {now:?}"
+    );
+    // saved as given, until an edit writes it
+    let saved = body_of(&s, &d);
+    assert!(saved.contains("<w:t>new</w:t>") && !saved.contains("paraId"), "{saved}");
+    let done = call(
+        &s,
+        "word_set_text",
+        json!({"doc": "d1", "target": now[3], "text": "Three"}),
+        &CallContext::default(),
+    );
+    assert_eq!(done["changed"], json!([now[3]]), "{done}");
+    assert_eq!(paragraph_ids(&s, &d), now);
+    assert!(body_of(&s, &d).contains(&format!("w14:paraId=\"{}\"", &now[1][2..])));
 }

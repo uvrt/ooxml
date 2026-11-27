@@ -50,7 +50,7 @@ fn editor_within(budget: Arc<dyn CacheBudget>) -> Editor {
 
 /// `doc`'s `accept_loses_text` as kept, and as a document opened afresh reads it.
 fn warm_and_cold(doc: &WordDoc) -> (Vec<LostCell>, Vec<LostCell>) {
-    let cold = WordDoc::open(doc.package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
+    let cold = WordDoc::open(doc.package().package().clone(), Arc::new(Limit::new(64 << 20))).unwrap();
     (accept_loses_text(doc).unwrap(), accept_loses_text(&cold).unwrap())
 }
 

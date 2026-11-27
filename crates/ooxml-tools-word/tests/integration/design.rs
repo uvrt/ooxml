@@ -102,6 +102,7 @@ fn package() -> Package {
 fn reply(arguments: Value) -> Value {
     let package = package();
     let versions = Versions::new();
+    let package = crate::common::read(&package);
     let version = Version::new("a.docx", &package, 1, &versions);
     let (args, _) = WordDesignFacts::accept(arguments, Some("docx")).unwrap();
     match word_design_facts(&args, &version, &Never) {
@@ -195,6 +196,7 @@ fn design_facts_on_a_long_document() {
     };
     let package = Package::open(Arc::from(std::fs::read(path).unwrap()), &Limits::default()).unwrap();
     let versions = Versions::new();
+    let package = crate::common::read(&package);
     let version = Version::new("long.docx", &package, 1, &versions);
     let start = std::time::Instant::now();
     let _ = version.docx().unwrap();

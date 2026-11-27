@@ -115,6 +115,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let rounds: usize = args.get(1).and_then(|r| r.parse().ok()).unwrap_or(3);
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(file).map_err(|e| e.to_string())?);
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).map_err(|e| e.to_string())?;
+    let package = ooxml_word_model::WordPackage::open(package).0;
     let main = ooxml_word_model::parts::main_part(&package)
         .map_err(|e| e.to_string())?
         .ok_or("no main part")?;
@@ -158,7 +159,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     timed(&mut out, "find_text_ms", rounds, || {
         find_text(&find, &v1, &Never).map(drop)
     });
-    let copied = edited(&package, &main)?;
+    let copied = ooxml_word_model::WordPackage::edited(edited(&package, &main)?);
     let reads = Reads {
         d: &d,
         span: &span,
@@ -237,8 +238,8 @@ struct Reads<'a> {
 fn after_edit(
     out: &mut Map<String, Value>,
     name: &str,
-    package: &Package,
-    edited: &Package,
+    package: &ooxml_word_model::WordPackage,
+    edited: &ooxml_word_model::WordPackage,
     reads: &Reads<'_>,
     rounds: usize,
 ) -> Result<(), String> {

@@ -92,6 +92,16 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
+    /// A part put in place as another writer wrote it (a host's commit of parts): a story
+    /// part whose blocks lack ids read with them stamped, kept unwritten
+    /// ([`ooxml_word_model::stamp::received`]); written like any other part by the next
+    /// change of the package.
+    Received {
+        /// The part.
+        part: Arc<str>,
+        /// Its tree, as written.
+        tree: Tree,
+    },
     /// A part put in place as bytes, kept as given (media, or any part a bridged tool wrote
     /// that is not XML).
     Bytes {
@@ -158,6 +168,17 @@ pub enum DrawFrom {
     Annotation(u32),
     /// What a stand-in was drawn as by a [`Change::Draw`] before it in the transaction.
     Drawn(Arc<str>),
+    /// A textId renewed: the next value of `seed`, unless `part` is read with ids given at
+    /// open and not yet written in the version the change's transaction begins on where it
+    /// is applied -- an unwritten id counts as fresh at its block's first write, so the
+    /// attribute is left as it is. Decided where applied, so a first edit committed past
+    /// another renews as a serial run would.
+    Renewed {
+        /// The sequence.
+        seed: Arc<str>,
+        /// The part the block is in.
+        part: Arc<str>,
+    },
 }
 
 /// An id drawn when a splice is applied, into an attribute of the element it inserts: the
@@ -200,6 +221,7 @@ impl Change {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
             | Change::Put { part, .. }
+            | Change::Received { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. }

@@ -43,7 +43,13 @@ fn picture_blobs() -> BlobList {
 /// `author` when given): the replies, and the main part as it was left.
 fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
     let package = Package::open(Arc::from(FIXTURE), &Limits::default()).unwrap();
-    let editor = Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap();
+    let editor = Editor::open(
+        package.clone(),
+        StoreConfig::default(),
+        Arc::new(Still),
+        Arc::new(Unlimited),
+    )
+    .unwrap();
     let opened = editor.store().snapshot().doc().clone();
     let caller = Caller::anonymous();
     let blobs = picture_blobs();
@@ -57,7 +63,8 @@ fn calls(calls: &[Value], author: Option<&str>) -> (Vec<Value>, String) {
         .with_blobs(Some(&blobs));
     let mut replies = Vec::new();
     for arguments in calls {
-        let mut arguments = arguments.clone();
+        // the fixture's blocks named as an unstamped reading did: as it is read now
+        let mut arguments = crate::common::now(&package, arguments.clone());
         arguments["doc"] = json!("d1");
         let (args, _) = WordDrawings::accept(arguments, Some("docx")).unwrap();
         replies.push(Value::Object(word_drawings(&args, &editing).to_json()));

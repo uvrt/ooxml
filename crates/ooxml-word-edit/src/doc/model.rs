@@ -47,10 +47,15 @@ impl DocModel for WordDoc {
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
+            Change::Received { part, tree } => {
+                let (package, ids) = self.received(part, tree)?;
+                *self = self.succeed(package, ids);
+                return Ok(());
+            }
             Change::Bytes { part, bytes } => (self.package.with_bytes(part, Arc::clone(bytes)), self.ids.clone()),
             Change::Remove { part } => (self.package.without(part)?, self.ids.clone()),
             Change::Restore { parts, from } => {
-                let mut package = self.package.clone();
+                let mut package = self.package.package().clone();
                 for part in parts.iter() {
                     package = package.restored(part, from)?;
                 }
@@ -58,9 +63,11 @@ impl DocModel for WordDoc {
             }
             Change::People { add, tidy, .. } => (self.people(add.as_deref(), tidy.as_deref())?, self.ids.clone()),
             Change::Ids(added) => {
+                // the package is as it was: no part is written
                 let mut ids = self.ids.clone();
                 ids.apply(added);
-                (self.package.clone(), ids)
+                *self = self.succeed(self.package.package().clone(), ids);
+                return Ok(());
             }
             Change::Draw { seed, stand_ins } => {
                 let (values, added) = self.ids.draw(seed, stand_ins.len(), &self.shared.sequences);
@@ -83,10 +90,14 @@ impl DocModel for WordDoc {
                     crate::validate::annotation_ceiling(self).map_err(|e| ModelError::Unreadable(e.to_string()))?;
                 let mut ids = self.ids.clone();
                 ids.number_from(ceiling + 1);
-                (self.package.clone(), ids)
+                *self = self.succeed(self.package.package().clone(), ids);
+                return Ok(());
             }
         };
-        *self = self.succeed(package, ids);
+        // a change to the package writes every part read with ids given at open: Word keeps
+        // a document's ids only where every story's blocks have theirs (paraid-durability),
+        // and the parts are read as they are written (no block is renamed)
+        *self = self.succeed(package.written(), ids);
         Ok(())
     }
 
@@ -124,13 +135,16 @@ impl DocModel for WordDoc {
                 patch: patch.inverse(),
                 keys: Arc::clone(keys),
             },
-            Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => Change::Restore {
+            Change::Put { part, .. }
+            | Change::Received { part, .. }
+            | Change::Bytes { part, .. }
+            | Change::Remove { part } => Change::Restore {
                 parts: Arc::from([Arc::clone(part)]),
-                from: self.package.clone(),
+                from: self.package.package().clone(),
             },
             Change::Restore { parts, .. } => Change::Restore {
                 parts: Arc::clone(parts),
-                from: self.package.clone(),
+                from: self.package.package().clone(),
             },
             Change::People { .. } => {
                 let main = self
@@ -140,7 +154,7 @@ impl DocModel for WordDoc {
                     .clone();
                 Change::Restore {
                     parts: crate::people::parts_written(&self.package, &main)?.into(),
-                    from: self.package.clone(),
+                    from: self.package.package().clone(),
                 }
             }
             // ids given are never given again: nothing to take back
@@ -176,7 +190,10 @@ impl DocModel for WordDoc {
                     into.insert(key.clone());
                 }
             }
-            Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
+            Change::Put { part, .. }
+            | Change::Received { part, .. }
+            | Change::Bytes { part, .. }
+            | Change::Remove { part } => {
                 let part = PartName::normalize(part);
                 into.insert(Key::StyleUse(part.clone()));
                 into.insert(Key::Part(part));
@@ -240,6 +257,8 @@ impl DocModel for WordDoc {
         }
         self.spaced = 0;
         self.as_given = false;
+        self.begun = Some(self.package.clone());
+        self.stamped = Arc::default();
     }
 
     fn set_up(&mut self, setup: &Setup) {

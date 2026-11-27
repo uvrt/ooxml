@@ -189,16 +189,6 @@ def test_an_undone_insertion_s_id_is_not_given_to_the_next_insertion(box):
     assert "Second try." in ok(box, session, "word_read", doc=doc, range=again).data
 
 
-def test_an_alias_from_stamping_still_resolves(box, markup_doc):
-    session, doc = _opened(box, markup_doc.read_bytes())
-    volatile = next(block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("p@"))
-    result = ok(box, session, "word_set_text", doc=doc, target=volatile, text="Stamped.")
-    assert volatile in result.renamed
-    assert "Stamped." in ok(box, session, "word_read", doc=doc, range=volatile).data
-    ok(box, session, "word_delete", doc=doc, target=result.renamed[volatile])
-    refused(box, session, "word_read", doc=doc, range=volatile)
-
-
 def test_the_same_edits_write_the_same_bytes(box):
     def run() -> bytes:
         session, doc = _opened(box)
@@ -448,19 +438,3 @@ def test_a_rebuilt_table_of_contents_keeps_its_lines_ids_and_retires_the_lines_i
     ok(box, session, "word_fields", doc=doc, action="update")
     now = _toc_lines(session, doc)
     assert now[:-1] == kept and now[-1] not in lines and added not in lines
-
-
-def test_a_positional_table_id_in_a_cell_address_resolves_after_the_ids_are_stamped(box):
-    """A file without paraIds: its table is ``t@body/0`` until the first edit stamps the ids;
-    held from before, the id still names the table -- alone and in a cell address."""
-    table = ('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr><w:tblGrid><w:gridCol w:w="3000"/>'
-             '<w:gridCol w:w="3000"/></w:tblGrid>'
-             + "".join("<w:tr>" + "".join(f"<w:tc><w:p><w:r><w:t>r{r}c{c}</w:t></w:r></w:p></w:tc>" for c in range(2))
-                       + "</w:tr>" for r in range(2)) + "</w:tbl>")
-    session, doc = _opened(box, word_docs.with_body(word_docs.paragraph("Before.") + table))
-    held = next(block for block, _ in word_docs.blocks(box, session, doc) if block.startswith("t"))
-    assert held.startswith("t@")
-    ok(box, session, "word_edit_table", doc=doc, table=held, action="insert_row", index=1)   # stamps the ids
-    ok(box, session, "word_inspect", doc=doc, target=held)
-    ok(box, session, "word_format", doc=doc, targets=[f"{held}/c1,0"], bold=True)
-

@@ -139,9 +139,10 @@ ENCODING_FIELDS = {"save_document": frozenset({"size"})}
 #: The tool design rules a known difference may give (decision D4: rule 1, acceptance).
 ALLOWED_RULES = frozenset({1})
 #: The user decisions a known difference may give instead (one problems shape; optimistic
-#: batches; a limit refusal's numbers in its details -- round 60, R142 -- all 2026-11-25).
+#: batches; a limit refusal's numbers in its details -- round 60, R142 -- all 2026-11-25; stamp-on-open,
+#: 2026-11-26).
 ALLOWED_DECISIONS = frozenset({"structured-problems-2026-11-25", "optimistic-batches-2026-11-25",
-                               "limits-in-details-2026-11-25"})
+                               "limits-in-details-2026-11-25", "stamp-on-open-2026-11-26"})
 #: Repository folders whose files an input may name instead of a copy in host/inputs.
 REPOSITORY_INPUTS = (ORACLE / "fixtures", ORACLE / "corpus", ORACLE / "cases" / "inputs",
                      DOCX_AGENT / "tests" / "goldens")

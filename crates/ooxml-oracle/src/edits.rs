@@ -371,14 +371,15 @@ fn ranges_result(out: &RangesEdited) -> Value {
 pub(crate) fn report<O>(opened: &Package, done: &Edited<O>, result: Value) -> Value {
     let doc: &WordDoc = done.version.doc();
     let mut parts = Map::new();
+    // as saved: a part read with the ids given at open and not written is the input's
     for name in doc.package().part_names() {
-        let same = matches!((opened.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b));
+        let same = matches!((opened.part(&name), doc.package().part(&name)), (Some(a), Some(b)) if a.same(b.saved()));
         if same {
             continue;
         }
         let bytes = doc
             .package()
-            .read(&name)
+            .read_saved(&name)
             .ok()
             .flatten()
             .unwrap_or_else(|| Arc::from(Vec::new()));
