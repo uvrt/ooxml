@@ -210,7 +210,27 @@ pub struct LaidPage {
     /// In mode 15, the page's note area: the footnotes of its columns, laid out in them
     /// below the text (`note_area`).
     pub note_area: Option<Arc<NoteArea>>,
+    /// What it is drawn as: its own as it is laid out, kept by a page moved only in its
+    /// flow's places ([`crate::incremental`]), which draws the same.
+    pub drawn_as: Arc<DrawnAs>,
 }
+
+/// What tells a laid page from one laid out apart: each page laid out has its own, and a
+/// page moved only in its flow's places -- the same flow items at other indexes, on the
+/// same page with the same number -- keeps the one it had, because it draws the same
+/// (paths aside: they name blocks by place). What a comparison of two versions' pages and
+/// the digests kept across versions know a page by. Equal to every other: two laid pages
+/// are equal by what they hold.
+#[derive(Debug, Default)]
+pub struct DrawnAs(());
+
+impl PartialEq for DrawnAs {
+    fn eq(&self, _: &DrawnAs) -> bool {
+        true
+    }
+}
+
+impl Eq for DrawnAs {}
 
 /// One text column of a page as laid out, as its drawing reads it (`paginate.Frame`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,7 +310,15 @@ impl LaidPage {
             body_end: Px::ZERO,
             columns: Vec::new(),
             note_area: None,
+            drawn_as: Arc::default(),
         }
+    }
+
+    /// The page as laid out, drawn as its own (not as a page it was made from).
+    #[must_use]
+    pub fn laid(mut self) -> Arc<LaidPage> {
+        self.drawn_as = Arc::default();
+        Arc::new(self)
     }
 }
 
@@ -497,7 +525,7 @@ impl<'a> Paginator<'a> {
                 Err((mut laid, stopped)) => {
                     laid.page = page;
                     laid.number_before = number_before;
-                    out.pages.push(Arc::new(laid));
+                    out.pages.push(laid.laid());
                     out.stopped = Some(stopped);
                     return (out, None);
                 }
@@ -528,7 +556,7 @@ impl<'a> Paginator<'a> {
                 carry = Arc::from(Vec::new());
                 page += 1;
             }
-            out.pages.push(Arc::new(laid));
+            out.pages.push(laid.laid());
         }
         if cx.items.is_empty() && out.info.is_empty() {
             self.empty_page(&mut out);
@@ -551,7 +579,7 @@ impl<'a> Paginator<'a> {
         });
         let mut laid = LaidPage::empty(&Position::default(), Arc::from(Vec::new()));
         laid.number_before = number - 1;
-        out.pages.push(Arc::new(laid));
+        out.pages.push(laid.laid());
     }
 
     /// The page starting at `position`: its number and story kind, any blank pages Word
