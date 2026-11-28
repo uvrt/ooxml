@@ -630,7 +630,7 @@ fn the_host_feed_answers_in_the_wire_shape_and_a_deck_has_none() {
     assert_eq!(next["full"], json!(false));
     assert!(next["pages"].get("list").is_none());
     let changed = next["pages"]["changed"].as_array().unwrap();
-    assert_eq!(changed.len(), 1, "{next}");
+    assert_eq!(changed.len(), 1, "{next:?}");
     assert_eq!(changed[0]["groups"].as_object().unwrap().len(), 1);
     assert_eq!(changed[0]["moved"], json!({}));
     assert_eq!(changed[0]["removed"], json!([]));
