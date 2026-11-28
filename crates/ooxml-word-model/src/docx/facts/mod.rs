@@ -289,7 +289,7 @@ mod tests {
     use crate::ids::W;
     use ooxml_base::XmlLimits;
 
-    const DOC: &str = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:sdt><w:sdtContent><w:p><w:ins w:id="1"><w:r><w:t>a</w:t></w:r></w:ins></w:p></w:sdtContent></w:sdt><w:p><w:hyperlink w:anchor="x"/><mc:AlternateContent><mc:Choice/><mc:Fallback><w:sdt/><w:hyperlink w:anchor="y"/></mc:Fallback></mc:AlternateContent></w:p><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+    const DOC: &str = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:sdt><w:sdtContent><w:p><w:ins w:id="1"><w:r><w:t>a</w:t></w:r></w:ins></w:p></w:sdtContent></w:sdt><w:p><w:hyperlink w:anchor="x"/><mc:AlternateContent><mc:Choice/><mc:Fallback><w:sdt/><w:hyperlink w:anchor="y"/></mc:Fallback></mc:AlternateContent></w:p><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"#;
 
     #[test]
     fn one_walk_finds_what_the_walks_did_and_a_later_version_reuses_its_blocks() {
