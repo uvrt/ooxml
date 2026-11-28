@@ -372,7 +372,7 @@
 {"digest":"sha256:ffee113847a8769e88dd8a17ad41c4c9","id":"objects:7381aeef637cecdf","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f1d131094ed6080e5a26c4b68c5c93d2","id":"objects:89c32676af9d6a2f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4b861071843b561b032bf4076f1f0aee","id":"objects:cf26b5c6291c056b","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:5da4c0c9500da079a057ea23584db1d7","id":"objects:ec1a87dc8097553b","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:429bcbedea054ca920e498ebf5af38e5","id":"objects:ec1a87dc8097553b","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:e85cc5465d507a311b1ba8643a5a0e95","id":"objects:671bf20119719cf8","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:809978ab9591354a6f57bdf65260a5bb","id":"objects:f48660ff0d09e0f5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:88531ba374e51abf57b44a622eab3ffc","id":"objects:8ae5f1bdac3fba36","source":"frozen Python a512c901, unmeasured"}
@@ -450,7 +450,7 @@
 {"digest":"sha256:530c0552fb69fafc62f99e38bb75e50c","id":"objects:8b65a7e0df1c3daa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:70f94f165261015199297c8456b8f119","id":"objects:591cca540b4245f4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:76fba5c25a2d969f760e91a29df2abab","id":"objects:8e14e2bce7ea5469","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:9fa6b3ac767919eb9bed55b9a1b9e1bb","id":"objects:f70024e974115ba0","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:8c7b58f931c1eb27a9782ca397bb8525","id":"objects:f70024e974115ba0","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:6849468f98b4bab3dc772b19878a572d","id":"objects:16a45b9354026ae2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bded557aa858ceb6d557f20be946249d","id":"objects:0766d63866234018","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:921cb9c2a68bf380a504e3146c5a88ae","id":"objects:0c983d55e8d47511","source":"frozen Python a512c901, unmeasured"}
@@ -633,7 +633,7 @@
 {"digest":"sha256:ffee113847a8769e88dd8a17ad41c4c9","id":"objects:7979a7b8d37a7f53","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:6e6d35cda3ad0bff7b2354cf847d9eaf","id":"objects:df7c01bb80bf2dd5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:e761df4e5a1ef6a2c3e182f486570a17","id":"objects:b69d0e321b2e4daf","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:7db86429e94d3842dfa66c346028c07e","id":"objects:6daa1458205a68ae","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:a411f767153b5a1ece4e97d1f7c1f8cf","id":"objects:6daa1458205a68ae","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:e85cc5465d507a311b1ba8643a5a0e95","id":"objects:a3f19efe53a71003","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:809978ab9591354a6f57bdf65260a5bb","id":"objects:28c80e6eb3febc5c","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:88531ba374e51abf57b44a622eab3ffc","id":"objects:7563df39759eac92","source":"frozen Python a512c901, unmeasured"}
@@ -711,7 +711,7 @@
 {"digest":"sha256:530c0552fb69fafc62f99e38bb75e50c","id":"objects:b8232e16a83a4fb4","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:d53f37e3b729a42d8105b4fb9b49eeba","id":"objects:fedb537737c7fefa","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:4ed80004b83d978d6c9e8656c3a24941","id":"objects:6bdc30c112db1bf2","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:da2a24a579e00a0b4980f54906ce812b","id":"objects:f820d4e993b7d446","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:c28a55766a14d4724290b129bdb6f591","id":"objects:f820d4e993b7d446","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:6849468f98b4bab3dc772b19878a572d","id":"objects:cd11c7cecdc4d1b2","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:bded557aa858ceb6d557f20be946249d","id":"objects:ef0c138b6e42c244","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:921cb9c2a68bf380a504e3146c5a88ae","id":"objects:71355e908a3c5ab8","source":"frozen Python a512c901, unmeasured"}

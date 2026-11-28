@@ -1,6 +1,8 @@
 //! Owns: a `w:tbl` in the final view (Accept All; measured, docx2svg's ROADMAP "Tables --
 //! measured" stage 7f and "Revisions -- measured" R.3): deleted rows and cells left out, the
-//! grid columns only they covered going with them, a deleted cell whose content is kept
+//! grid as Word rebuilds it from the cells left ([`ViewGrid`]: the columns only removed cells
+//! covered gone, those no cell edge divides one, spans counted in its columns), a deleted
+//! cell whose content is kept
 //! absorbed by the cell before it, a cell whose last mark is deleted taking the next cell
 //! in, content moved out of the table before its row; and where each cell is in its table,
 //! for the table style's regions ([`cell_conditions`], measured round 58).
@@ -14,11 +16,12 @@ use crate::docx::tables::{merge_heads, VMerge};
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
 use crate::value::{text, Key, Props, Text, Value};
-use crate::view::{cell_ends, content_kept, CellEnds, View};
+use crate::view::{cell_ends, content_kept, CellEnds, View, ViewGrid};
 use crate::w;
 use crate::xmlread::{attr, attr_on, child, elements, local};
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::Arc;
 
 /// Whether `view` removes a cell.
@@ -104,18 +107,29 @@ fn absorb(previous: &mut Props, deleted: &Props) {
     }
 }
 
+/// A cell's properties in the reader's view: its side of a pending properties change
+/// (`View::cell_properties`), in the final view a pending tracked merge as accepting leaves
+/// it, and a vertical merge only the other side has (`View::merge_element`).
 fn accepted_cell_properties(reader: &Reader<'_>, cell: &Element) -> Props {
+    let view = reader.view();
     let props = child(cell, "tcPr");
-    let mut out = table_properties(props, reader.colours());
-    match props
+    let mut out = table_properties(props.map(|p| view.cell_properties(p)), reader.colours());
+    let tracked = props
+        .filter(|_| view == View::Final)
         .and_then(|p| w::TcPr::new(p).merge())
-        .and_then(w::CellMerge::v_merge)
-    {
+        .and_then(w::CellMerge::v_merge);
+    match tracked {
         Some("rest") => {
             out.insert(Key::Borrowed("vMerge"), Value::Str(text("restart")));
         }
         Some("cont") => {
             out.insert(Key::Borrowed("vMerge"), Value::Str(text("continue")));
+        }
+        _ if !out.contains_key("vMerge") => {
+            if let Some(merge) = view.merge_element(cell) {
+                let value = attr(merge, "val").filter(|v| !v.is_empty()).unwrap_or("continue");
+                out.insert(Key::Borrowed("vMerge"), Value::Str(text(value)));
+            }
         }
         _ => {}
     }
@@ -159,47 +173,6 @@ fn moved_out(blocks: &[Block]) -> Vec<Block> {
             })),
             other => other.clone(),
         })
-        .collect()
-}
-
-/// The grid columns only cells with a pending deletion (or gone, `gone`) cover, in every
-/// row covering them. Only the grid's `count` columns are answered, so only those are
-/// counted: a span past them stops there.
-fn vacated_columns(view: View, rows: &[&Element], count: usize, gone: &HashSet<*const Element>) -> HashSet<usize> {
-    let mut covered: std::collections::BTreeMap<i64, bool> = std::collections::BTreeMap::new();
-    let end = i64::try_from(count).unwrap_or(i64::MAX);
-    for row in rows {
-        let props = child(row, "trPr").map(w::TrPr::new);
-        let mut column = props.and_then(w::TrPr::grid_before).and_then(w::Val::int).unwrap_or(0);
-        let mut skipped: Vec<i64> = (0..column.min(end)).collect();
-        let mut kept_before = false;
-        for cell in level_of(row, "tc") {
-            let span = child(cell, "tcPr")
-                .and_then(|p| w::TcPr::new(p).span())
-                .and_then(w::Val::int)
-                .filter(|s| *s != 0)
-                .unwrap_or(1)
-                .max(1);
-            let deleted = (removed(view, cell) && !(kept_before && content_kept(cell)))
-                || gone.contains(&std::ptr::from_ref(cell));
-            kept_before = kept_before || !removed(view, cell);
-            for c in column..column.saturating_add(span).min(end) {
-                let was = covered.get(&c).copied().unwrap_or(true);
-                covered.insert(c, was && deleted);
-            }
-            column = column.saturating_add(span);
-        }
-        let after = props.and_then(w::TrPr::grid_after).and_then(w::Val::int).unwrap_or(0);
-        skipped.extend(column..column.saturating_add(after).min(end));
-        for c in skipped {
-            covered.insert(c, false);
-        }
-    }
-    covered
-        .into_iter()
-        .filter(|(c, only)| *only && *c >= 0)
-        .filter_map(|(c, _)| usize::try_from(c).ok())
-        .filter(|c| *c < count)
         .collect()
 }
 
@@ -300,6 +273,9 @@ struct Built {
     cell_properties: Vec<Arc<[Props]>>,
     conditions: Vec<Arc<[Arc<[Text]>]>>,
     cell_places: Vec<Arc<[(u32, u32)]>>,
+    /// Each row's cells' source grid columns (a cell's own, and those of the deleted cells
+    /// whose content it takes), and where its `w:gridAfter` begins and ends.
+    columns: Vec<Columns>,
     moved: Vec<(usize, Vec<Block>)>,
 }
 
@@ -339,6 +315,42 @@ impl Reader<'_> {
         )
     }
 
+    /// A row's cells kept, by their place among its cells, with their properties (a deleted
+    /// cell whose content stays absorbed by the cell before it); each one's source grid
+    /// columns, and its `w:gridAfter`'s, into `built`.
+    fn cells_kept<'a>(
+        &self,
+        plan: &Plan<'_>,
+        shape: &Shape<'_>,
+        all: &[&'a Element],
+        kept: &HashSet<*const Element>,
+        built: &mut Built,
+    ) -> (Vec<(usize, &'a Element)>, Vec<Props>) {
+        let mut cells: Vec<(usize, &Element)> = Vec::new();
+        let mut props_of: Vec<Props> = Vec::new();
+        let spec = crate::docx::tables::RowSpec::of(plan.row);
+        let mut column = spec.before;
+        let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
+        for (j, cell) in all.iter().enumerate() {
+            let columns = column..column.saturating_add(self.view().span(cell));
+            column = columns.end;
+            if kept.contains(&std::ptr::from_ref(*cell)) {
+                cells.push((j, cell));
+                let mut props = accepted_cell_properties(self, cell);
+                headed(&mut props, shape.heads.get(&(plan.index, j)));
+                props_of.push(props);
+                ranges.push(vec![columns]);
+            } else if let Some(last) = props_of.last_mut().filter(|_| widens(self.view(), cell)) {
+                absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
+                if let Some(parts) = ranges.last_mut() {
+                    parts.push(columns);
+                }
+            }
+        }
+        built.columns.push((ranges, column..column.saturating_add(spec.after)));
+        (cells, props_of)
+    }
+
     fn row(&self, k: usize, plan: &Plan<'_>, shape: &Shape<'_>, fields: &mut Fields, built: &mut Built) {
         let style = shape.style;
         let kept: HashSet<*const Element> = plan
@@ -360,18 +372,7 @@ impl Reader<'_> {
                 .collect();
             shape.at.cell((count(plan.index), count(j)), &rel)
         };
-        let mut cells: Vec<(usize, &Element)> = Vec::new();
-        let mut props_of: Vec<Props> = Vec::new();
-        for (j, cell) in all.iter().enumerate() {
-            if kept.contains(&std::ptr::from_ref(*cell)) {
-                cells.push((j, cell));
-                let mut props = accepted_cell_properties(self, cell);
-                headed(&mut props, shape.heads.get(&(plan.index, j)));
-                props_of.push(props);
-            } else if let Some(last) = props_of.last_mut().filter(|_| widens(self.view(), cell)) {
-                absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
-            }
-        }
+        let (cells, props_of) = self.cells_kept(plan, shape, &all, &kept, built);
         let row_conditions: Vec<Arc<[Text]>> = (0..cells.len())
             .map(|n| {
                 Arc::from(cell_conditions(
@@ -442,7 +443,6 @@ impl Reader<'_> {
         let grid_nodes: Vec<i64> = child(element, "tblGrid")
             .map(|g| w::TblGrid::new(g).columns().map(|c| c.w().unwrap_or(0)).collect())
             .unwrap_or_default();
-        let mut gone: HashSet<*const Element> = HashSet::new();
         let mut plans = Vec::new();
         for (index, row) in &row_elements {
             let rel = placed_rows.get(*index).map(|(r, _)| r.clone()).unwrap_or_default();
@@ -450,12 +450,7 @@ impl Reader<'_> {
                 .into_iter()
                 .filter(|c| !removed(self.view(), c))
                 .collect();
-            let CellEnds { groups, gone: lost } = cell_ends(&shown);
-            gone.extend(
-                lost.iter()
-                    .filter_map(|&n| shown.get(n))
-                    .map(|c| std::ptr::from_ref(*c)),
-            );
+            let CellEnds { groups, .. } = cell_ends(&shown);
             plans.push(Plan {
                 index: *index,
                 rel,
@@ -478,16 +473,11 @@ impl Reader<'_> {
         for (k, plan) in plans.iter().enumerate() {
             self.row(k, plan, &shape, fields, &mut built);
         }
-        let grid_of = |start: usize, end: usize| -> Arc<[i64]> {
+        let grid_of = |start: usize, end: usize| -> ViewGrid {
             let rows: Vec<&Element> = rows_only.get(start..end).unwrap_or_default().to_vec();
-            let vacated = vacated_columns(self.view(), &rows, grid_nodes.len(), &gone);
-            grid_nodes
-                .iter()
-                .enumerate()
-                .filter(|(k, _)| !vacated.contains(k))
-                .map(|(_, w)| *w)
-                .collect()
+            ViewGrid::of(self.view(), &rows, grid_nodes.len())
         };
+        let whole = grid_of(0, plans.len());
         let (key, unkeyed) = at.name();
         let table = Table {
             style_id: (!style.is_empty()).then(|| style.clone()),
@@ -495,7 +485,7 @@ impl Reader<'_> {
             key,
             unkeyed_cells: unkeyed.clone(),
             unkeyed,
-            grid: grid_of(0, plans.len()),
+            grid: Arc::from(whole.widths(&grid_nodes)),
             properties: table_properties(props_element, self.colours()),
             row_properties: Arc::from(std::mem::take(&mut built.row_properties)),
             cell_properties: Arc::from(std::mem::take(&mut built.cell_properties)),
@@ -504,7 +494,16 @@ impl Reader<'_> {
             cell_places: Arc::from(std::mem::take(&mut built.cell_places)),
             joined: false,
         };
-        split(table, built.moved, &grid_of)
+        let columns = std::mem::take(&mut built.columns);
+        split(
+            table,
+            built.moved,
+            &|start, end| {
+                let grid = grid_of(start, end);
+                (Arc::from(grid.widths(&grid_nodes)), grid)
+            },
+            &columns,
+        )
     }
 }
 
@@ -513,40 +512,116 @@ fn count(k: usize) -> u32 {
     u32::try_from(k).unwrap_or(u32::MAX)
 }
 
-fn part_of(table: &Table, start: usize, end: usize, grid: Arc<[i64]>) -> Table {
+/// `table` with each cell's span and each row's `w:gridBefore` and `w:gridAfter` counted in
+/// `grid`'s columns, where they differ from the source grid's; `columns` each row's cells'
+/// source columns and its `w:gridAfter`'s, from `table`'s first row.
+fn regridded(table: Table, grid: &ViewGrid, columns: &[Columns]) -> Table {
+    if grid.is_source() {
+        return table;
+    }
+    let count = |span: usize| Value::Int(i64::try_from(span).unwrap_or(i64::MAX));
+    let set = |props: &mut Props, name: &'static str, value: Value, none: bool| {
+        if none {
+            props.remove(name);
+        } else {
+            props.insert(Key::Borrowed(name), value);
+        }
+    };
+    let cell_properties = table
+        .cell_properties
+        .iter()
+        .zip(columns)
+        .map(|(row, (ranges, _))| {
+            let cells: Vec<Props> = row
+                .iter()
+                .zip(ranges)
+                .map(|(props, parts)| {
+                    let mut props = props.clone();
+                    let span = grid.span_of(parts);
+                    set(&mut props, "gridSpan", count(span), span == 1);
+                    props
+                })
+                .collect();
+            Arc::from(cells)
+        })
+        .collect();
+    let row_properties = table
+        .row_properties
+        .iter()
+        .zip(columns)
+        .map(|(props, (ranges, after))| {
+            let mut props = props.clone();
+            let first = ranges.first().and_then(|p| p.first()).map_or(after.start, |r| r.start);
+            for (name, range) in [("gridBefore", 0..first), ("gridAfter", after.clone())] {
+                if props.contains_key(name) {
+                    set(&mut props, name, count(grid.span(&range)), false);
+                }
+            }
+            props
+        })
+        .collect();
+    Table {
+        cell_properties,
+        row_properties,
+        ..table
+    }
+}
+
+fn part_of(table: &Table, start: usize, end: usize, grid: (Arc<[i64]>, ViewGrid), columns: &[Columns]) -> Table {
     fn slice<T: Clone>(items: &[T], start: usize, end: usize) -> Arc<[T]> {
         Arc::from(items.get(start..end).unwrap_or_default().to_vec())
     }
-    Table {
+    let part = Table {
         rows: slice(&table.rows, start, end),
-        grid,
+        grid: grid.0,
         row_properties: slice(&table.row_properties, start, end),
         cell_properties: slice(&table.cell_properties, start, end),
         conditions: slice(&table.conditions, start, end),
         cell_places: slice(&table.cell_places, start, end),
         joined: true,
         ..table.clone()
-    }
+    };
+    regridded(part, &grid.1, columns.get(start..end).unwrap_or_default())
 }
 
-fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: &dyn Fn(usize, usize) -> Arc<[i64]>) -> Vec<Block> {
+/// A row's cells' source grid columns, each cell's in parts (its own, and those of the deleted
+/// cells whose content it takes), and its `w:gridAfter`'s.
+type Columns = (Vec<Vec<Range<usize>>>, Range<usize>);
+
+/// A part's grid: its widths and its columns.
+type PartGrid<'g> = &'g dyn Fn(usize, usize) -> (Arc<[i64]>, ViewGrid);
+
+fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: PartGrid<'_>, columns: &[Columns]) -> Vec<Block> {
     if moved.is_empty() {
         return if table.rows.is_empty() {
             Vec::new()
         } else {
-            vec![Block::Table(Arc::new(table))]
+            let (_, grid) = grid_of(0, table.rows.len());
+            vec![Block::Table(Arc::new(regridded(table, &grid, columns)))]
         };
     }
     let mut out = Vec::new();
     let mut start = 0;
     for (row, blocks) in moved {
         if row > start {
-            out.push(Block::Table(Arc::new(part_of(&table, start, row, grid_of(start, row)))));
+            out.push(Block::Table(Arc::new(part_of(
+                &table,
+                start,
+                row,
+                grid_of(start, row),
+                columns,
+            ))));
         }
         out.extend(blocks);
         start = row;
     }
     let end = table.rows.len();
-    out.push(Block::Table(Arc::new(part_of(&table, start, end, grid_of(start, end)))));
+    out.push(Block::Table(Arc::new(part_of(
+        &table,
+        start,
+        end,
+        grid_of(start, end),
+        columns,
+    ))));
     out
 }

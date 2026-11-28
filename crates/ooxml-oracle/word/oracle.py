@@ -12,9 +12,16 @@ and ours would destroy one of its.  So (ROADMAP.md, "Word is one instance per ma
   oracle is skipped.
 * **Word already running means someone is using it** -- a person, or a tool that does not
   take the lock -- so :func:`session` still refuses to start when Word is running, rather
-  than wait, kill or share, and the tests skip with "Word is in use".
+  than wait, kill or share, and the tests skip with "Word is in use".  The one exception is
+  a Word the oracle itself left behind (:func:`_left_behind_recovered`): every document it
+  holds open is in the staging folder and it has no other window; it is quit gracefully.
 * **Recovery only under the lock**, and only of what this helper started: quitting the Word
-  it launched, deleting ``~$`` files in its own staging directory.
+  it launched, deleting ``~$`` files in its own staging directory.  A session ended by a
+  signal (``SIGTERM`` or ``SIGHUP``: a ``timeout`` around the run, a cancelled job) recovers
+  too, before the lock goes (:func:`_signals_end_the_session`).  Before that, such a signal
+  ended the process at once, and the lock went with it while the Word it had launched kept
+  running, so every later session refused it as "Word is in use" (lane fix-final-grid,
+  2026-11-28).
 * **Cached by content.**  Exports and re-saves are cached by the SHA-256 of the input, in
   :data:`ORACLE_DIR` (outside the repository: a Word PDF carries font subsets).  The cache is
   bounded (:func:`evict`, at the start of every session, under the lock): the answers least
@@ -34,7 +41,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +119,89 @@ def word_running() -> bool:
     return subprocess.run(["pgrep", "-x", "Microsoft Word"], capture_output=True).returncode == 0
 
 
+#: The document files Word may hold open, by extension.
+_DOCUMENT_SUFFIXES = (".docx", ".docm", ".dotx", ".dotm", ".doc", ".dot", ".rtf", ".odt", ".pdf", ".txt")
+
+
+def _word_documents() -> list[Path] | None:
+    """The document files a running Word holds open (``lsof``), or ``None`` where that cannot
+    be read."""
+    found = subprocess.run(["pgrep", "-x", "Microsoft Word"], capture_output=True, text=True)
+    pids = found.stdout.split()
+    if found.returncode != 0 or len(pids) != 1:
+        return None
+    try:
+        listing = subprocess.run(["lsof", "-p", pids[0], "-Fn"], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        return None
+    paths = [Path(line[1:]) for line in listing.stdout.splitlines() if line.startswith("n/")]
+    return [p for p in paths if p.suffix.lower() in _DOCUMENT_SUFFIXES and ".app/" not in str(p)]
+
+
+def _word_windows() -> int | None:
+    """How many windows a running Word has, or ``None`` where it does not answer."""
+    try:
+        answer = subprocess.run(["osascript", "-e", 'tell application "Microsoft Word" to count windows'],
+                                capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return None
+    return int(answer.stdout.strip()) if answer.returncode == 0 and answer.stdout.strip().isdigit() else None
+
+
+def _left_behind_recovered() -> bool:
+    """Whether a Word running with no one holding the lock (the caller holds it) was the
+    oracle's own, left behind by a session that could not clean up (SIGKILL, a crash of the
+    helper), and is now quit.  It is the oracle's only when every document it holds open is
+    in :data:`ORACLE_DIR` (at least one) and it has no other window; it is then quit
+    gracefully (``quit saving no``, up to 60 s) and the quitting logged.  Anything else is
+    someone's Word: left alone, and the session refuses as "Word is in use"."""
+    import sys
+
+    documents = _word_documents()
+    if not documents:
+        return False
+    staging = ORACLE_DIR.resolve()
+    if not all(staging in p.resolve().parents for p in documents):
+        return False
+    windows = _word_windows()
+    if windows is None or windows > len(documents):
+        return False
+    print(f"oracle: quitting a Word the oracle left behind (holding {', '.join(p.name for p in documents)})",
+          file=sys.stderr)
+    try:
+        subprocess.run(["osascript", "-e", 'tell application "Microsoft Word" to quit saving no'],
+                       capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False
+    for _ in range(300):
+        if not word_running():
+            Session._clear_locks()
+            return True
+        time.sleep(0.2)
+    return False
+
+
+@contextlib.contextmanager
+def _signals_end_the_session() -> Iterator[None]:
+    """While a session runs, ``SIGTERM`` and ``SIGHUP`` raise :class:`SystemExit` (exit
+    status 128 + the signal), so the session's clean-up runs (it quits the Word it started)
+    before its lock is released.  Python's default for both ends the process without it.
+    The handlers are set only in the main thread, which is the only thread that can set them."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def end(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    previous = {number: signal.signal(number, end) for number in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 @contextlib.contextmanager
 def session() -> Iterator["Session"]:
     """Hold the machine-wide lock for a run of Word work; :class:`WordBusy` if Word or the
@@ -123,15 +215,16 @@ def session() -> Iterator["Session"]:
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise WordBusy("another job holds the Word lock") from None
-        if word_running():
+        if word_running() and not _left_behind_recovered():
             raise WordBusy("Word is in use")
         ORACLE_DIR.mkdir(exist_ok=True)
-        evict()
-        current = Session()
-        try:
-            yield current
-        finally:
-            current.recover()
+        with _signals_end_the_session():
+            evict()
+            current = Session()
+            try:
+                yield current
+            finally:
+                current.recover()
     finally:
         fcntl.flock(handle, fcntl.LOCK_UN)
         handle.close()
