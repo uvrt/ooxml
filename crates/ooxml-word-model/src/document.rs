@@ -38,6 +38,9 @@ pub struct Context {
     pub styles: Option<Arc<StyleSheet>>,
     /// The numbering part (empty where there is none).
     pub numbering: Arc<Numbering>,
+    /// Which list a paragraph's properties put it in (the styles' and the numbering part's
+    /// rule, docx-agent's).
+    pub members: Arc<crate::docx::numbering::ListMembers>,
     /// The settings (defaults where there is no part).
     pub settings: Arc<Settings>,
     /// The theme's fonts, where the package has a theme with a font scheme.
@@ -64,6 +67,7 @@ impl Context {
         styles
             && fonts
             && Arc::ptr_eq(&self.numbering, &other.numbering)
+            && Arc::ptr_eq(&self.members, &other.members)
             && Arc::ptr_eq(&self.settings, &other.settings)
             && Arc::ptr_eq(&self.colours, &other.colours)
     }
@@ -222,15 +226,18 @@ impl WordDocument {
     }
 }
 
-/// A paragraph's list item as the labels count it: its resolved `numPr`.
-pub(crate) fn item_of(resolved: &Props) -> Option<Item> {
-    let num_id = resolved
-        .get("numPr.numId")
-        .and_then(crate::value::Value::int)
-        .filter(|n| *n != 0)?;
-    let ilvl = resolved
-        .get("numPr.ilvl")
-        .and_then(crate::value::Value::int)
-        .unwrap_or(0);
+/// A paragraph's list item as the labels count it: the list its own properties put it in
+/// (its `w:numPr`, else its style chain's, where the numbering part has the instance:
+/// [`crate::docx::numbering::ListMembers::of`]). A paragraph of the final view whose mark was
+/// joined has its surviving mark's properties, so it is in that mark's list.
+pub(crate) fn item_of(cx: &Context, paragraph: &Paragraph) -> Option<Item> {
+    let props = paragraph.properties.as_deref();
+    let int = |name: &str| {
+        props
+            .and_then(|p| p.declared.get(name))
+            .and_then(crate::value::Value::int)
+    };
+    let style = props.and_then(|p| p.style_id.as_deref());
+    let (num_id, ilvl) = cx.members.of(style, int("numPr.numId"), int("numPr.ilvl"))?;
     Some(Item { num_id, ilvl })
 }

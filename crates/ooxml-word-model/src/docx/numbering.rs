@@ -1,16 +1,17 @@
-//! Owns: which list a paragraph is in, as docx-agent's `edit/numbering.py` reads it
-//! (`membership`): its own `w:numPr`, else its style chain's; the level that applies (an
-//! override's, else its definition's, the first definition sharing a `w:nsid`, through a
-//! `w:numStyleLink`).
+//! Owns: which list a paragraph is in, as docx-agent's `edit/numbering.py` reads it: its
+//! own `w:numPr`, else its style chain's, where the numbering part has that instance
+//! ([`ListMembers`], the one rule the tools' `membership` and the layout's list labels both
+//! ask); the level that applies (an override's, else its definition's, the first definition
+//! sharing a `w:nsid`, through a `w:numStyleLink`).
 //!
 //! Must not: count list items or draw labels (the layout model's labels do, as docx2svg
 //! counts them), or change numbering.
 
 use crate::docx::{find_path, Docx};
 use crate::ids::W;
-use crate::xmlread::py_int;
+use crate::xmlread::{attr_in, attr_int_in, child_in, children_in, py_int, Ns};
 use ooxml_xml::Element;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// A paragraph's list.
@@ -213,43 +214,99 @@ fn style_num(docx: &Docx, style_id: Option<&str>) -> Option<i64> {
 /// `(numId, ilvl)` a paragraph style gives through its `w:basedOn` chain.
 #[must_use]
 pub fn style_numbering(docx: &Docx, style_id: Option<&str>) -> (Option<i64>, Option<i64>) {
-    let mut current = match style_id {
-        Some(s) => Some(s.to_owned()),
-        None => docx
-            .styles()
-            .iter()
-            .find(|s| {
-                s.attribute(Some(W), "type") == Some("paragraph")
-                    && matches!(s.attribute(Some(W), "default"), Some("1" | "true"))
-            })
-            .and_then(|s| s.attribute(Some(W), "styleId").map(str::to_owned)),
-    };
-    let mut seen = Vec::new();
-    let (mut num_id, mut level) = (None, None);
-    while let Some(id) = current.take() {
-        if seen.contains(&id) {
-            break;
-        }
-        let Some(node) = docx.style(&id) else { break };
-        seen.push(id);
-        if let Some(numbering) = find_path(node, &["pPr", "numPr"]) {
-            if num_id.is_none() {
-                if let Some(r) = numbering.find(Some(W), "numId") {
-                    num_id = int_attr(r, "val");
-                }
+    docx.list_members().style(style_id)
+}
+
+/// One style's own `w:numPr` and the style it is based on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct StyleNumbering {
+    num_id: Option<i64>,
+    level: Option<i64>,
+    based_on: Option<String>,
+}
+
+/// Which list a paragraph's own properties put it in, read once from the styles and the
+/// numbering part (WordprocessingML, transitional or strict -- [`Ns::W`]; the tools refuse a
+/// strict document, the layout draws one): each paragraph style's `w:numPr` and `w:basedOn` (the
+/// last style of an id), the default paragraph style (the first of type `paragraph` marked
+/// `w:default` `1` or `true`) and the instances the numbering part has. The one rule for a
+/// paragraph's list: the tools ask it of a paragraph's element ([`membership`]), the layout
+/// of a paragraph's properties in the view it reads (a joined paragraph's are its surviving
+/// mark's).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ListMembers {
+    styles: HashMap<String, StyleNumbering>,
+    default: Option<String>,
+    nums: HashSet<i64>,
+}
+
+impl ListMembers {
+    /// The rule read from `styles` (the styles part's `w:style` elements, in document order)
+    /// and the numbering part's root, where there is one.
+    #[must_use]
+    pub fn read(styles: &[Arc<Element>], numbering: Option<&Element>) -> ListMembers {
+        let w = Some(Ns::W);
+        let mut out = ListMembers::default();
+        for style in styles {
+            let own = child_in(style, Ns::W, "pPr").and_then(|p| child_in(p, Ns::W, "numPr"));
+            let read = |local: &str| {
+                own.and_then(|n| child_in(n, Ns::W, local))
+                    .and_then(|r| attr_int_in(r, w, "val"))
+            };
+            out.styles.insert(
+                attr_in(style, w, "styleId").unwrap_or("").to_owned(),
+                StyleNumbering {
+                    num_id: read("numId"),
+                    level: read("ilvl"),
+                    based_on: child_in(style, Ns::W, "basedOn")
+                        .and_then(|b| attr_in(b, w, "val"))
+                        .map(str::to_owned),
+                },
+            );
+            let default = attr_in(style, w, "type") == Some("paragraph")
+                && matches!(attr_in(style, w, "default"), Some("1" | "true"));
+            if default && out.default.is_none() {
+                out.default = attr_in(style, w, "styleId").map(str::to_owned);
             }
-            if level.is_none() {
-                if let Some(r) = numbering.find(Some(W), "ilvl") {
-                    level = int_attr(r, "val");
-                }
-            }
         }
-        current = node
-            .find(Some(W), "basedOn")
-            .and_then(|b| b.attribute(Some(W), "val"))
-            .map(str::to_owned);
+        if let Some(root) = numbering {
+            out.nums = children_in(root, Ns::W, "num")
+                .filter_map(|node| attr_int_in(node, w, "numId"))
+                .collect();
+        }
+        out
     }
-    (num_id, level)
+
+    /// `(numId, ilvl)` the paragraph style `style_id` (`None`: the default paragraph style)
+    /// gives through its `w:basedOn` chain, each the nearest style's that states it.
+    #[must_use]
+    pub fn style(&self, style_id: Option<&str>) -> (Option<i64>, Option<i64>) {
+        let mut current = style_id.map(str::to_owned).or_else(|| self.default.clone());
+        let mut seen: Vec<String> = Vec::new();
+        let (mut num_id, mut level) = (None, None);
+        while let Some(id) = current.take() {
+            if seen.contains(&id) {
+                break;
+            }
+            let Some(style) = self.styles.get(&id) else { break };
+            seen.push(id);
+            num_id = num_id.or(style.num_id);
+            level = level.or(style.level);
+            current.clone_from(&style.based_on);
+        }
+        (num_id, level)
+    }
+
+    /// The list `(numId, level)` of a paragraph of style `style_id` whose own `w:numPr`
+    /// states `num_id` and `level` (each where it does): its own, else its style chain's; none
+    /// for `w:numId` 0 or an instance the numbering part does not have.
+    #[must_use]
+    pub fn of(&self, style_id: Option<&str>, num_id: Option<i64>, level: Option<i64>) -> Option<(i64, i64)> {
+        let (style_num, style_level) = self.style(style_id);
+        let num_id = num_id.or(style_num).filter(|n| *n != 0)?;
+        let level = level.or(style_level).unwrap_or(0);
+        self.nums.contains(&num_id).then_some((num_id, level))
+    }
 }
 
 /// The list `paragraph` is in, or `None`.
@@ -260,7 +317,6 @@ pub fn membership(docx: &Docx, lists: &Lists, paragraph: &Element) -> Option<Mem
     let style = properties
         .and_then(|p| p.find(Some(W), "pStyle"))
         .and_then(|s| s.attribute(Some(W), "val"));
-    let (style_num, style_level) = style_numbering(docx, style);
     let (mut num_id, mut level, mut from_style) = (None, None, true);
     if let Some(direct) = direct {
         if let Some(r) = direct.find(Some(W), "numId") {
@@ -271,11 +327,7 @@ pub fn membership(docx: &Docx, lists: &Lists, paragraph: &Element) -> Option<Mem
             level = int_attr(r, "val");
         }
     }
-    let num_id = num_id.or(style_num).filter(|n| *n != 0)?;
-    let level = level.or(style_level).unwrap_or(0);
-    if !lists.has(num_id) {
-        return None;
-    }
+    let (num_id, level) = docx.list_members().of(style, num_id, level)?;
     let lvl = lists.level(docx, num_id, level);
     let val = |local: &str| {
         lvl.as_ref()
@@ -293,4 +345,57 @@ pub fn membership(docx: &Docx, lists: &Lists, paragraph: &Element) -> Option<Mem
         text: val("lvlText").or_else(|| filled.then(String::new)),
         from_style,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::ListMembers;
+    use ooxml_xml::Element;
+    use std::sync::Arc;
+
+    const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#;
+
+    fn root(xml: &str) -> Arc<Element> {
+        Arc::clone(
+            ooxml_xml::parse(xml.as_bytes(), &ooxml_base::XmlLimits::default())
+                .unwrap()
+                .root(),
+        )
+    }
+
+    fn members(styles: &str, nums: &[i64]) -> ListMembers {
+        let styles = root(&format!("<w:styles {W}>{styles}</w:styles>"));
+        let styles: Vec<Arc<Element>> = styles.child_elements().cloned().collect();
+        let nums: String = nums.iter().map(|n| format!(r#"<w:num w:numId="{n}"/>"#)).collect();
+        let numbering = root(&format!("<w:numbering {W}>{nums}</w:numbering>"));
+        ListMembers::read(&styles, Some(&numbering))
+    }
+
+    #[test]
+    fn a_paragraph_is_in_its_own_list_else_its_style_chain_s_where_the_part_has_it() {
+        let styles = r#"<w:style w:type="paragraph" w:default="1" w:styleId="Normal"/>
+<w:style w:type="paragraph" w:styleId="List"><w:pPr><w:numPr><w:numId w:val="3"/></w:numPr></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Deeper"><w:basedOn w:val="List"/><w:pPr><w:numPr><w:ilvl w:val="2"/></w:numPr></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Loop"><w:basedOn w:val="Loop"/></w:style>"#;
+        let m = members(styles, &[3, 5]);
+        // its own numPr; its own level over its style's
+        assert_eq!(m.of(Some("Deeper"), Some(5), Some(1)), Some((5, 1)));
+        // the chain gives the number and the nearest level
+        assert_eq!(m.of(Some("Deeper"), None, None), Some((3, 2)));
+        assert_eq!(m.of(Some("List"), None, None), Some((3, 0)));
+        // no style named: the default paragraph style's (none here)
+        assert_eq!(m.of(None, None, None), None);
+        // numId 0 takes it out; an instance the part lacks is no list
+        assert_eq!(m.of(Some("List"), Some(0), None), None);
+        assert_eq!(m.of(None, Some(7), Some(0)), None);
+        // a style based on itself ends the chain
+        assert_eq!(m.of(Some("Loop"), None, None), None);
+    }
+
+    #[test]
+    fn without_a_numbering_part_no_paragraph_is_in_a_list() {
+        let m = ListMembers::read(&[], None);
+        assert_eq!(m.of(None, Some(1), Some(0)), None);
+    }
 }
