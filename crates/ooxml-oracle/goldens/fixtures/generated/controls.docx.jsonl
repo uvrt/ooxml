@@ -220,7 +220,7 @@
 {"digest":"sha256:610567233053cbea8fa7d184ad1cec62","id":"objects:19bd0fc9862ebeb1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:f90dfeb41802fcb6ac648f28bae70991","id":"objects:1b6054114f6f98a5","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3b651c467369b65e0cbe9a365b9790db","id":"objects:5d223c2fa3f477af","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:2b722a62ea8efaa5e50cff67bbc9eeb3","id":"objects:80acfd8e353659a7","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:1ad4e0ef0d32016b937380df2f82115d","id":"objects:80acfd8e353659a7","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:3dd3e694e5cde71f","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:8d13162033af71c9","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:d84c2425113e6097","source":"frozen Python a512c901, unmeasured"}
@@ -352,7 +352,7 @@
 {"digest":"sha256:ef37b28da32ac8dd241ec7ccee6ddf31","id":"objects:934ac2d504d02445","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:7b4811efca6d22b003cbb7a28afd00fc","id":"objects:8047e2c64e69c365","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:3b651c467369b65e0cbe9a365b9790db","id":"objects:d3f3ff948522966c","source":"frozen Python a512c901, unmeasured"}
-{"digest":"sha256:fa37fae06b725f559dd06da1aafff8ea","id":"objects:daae928bdbda697e","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:088163a941acf4dde1f31fe3fff073ed","id":"objects:daae928bdbda697e","source":"view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word writes -- grid columns no cell divides are one (Word 16.106: fix-final-grid/word-grid.json#RedundantPlain), the grid spans to the widest row (re-saves of 0d443c2a, b497e68d, 5c2bb97b)"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:4800810bc7c04102","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:861bb2bb8f159521","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:dfc327907c09f067650394399dab258e","id":"objects:1cfc1e2a936b62c1","source":"frozen Python a512c901, unmeasured"}

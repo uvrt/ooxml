@@ -41,4 +41,6 @@ refuses it (`not_supported`), with the way on: save it as a Word Document
 (.docx) in Word first. Of a drawing Word writes twice (`mc:AlternateContent`: a text box, a
 group), the tools read and draw the DrawingML choice when it needs only what they read
 (WordprocessingML, Word's text boxes and groups) and else the VML fallback, where Word may draw
-the choice.
+the choice. The original view (`view: original`) of a table cell with a pending properties
+change shows the cell's old properties (span, width, vertical merge) with the grid rebuilt from
+them; Word's Review > Original draws the row's unchanged cells as 18 pt slivers instead.
