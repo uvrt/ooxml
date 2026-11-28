@@ -5,12 +5,10 @@
 //! Must not: hold a lock while a handler runs or a package is parsed or written (the table
 //! lock is held only to find or change an entry), or implement a tool.
 
-use crate::context::CallCancel;
 use crate::document::Document;
 use crate::format::AnyVersion;
 use crate::format::{Format, FormatDoc, OpenEnv};
-use crate::update::{PartUpdate, Updated};
-use crate::{CallContext, DocId, DocKind, Registry, SessionError};
+use crate::{DocId, DocKind, Registry, SessionError};
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_store::{StoreConfig, StoreStats};
@@ -415,39 +413,6 @@ impl Session {
     #[must_use]
     pub fn documents(&self) -> Vec<DocId> {
         self.read_table().keys().cloned().collect()
-    }
-
-    /// Commit `parts` (bytes to put, `None` to remove) to the document as one step, made
-    /// by `context.caller`: a version made outside the tools, for a test that needs a
-    /// document's parts as it writes them (section 13). No host commits through it: every
-    /// change a host makes is a tool's edit. XML parts are parsed here, on a snapshot,
-    /// without any lock; the commit is the store's.
-    ///
-    /// # Errors
-    /// [`SessionError::NotOpen`]; a part that does not parse or a removal of a part that
-    /// is not there ([`SessionError::Package`]); cancellation ([`SessionError::Base`]).
-    pub fn update(
-        &self,
-        id: &DocId,
-        parts: Vec<(String, Option<Arc<[u8]>>)>,
-        context: &CallContext,
-    ) -> Result<Updated, SessionError> {
-        let document = self.document(id)?;
-        let cancel = CallCancel::new(context, &*self.context.cancel, &*self.context.clock);
-        let update = PartUpdate::new(parts, self.context.limits, &cancel);
-        let (version, changed, attempts) = document.doc.update(&context.caller, None, &update).inspect_err(|e| {
-            if matches!(e, SessionError::Base(ooxml_base::BaseError::Cancelled)) {
-                self.counts.cancelled.fetch_add(1, Ordering::Relaxed);
-            }
-        })?;
-        if changed {
-            document.stepped(version.seq(), version.number(), None, context);
-        }
-        Ok(Updated {
-            version: version.seq(),
-            changed,
-            attempts,
-        })
     }
 
     /// The store's counters for the document (commits, conflicts, exclusive runs).

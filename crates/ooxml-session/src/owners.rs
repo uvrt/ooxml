@@ -77,6 +77,8 @@ pub(crate) struct OwnUndo {
     pub(crate) caller: Arc<str>,
     pub(crate) number: u64,
     pub(crate) seq: u64,
+    /// Taken back past another editor's later steps (a scoped undo): its redo names it.
+    pub(crate) scoped: bool,
 }
 
 #[derive(Debug, Default)]
@@ -112,6 +114,12 @@ impl Owners {
             let held = held();
             kept.by_number.retain(|n, _| *n == number || held.contains(n));
         }
+    }
+
+    /// Another editor's step numbered `number` came in (a co-authoring refresh): its owner
+    /// noted, the own undos kept (it drops no redo: [`ooxml_store::Store::receive`]).
+    pub(crate) fn arrived(&self, number: u64, owner: StepOwner) {
+        self.kept().by_number.insert(number, owner);
     }
 
     /// Who made the step numbered `number`, if a tool did.
@@ -185,6 +193,7 @@ mod tests {
             caller: Arc::from("a"),
             number: 1,
             seq: 1,
+            scoped: false,
         });
         assert!(owners.latest_undo("a").is_some());
         assert!(owners.latest_undo("b").is_none());

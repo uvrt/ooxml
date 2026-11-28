@@ -188,12 +188,11 @@ fn a_page_added_is_changed_and_one_removed_is_not_listed() {
         let xml = format!("<w:document {NS}><w:body>{body}</w:body></w:document>");
         vec![("word/document.xml".to_owned(), Some(Arc::from(xml.as_bytes())))]
     };
-    s.update(&d, parts(two_pages()), &ctx()).unwrap();
+    crate::common::refreshed(&s, &d, parts(two_pages()), &ctx()).unwrap();
     let second = s.view(&d, Some(&first.token), &*lay, &ctx()).unwrap();
     assert_eq!(second.pages.len(), 2);
     assert_eq!(second.changed, [2]);
-    s.update(&d, parts(paragraph("11111111", "one", false)), &ctx())
-        .unwrap();
+    crate::common::refreshed(&s, &d, parts(paragraph("11111111", "one", false)), &ctx()).unwrap();
     let third = s.view(&d, Some(&second.token), &*lay, &ctx()).unwrap();
     assert_eq!((third.pages.len(), third.changed.len()), (1, 0));
 }
@@ -483,7 +482,7 @@ fn an_older_version_is_drawn_with_its_own_styles() {
     let lay = layout();
     let first = s.view(&d, None, &*lay, &ctx()).unwrap();
     let larger = vec![("word/styles.xml".to_owned(), Some(Arc::from(styles(48).as_bytes())))];
-    s.update(&d, larger, &ctx()).unwrap();
+    crate::common::refreshed(&s, &d, larger, &ctx()).unwrap();
     let second = s.view(&d, Some(&first.token), &*lay, &ctx()).unwrap();
     assert!(second.changed.contains(&1), "the heading's page");
     let now = s.page_svg(&d, 1, &second.token, &*lay, TextMode::Text, &ctx()).unwrap();

@@ -121,7 +121,7 @@ pub(crate) fn page_svg(
 }
 
 /// A host's refusal or failure of the changes feed as Python raises it.
-fn feed_raised(error: &ooxml_tools::ToolError) -> PyErr {
+pub(crate) fn feed_raised(error: &ooxml_tools::ToolError) -> PyErr {
     match error.code() {
         ErrorCode::Failure(Failure::Timeout) => PyTimeoutError::new_err(error.message().to_owned()),
         ErrorCode::Refusal(_) => ViewRefused::new_err((

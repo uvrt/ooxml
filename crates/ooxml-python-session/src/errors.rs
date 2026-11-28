@@ -45,9 +45,12 @@ pub(crate) fn to_py(error: &SessionError) -> PyErr {
         SessionError::Kind(_) | SessionError::PartName(_) | SessionError::Package(_) => PyValueError::new_err(message),
         SessionError::Base(ooxml_base::BaseError::Cancelled) => PyTimeoutError::new_err(message),
         SessionError::Format(_) => PyValueError::new_err(message),
-        SessionError::Entangled { .. } | SessionError::RedoNotNext { .. } | SessionError::NewProblems { .. } => {
-            PyValueError::new_err(message)
-        }
+        SessionError::Entangled { .. }
+        | SessionError::RedoNotNext { .. }
+        | SessionError::NewProblems { .. }
+        | SessionError::ChangedMeanwhile { .. }
+        | SessionError::NoRefresh(_) => PyValueError::new_err(message),
+        SessionError::RefreshBase(_) => PyKeyError::new_err(message),
         SessionError::Store(_) | SessionError::Base(_) => PyRuntimeError::new_err(message),
     }
 }

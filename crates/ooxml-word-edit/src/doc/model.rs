@@ -50,8 +50,14 @@ impl DocModel for WordDoc {
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
-            Change::Received { .. } | Change::Arrived { .. } => {
-                let (package, ids) = self.taken_in(change)?;
+            Change::Arrived {
+                part,
+                patches,
+                from,
+                on,
+                ..
+            } => {
+                let (package, ids) = self.arrived(part, patches.as_deref(), from, on.as_ref())?;
                 *self = self.succeed(package, ids);
                 return Ok(());
             }
@@ -139,7 +145,6 @@ impl DocModel for WordDoc {
                 keys: Arc::clone(keys),
             },
             Change::Put { part, .. }
-            | Change::Received { part, .. }
             | Change::Arrived { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Change::Restore {
@@ -200,10 +205,7 @@ impl DocModel for WordDoc {
                     into.insert(key.clone());
                 }
             }
-            Change::Put { part, .. }
-            | Change::Received { part, .. }
-            | Change::Bytes { part, .. }
-            | Change::Remove { part } => {
+            Change::Put { part, .. } | Change::Bytes { part, .. } | Change::Remove { part } => {
                 let part = PartName::normalize(part);
                 into.insert(Key::StyleUse(part.clone()));
                 into.insert(Key::Part(part));
@@ -277,6 +279,14 @@ impl DocModel for WordDoc {
     fn kept(key: &Key) -> bool {
         // ids drawn stay drawn: undoing a step gives none of them back
         matches!(key, Key::Seq(_) | Key::Annotations)
+    }
+
+    fn key_name(key: &Key) -> Option<String> {
+        match key {
+            Key::Block { id, .. } => Some(id.to_string()),
+            Key::Part(part) | Key::Root(part) => Some(part.to_string()),
+            Key::StyleUse(_) | Key::Seq(_) | Key::Annotations | Key::People => None,
+        }
     }
 
     fn derived(key: &Key) -> bool {

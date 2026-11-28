@@ -15,13 +15,12 @@
 
 use crate::context::CallCancel;
 use crate::problems::{Problem, Validation};
-use crate::update::PartUpdate;
 use crate::{CallContext, DocKind, Opened, Registry, SessionError, StoredDoc};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_base::Context;
 use ooxml_numfmt::Locale;
 use ooxml_opc::Package;
-use ooxml_store::{Caller, DocModel, OpTxn, Snapshot, StoreConfig};
+use ooxml_store::{DocModel, OpTxn, Snapshot, StoreConfig};
 use ooxml_tools::datasets::Dataset;
 use ooxml_tools::roles::HostFacts;
 use ooxml_tools::{Refusal, Tool, ToolError, ToolResult, TryCall, WayOut};
@@ -322,17 +321,16 @@ pub trait FormatDoc: Send + Sync + 'static {
     /// The save gate's refusal; the package's error writing a part.
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError>;
 
-    /// Commit a test's update of parts as `caller`, made by `tool` (section 13): the version it
-    /// leaves, whether it changed anything, and how many times it was prepared.
+    /// Take in another editor's version of the document (a co-authoring refresh,
+    /// [`crate::Session::refresh`]): its file, made from version `asked.base` of this one.
     ///
     /// # Errors
-    /// The update's or the store's.
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError>;
+    /// [`SessionError::NoRefresh`] by default (the format takes none); the format's refusal
+    /// (a base it does not keep, a file it cannot read).
+    fn refresh(&self, asked: &crate::refresh::RefreshAsk<'_>) -> Result<crate::refresh::FormatRefreshed, SessionError> {
+        let _ = asked;
+        Err(SessionError::NoRefresh(asked.kind))
+    }
 
     /// Run `tool` as `run` says on this document. Never fails: a refusal is the result's
     /// error.

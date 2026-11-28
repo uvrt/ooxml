@@ -97,3 +97,24 @@ pub fn layout() -> Arc<EnginePages> {
     let engine = PageEngine::new(test_fonts(), EngineOptions::default(), budgets);
     Arc::new(EnginePages::of(engine))
 }
+
+/// Another editor's version of `doc`, taken in ([`ooxml_session::Session::refresh`]): the
+/// head saved with `parts` put (bytes) or removed (`None`), made from the head.
+pub fn refreshed(
+    session: &ooxml_session::Session,
+    doc: &ooxml_session::DocId,
+    parts: Vec<(String, Option<Arc<[u8]>>)>,
+    context: &ooxml_session::CallContext,
+) -> Result<ooxml_session::Refreshed, ooxml_session::SessionError> {
+    let head = session.snapshot(doc)?;
+    let mut package = head.package().clone();
+    for (name, bytes) in parts {
+        package = match bytes {
+            Some(bytes) => package.with_bytes(&name, bytes),
+            None => package.without(&name)?,
+        };
+    }
+    let file: Arc<[u8]> = package.save()?.into();
+    let base = format!("{}-{}", session.nonce(), head.version());
+    session.refresh(doc, &base, file, "test editor", context)
+}

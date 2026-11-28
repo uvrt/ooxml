@@ -664,6 +664,11 @@ All are under 0.1 % of the edit budgets.
 - A toolbox holding docx-agent's format beside a Python-held format of a kind the Rust session cannot name is refused when it is made (`runs_on_host`), with the kinds it can name: the Rust host's documents have no other host.
 - **pptx and xlsx keep the Python host until Phase 4**: their documents stay in ooxml-edit's dispatcher, named and counted by the Rust session (`HeldElsewhere`), their rows reaching Word calls through the values channel (`hosted_values`). Phase 4 ports each format and deletes the Python host, the facade's routing and the values channel.
 
+**As built (Phase 3 CF2: another editor's version comes in).**
+- `Session::refresh(doc, base, file, editor)` (`HostSession::refresh`, `HostedSession.refresh`) replaces the test-only `Session::update`, `PartUpdate` and `Change::Received`: another editor's file, made from the version the feed token `base` names, is one step by a foreign caller (`Caller::foreign`), an ordinary version for the changes feed.
+- The store (`Store::receive`): the steps since `base` that touch what it changed, with every later step entangled with them, are taken back by scoped undos and named (`HandedBack`), then the change is prepared on the head behind the gate. A transaction whose read set another editor's commit changed is refused (`StoreError::ForeignChange`, a tool's `refused` with `details.changed`), never run again over it. Undo never takes back a foreign step; plain undo and redo pass one only where not entangled with it.
+- Word (`Arrival`, `Change::Arrived`): per part, the patches from the base to their part, keyed by the blocks they touch and every block they lie in; the part saves as their raw entry where nothing here changed it (`Package::with_part_as_in`), so nothing travels back; an id they wrote that a draw here gave meanwhile is stamped anew where it lands.
+
 **Library API.**
 - `docx_agent.Document`, `pptx_agent` and `xlsx_agent` become handles. Methods that take and return plain values keep their signatures.
 - APIs that expose lxml (`.element`, `package.tree()`, `History`) warn for two releases and are then removed, each with a CHANGELOG note naming the replacement.

@@ -6,10 +6,9 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use crate::toy::{as_toy, call, package, session, toy, Never};
-use ooxml_base::Limits;
+use crate::toy::{as_toy, call, package, session, toy};
 use ooxml_session::datasets::{DatasetEntry, DocMeta};
-use ooxml_session::{DocKind, PartUpdate};
+use ooxml_session::DocKind;
 use ooxml_store::Caller;
 use ooxml_tools::datasets::Dataset;
 use ooxml_tools::sources::Cell;
@@ -146,10 +145,7 @@ fn a_dataset_made_stale_between_two_attempts_is_said_stale_by_the_one_that_publi
             let second = s.session().format_doc(&other).unwrap();
             let change: Box<dyn FnOnce() + Send> = Box::new(move || {
                 let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
-                let update = PartUpdate::new(vec![("toy/b.xml".into(), Some(theirs))], Limits::default(), &Never);
-                second
-                    .update(&Caller::named("other"), Some("toy_set"), &update)
-                    .unwrap();
+                crate::toy::put_part(&as_toy(&*second).0, &Caller::named("other"), "toy/b.xml", theirs).unwrap();
             });
             as_toy(&*doc).4.lock().unwrap().push(change);
         }

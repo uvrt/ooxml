@@ -17,8 +17,8 @@ use ooxml_session::numbers::NumberText;
 use ooxml_session::problems::{Problem, Severity, Validation};
 use ooxml_session::{
     AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageDoc, PackageFormat,
-    PartChange, PartContent, PartUpdate, ReadTexts, Registry, SessionConfig, SessionError, StoreClock, Stored,
-    StoredDoc, ValueRead, WithState,
+    PartChange, PartContent, ReadTexts, Registry, SessionConfig, SessionError, StoreClock, Stored, StoredDoc,
+    ValueRead, WithState,
 };
 use ooxml_store::{Caller, Store, StoreConfig};
 use ooxml_tools::roles::{HostFacts, Needs, Role};
@@ -404,7 +404,7 @@ impl Format for ToyFormat {
 /// else happens as that writer writes, once each (another document changed between two
 /// attempts of the batch).
 pub struct ToyDoc(
-    Stored<PackageDoc>,
+    pub Stored<PackageDoc>,
     Vec<Problem>,
     pub AtomicUsize,
     pub AtomicUsize,
@@ -420,18 +420,53 @@ impl ToyDoc {
             return Ok(());
         }
         self.2.fetch_sub(1, Ordering::SeqCst);
+        let _ = cancel;
         let theirs: Arc<[u8]> = b"<t>theirs</t>".as_slice().into();
-        let other = PartUpdate::new(
-            vec![(name.to_owned(), Some(theirs))],
-            ooxml_base::Limits::default(),
-            cancel,
-        );
-        FormatDoc::update(&self.0, &Caller::named("other"), Some("toy_set"), &other)?;
+        put_part(&self.0, &Caller::named("other"), name, theirs)?;
         for also in std::mem::take(&mut *self.4.lock().unwrap()) {
             also();
         }
         Ok(())
     }
+}
+
+/// A toy edit's write: `bytes` put as `part` in one step by `caller`, reading the whole
+/// document (it holds only on the version it was made on).
+struct PutPart {
+    part: String,
+    bytes: Arc<[u8]>,
+}
+
+impl ooxml_store::Command<PackageDoc> for PutPart {
+    type Out = ();
+    type Error = ooxml_store::Error<PackageDoc>;
+
+    fn validate(&self, _doc: &PackageDoc) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn prepare(&self, tx: &mut ooxml_store::Txn<'_, PackageDoc>) -> Result<(), Self::Error> {
+        tx.read_everything();
+        tx.write(PartChange::Put {
+            part: self.part.clone(),
+            content: PartContent::Bytes(Arc::clone(&self.bytes)),
+        })
+    }
+}
+
+/// [`PutPart`] run on `stored`: the version it made.
+pub fn put_part(
+    stored: &Stored<PackageDoc>,
+    caller: &Caller,
+    part: &str,
+    bytes: Arc<[u8]>,
+) -> Result<AnyVersion, SessionError> {
+    let put = PutPart {
+        part: part.to_owned(),
+        bytes,
+    };
+    let done = stored.store().run(caller, &put)?;
+    Ok(Stored::<PackageDoc>::any(done.version))
 }
 
 /// What a toy edit made.
@@ -469,11 +504,6 @@ impl FormatCall for ToyCall<'_> {
                     let failed = |e: SessionError| ToolError::internal(e.to_string(), "toy:update");
                     let before = self.run.doc.any().clone();
                     let bytes: Arc<[u8]> = text.as_bytes().into();
-                    let update = PartUpdate::new(
-                        vec![(name.to_owned(), Some(bytes))],
-                        ooxml_base::Limits::default(),
-                        self.run.cancel,
-                    );
                     let (version, batch) = match self.run.txn {
                         Some(txn) => {
                             self.doc.write_beside(name, self.run.cancel).map_err(failed)?;
@@ -501,9 +531,8 @@ impl FormatCall for ToyCall<'_> {
                             (Stored::<PackageDoc>::any(version), true)
                         }
                         None => {
-                            let (version, _, _) =
-                                FormatDoc::update(&self.doc.0, &self.run.context.caller, Some(self.run.tool), &update)
-                                    .map_err(failed)?;
+                            let version =
+                                put_part(&self.doc.0, &self.run.context.caller, name, bytes).map_err(failed)?;
                             (version, false)
                         }
                     };
@@ -529,15 +558,6 @@ impl FormatDoc for ToyDoc {
 
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
         FormatDoc::save(&self.0, at, checked)
-    }
-
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        FormatDoc::update(&self.0, caller, tool, update)
     }
 
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {

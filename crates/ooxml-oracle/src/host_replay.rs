@@ -904,15 +904,25 @@ impl Replayer {
             .open_with(Arc::clone(&first), name, &how)
             .map_err(|e| e.to_string())?;
         let version = document.get("version").and_then(Value::as_u64).unwrap_or(0);
-        let parts = changed_parts(&first, &now);
-        if !parts.is_empty() && version > 0 {
+        if !changed_parts(&first, &now).is_empty() && version > 0 {
+            // the recorded version, as another editor's version of the one opened
+            let session = session.session();
             session
-                .session()
                 .continue_numbers(&id, version - 1, version - 1)
                 .map_err(|e| e.to_string())?;
+            let base = format!(
+                "{}-{}",
+                session.nonce(),
+                session.snapshot(&id).map_err(|e| e.to_string())?.version()
+            );
             session
-                .session()
-                .update(&id, parts, &ooxml_session::CallContext::default())
+                .refresh(
+                    &id,
+                    &base,
+                    Arc::clone(&now),
+                    "replay",
+                    &ooxml_session::CallContext::default(),
+                )
                 .map_err(|e| e.to_string())?;
         }
         if let Some(tracking) = case.get("tracking").filter(|t| !t.is_null()) {

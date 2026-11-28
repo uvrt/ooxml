@@ -3,7 +3,7 @@
 //! -- every block it wrote without one stamped through the sink, by docx-agent's stamping
 //! rules (word-model's [`ooxml_word_model::stamp::blocks`]). A
 //! document is stamped in memory when it is opened ([`ooxml_word_model::WordPackage`]), and so
-//! is a part another writer puts in place (`Change::Received`): what is left to stamp here is
+//! is a part another editor's version brings (`Change::Arrived`): what is left to stamp here is
 //! what a command writes without ids.
 //!
 //! Must not: write but through the sink, or stamp a block twice (a stamped block's id is
