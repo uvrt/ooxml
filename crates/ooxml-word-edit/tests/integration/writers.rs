@@ -13,8 +13,9 @@ use ooxml_store::{Batch, Command, Txn};
 use ooxml_store::{Caller, Seq, Snapshot};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    CellWrite, DeleteBlock, DeleteText, EditError, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
-    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
+    CellWrite, DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep,
+    MarkdownOptions, ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking,
+    WordDoc, WriteMap,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
@@ -232,12 +233,50 @@ fn batch(rng: &mut Rng, targets: (&[String], &[String]), writer: u64) -> Edit {
 }
 
 fn run_on(name: &str, seed: u64, writers: u64, per_writer: usize) -> (u64, u64) {
-    run_with(name, seed, writers, per_writer, false).0
+    run_with(name, seed, writers, per_writer, Mix::default()).0
 }
 
-/// [`run_on`], where `batches`: every other writer runs batches of edits; what the store
-/// counted (conflicts and exclusive runs, then rebases).
-fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: bool) -> ((u64, u64), u64) {
+/// What runs beside the plain writers: every other writer running batches, and another
+/// editor whose versions come in that many times (co-authoring refresh, lane CF2).
+#[derive(Debug, Clone, Copy, Default)]
+struct Mix {
+    batches: bool,
+    foreign: usize,
+}
+
+/// One commit of the run: a writer's edit, or another editor's version (its base, its
+/// file) with the steps it handed back (each step and the version its undo made).
+#[derive(Debug)]
+enum Made {
+    Edit(Edit),
+    Foreign {
+        base: Seq,
+        file: Arc<[u8]>,
+        back: Vec<(Seq, Seq)>,
+    },
+}
+
+/// Another editor's version made from `base`: `base` saved, opened by that editor, one of
+/// its paragraphs set, saved.
+fn their_file(base: &Snapshot<WordDoc>, rng: &mut Rng, targets: &[String]) -> Arc<[u8]> {
+    let bytes: Arc<[u8]> = base.doc().package().save().unwrap().into();
+    let other = editor(&bytes);
+    let mut set = command(rng, targets, 99);
+    set.policy = RevisionPolicy::Untracked;
+    // a refusal (the target gone here) leaves their file as ours was
+    let _ = other.run(&Caller::anonymous(), &set);
+    other.store().snapshot().doc().package().save().unwrap().into()
+}
+
+fn opened_file(file: &Arc<[u8]>) -> ooxml_opc::Package {
+    ooxml_opc::Package::open(Arc::clone(file), &ooxml_base::Limits::default()).unwrap()
+}
+
+/// [`run_on`], with `mix` beside the writers; what the store counted (conflicts and
+/// exclusive runs, then rebases). Another editor's versions are replayed serially by
+/// receiving them again on the same base: the same steps handed back, the same document.
+fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, mix: Mix) -> ((u64, u64), u64) {
+    let batches = mix.batches;
     let bytes = fixture(name);
     let shared = editor(&bytes);
     let docx = shared.store().snapshot().doc().docx().unwrap();
@@ -248,11 +287,16 @@ fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: boo
         .into_iter()
         .map(|c| c.id)
         .collect();
-    let mut records: Vec<(Seq, Edit, Snapshot<WordDoc>)> = Vec::new();
+    let mut records: Vec<(Seq, Made, Snapshot<WordDoc>)> = Vec::new();
+    let refused = std::sync::atomic::AtomicU64::new(0);
     std::thread::scope(|scope| {
+        let foreign = {
+            let (shared, targets) = (&shared, &targets);
+            scope.spawn(move || another_editor(shared, targets, seed, mix.foreign))
+        };
         let handles: Vec<_> = (0..writers)
             .map(|w| {
-                let (shared, targets, controls) = (&shared, &targets, &controls);
+                let (shared, targets, controls, refused) = (&shared, &targets, &controls, &refused);
                 scope.spawn(move || {
                     let mut rng = Rng(seed ^ (w + 1).wrapping_mul(0x9E37_79B9));
                     let caller = Caller::named(&format!("writer {w}"));
@@ -263,9 +307,16 @@ fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: boo
                             } else {
                                 edit(&mut rng, (targets, controls), w)
                             };
-                            // a refusal (a range a concurrent edit shortened) changes nothing
-                            let done = shared.run(&caller, &command).ok()?;
-                            done.changed.then(|| (done.version.seq(), command, done.version))
+                            // a refusal (a range a concurrent edit shortened, a block another
+                            // editor changed meanwhile) changes nothing
+                            let done = shared.run(&caller, &command).inspect_err(|e| {
+                                if matches!(e, EditError::Store(ooxml_store::StoreError::ForeignChange { .. })) {
+                                    refused.fetch_add(1, Ordering::Relaxed);
+                                }
+                            });
+                            let done = done.ok()?;
+                            done.changed
+                                .then(|| (done.version.seq(), Made::Edit(command), done.version))
                         })
                         .collect::<Vec<_>>()
                 })
@@ -274,23 +325,13 @@ fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, batches: boo
         for handle in handles {
             records.extend(handle.join().unwrap());
         }
+        records.extend(foreign.join().unwrap());
     });
     records.sort_by_key(|r| r.0);
-    let serial = editor(&bytes);
-    let mut seq = Seq(0);
-    for (at, command, version) in &records {
-        // a no-op in the serial run (the text already that) makes no version: skip numbers
-        let done = serial.run(&Caller::anonymous(), command).unwrap();
-        assert!(done.changed, "seed {seed}: {command:?} changed nothing serially");
-        seq = done.version.seq();
-        assert_eq!(seq, *at, "seed {seed}: commit order");
-        assert_eq!(
-            written(done.version.doc()),
-            written(version.doc()),
-            "seed {seed}: the document at version {at}"
-        );
+    replay_serially(&bytes, &records, seed);
+    if mix.foreign > 0 {
+        report(seed, &records, refused.load(Ordering::Relaxed));
     }
-    assert_eq!(seq, records.last().map_or(Seq(0), |r| r.0));
     let stats = shared.store().stats();
     ((stats.conflicts, stats.exclusive), stats.rebased)
 }
@@ -309,10 +350,118 @@ fn concurrent_batches_beside_writers_equal_their_serial_order() {
     // batches' change sequences moved past the writers' commits as one (design phase 3 §4)
     let mut rebased = 0;
     for seed in [41u64, 42] {
-        rebased += run_with("samplelib/sample-long.docx", seed, 4, 4, true).1;
+        rebased += run_with("samplelib/sample-long.docx", seed, 4, 4, BATCHES).1;
     }
-    run_with("wordto/sample-with-table.docx", 43, 4, 4, true);
+    run_with("wordto/sample-with-table.docx", 43, 4, 4, BATCHES);
     assert!(rebased > 0, "batches beside writers should rebase");
+}
+
+/// Another editor's versions, `count` of them, each made from the head as it is and taken in:
+/// the commits they made.
+fn another_editor(shared: &Editor, targets: &[String], seed: u64, count: usize) -> Vec<(Seq, Made, Snapshot<WordDoc>)> {
+    let mut rng = Rng(seed ^ 0x00C0_FFEE);
+    (0..count)
+        .filter_map(|_| {
+            std::thread::yield_now();
+            let base = shared.store().snapshot();
+            let file = their_file(&base, &mut rng, targets);
+            let arrived = shared.receive("Ada", base.seq(), opened_file(&file)).unwrap();
+            let back = arrived
+                .handed_back
+                .iter()
+                .map(|h| (h.step.step, h.version.seq()))
+                .collect();
+            // (a version that changed nothing here still makes the undos it handed back)
+            (arrived.previous.is_some() || !arrived.handed_back.is_empty()).then(|| {
+                let made = Made::Foreign {
+                    base: base.seq(),
+                    file,
+                    back,
+                };
+                (arrived.version.seq(), made, arrived.version)
+            })
+        })
+        .collect()
+}
+
+/// The run's commits, as an assertion names them: each version and what made it.
+fn listed(records: &[(Seq, Made, Snapshot<WordDoc>)]) -> String {
+    let named: Vec<String> = records
+        .iter()
+        .map(|(at, made, _)| match made {
+            Made::Edit(_) => format!("{} edit", at.0),
+            Made::Foreign { base, back, .. } => format!("{} foreign on {} handing back {back:?}", at.0, base.0),
+        })
+        .collect();
+    named.join("; ")
+}
+
+/// What another editor's versions did in a run.
+fn report(seed: u64, records: &[(Seq, Made, Snapshot<WordDoc>)], refused: u64) {
+    let (versions, back) = records.iter().fold((0, 0), |(v, b), r| match &r.1 {
+        Made::Foreign { back, .. } => (v + 1, b + back.len()),
+        Made::Edit(_) => (v, b),
+    });
+    println!("seed {seed}: another editor's {versions} versions, {back} steps handed back, {refused} edits refused");
+}
+
+/// `records`, in commit order, replayed on the document as opened (`bytes`): every version
+/// the same as the concurrent run made it, at the same number.
+fn replay_serially(bytes: &Arc<[u8]>, records: &[(Seq, Made, Snapshot<WordDoc>)], seed: u64) {
+    let serial = editor(bytes);
+    let mut seq = Seq(0);
+    for (at, made, version) in records {
+        let made_here = match made {
+            Made::Edit(command) => {
+                // a no-op in the serial run (the text already that) makes no version: skip numbers
+                let done = serial.run(&Caller::anonymous(), command).unwrap();
+                assert!(done.changed, "seed {seed}: {command:?} changed nothing serially");
+                done.version
+            }
+            Made::Foreign { base, file, back } => {
+                let arrived = serial.receive("Ada", *base, opened_file(file)).unwrap();
+                let again: Vec<(Seq, Seq)> = arrived
+                    .handed_back
+                    .iter()
+                    .map(|h| (h.step.step, h.version.seq()))
+                    .collect();
+                assert_eq!(&again, back, "seed {seed}: the steps handed back at version {at}");
+                arrived.version
+            }
+        };
+        seq = made_here.seq();
+        assert_eq!(
+            seq,
+            *at,
+            "seed {seed}: commit order, the run's commits {}",
+            listed(records)
+        );
+        assert_eq!(
+            written(made_here.doc()),
+            written(version.doc()),
+            "seed {seed}: the document at version {at}"
+        );
+    }
+    assert_eq!(seq, records.last().map_or(Seq(0), |r| r.0));
+}
+
+/// Every other writer running batches.
+const BATCHES: Mix = Mix {
+    batches: true,
+    foreign: 0,
+};
+
+/// Batches, and another editor's versions coming in four times (co-authoring refresh).
+const WITH_ANOTHER_EDITOR: Mix = Mix {
+    batches: true,
+    foreign: 4,
+};
+
+#[test]
+fn batches_and_another_editors_versions_beside_writers_equal_their_serial_order() {
+    for seed in [51u64, 52] {
+        run_with("samplelib/sample-long.docx", seed, 4, 4, WITH_ANOTHER_EDITOR);
+    }
 }
 
 #[test]
@@ -464,14 +613,15 @@ fn each_version_reads_as_a_fresh_reading_does() {
 /// of two to five common edits (run with `--ignored`, in release). A batch's op that refuses
 /// depends on what its refusal rests on, as an applied one depends on what it read (lane D2d):
 /// without that, an insertion was lost, text ids were drawn in another order and a tracked
-/// author was missing from people.xml.
+/// author was missing from people.xml. Another editor's versions come in beside them (lane
+/// CF2): refused or rebased writers, steps handed back, replayed serially the same.
 #[test]
 #[ignore = "the end gate's long run: cargo test --release -- --ignored"]
 fn sixty_seeds_of_eight_writers_with_batches() {
     let mut rebased = 0;
     for seed in 200..260u64 {
-        rebased += run_with("samplelib/sample-long.docx", seed, 8, 5, true).1;
-        run_with("generated/markdown/constructs.docx", seed, 8, 5, true);
+        rebased += run_with("samplelib/sample-long.docx", seed, 8, 5, WITH_ANOTHER_EDITOR).1;
+        run_with("generated/markdown/constructs.docx", seed, 8, 5, WITH_ANOTHER_EDITOR);
     }
     println!("60 seeds, 8 writers with batches: {rebased} rebased");
 }

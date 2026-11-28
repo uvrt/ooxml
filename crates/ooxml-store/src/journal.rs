@@ -26,8 +26,13 @@ pub(crate) struct Journal<D: DocModel> {
     trimmed: Option<Seq>,
 }
 
-/// One version's entry: its number, the change set that made it, the keys that wrote.
-type Entry<D> = (Seq, ChangeSet<D>, KeySet<<D as DocModel>::Key>);
+/// One version's entry: its number, the change set that made it, the keys that wrote, and
+/// the editor who made it when that is another editor's commit ([`crate::Caller::foreign`]).
+type Entry<D> = (Seq, ChangeSet<D>, KeySet<<D as DocModel>::Key>, Option<Arc<str>>);
+
+/// Another editor's commit in the way of a transaction: its version, the editor, and the
+/// keys of the transaction's it wrote.
+pub(crate) type ForeignHit<K> = (Seq, Arc<str>, KeySet<K>);
 
 /// The entries published after a version, in order, held apart from the journal: what a
 /// commit checks and rebases against outside the commit lock.
@@ -46,6 +51,27 @@ impl<D: DocModel> Since<D> {
             written.extend(&entry.2);
         }
         written
+    }
+
+    /// The first of them that another editor made and that wrote a key of `depends`, or a
+    /// key that meets a condition of `predicates` on `head`: the keys in the way.
+    pub(crate) fn foreign_in_way(
+        &self,
+        depends: &KeySet<D::Key>,
+        predicates: &[Arc<dyn crate::ReadPredicate<D>>],
+        head: &D,
+    ) -> Option<ForeignHit<D::Key>> {
+        self.0.iter().find_map(|entry| {
+            let editor = entry.3.as_ref()?;
+            let mut overlap = entry.2.intersection(depends);
+            if let Some(keys) = entry.2.keys() {
+                let met = keys
+                    .iter()
+                    .filter(|key| predicates.iter().any(|p| p.depends(head, key)));
+                overlap.extend(&KeySet::of(met.cloned()));
+            }
+            (!overlap.is_empty()).then(|| (entry.0, Arc::clone(editor), overlap))
+        })
     }
 
     /// `changes`, a sequence made on the version these entries were published after, moved
@@ -86,8 +112,8 @@ impl<D: DocModel> Journal<D> {
     }
 
     /// Keep the change set that made version `seq`, and the keys it wrote.
-    pub(crate) fn push(&mut self, seq: Seq, changes: ChangeSet<D>, writes: KeySet<D::Key>) {
-        self.entries.push_back(Arc::new((seq, changes, writes)));
+    pub(crate) fn push(&mut self, seq: Seq, changes: ChangeSet<D>, writes: KeySet<D::Key>, foreign: Option<Arc<str>>) {
+        self.entries.push_back(Arc::new((seq, changes, writes, foreign)));
     }
 
     /// Let go of the oldest entries beyond the latest `window`, but none after `needed` (the
@@ -118,6 +144,15 @@ impl<D: DocModel> Journal<D> {
             return None; // the versions right after `base` are no longer kept
         }
         Some(self.entries.iter().skip(since))
+    }
+
+    /// The versions published since `base`, in order; `None` when the versions right after
+    /// `base` are no longer kept.
+    pub(crate) fn seqs_since(&self, base: Seq) -> Option<Vec<Seq>> {
+        if !self.entries.iter().any(|entry| entry.0 > base) {
+            return Some(Vec::new());
+        }
+        Some(self.since_entries(base)?.map(|entry| entry.0).collect())
     }
 
     /// `changes`, made on version `base`, moved past every change set published since, in
