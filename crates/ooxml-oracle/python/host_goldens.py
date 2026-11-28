@@ -140,9 +140,11 @@ ENCODING_FIELDS = {"save_document": frozenset({"size"})}
 ALLOWED_RULES = frozenset({1})
 #: The user decisions a known difference may give instead (one problems shape; optimistic
 #: batches; a limit refusal's numbers in its details -- round 60, R142 -- all 2026-11-25; stamp-on-open,
-#: 2026-11-26).
+#: 2026-11-26; the final view follows Word's Accept All -- the user's standing rule that Word is the
+#: oracle, render final = Accept All, applied by main's RD1c ruling -- 2026-11-28).
 ALLOWED_DECISIONS = frozenset({"structured-problems-2026-11-25", "optimistic-batches-2026-11-25",
-                               "limits-in-details-2026-11-25", "stamp-on-open-2026-11-26"})
+                               "limits-in-details-2026-11-25", "stamp-on-open-2026-11-26",
+                               "view-follows-word-2026-11-28"})
 #: Repository folders whose files an input may name instead of a copy in host/inputs.
 REPOSITORY_INPUTS = (ORACLE / "fixtures", ORACLE / "corpus", ORACLE / "cases" / "inputs",
                      DOCX_AGENT / "tests" / "goldens")

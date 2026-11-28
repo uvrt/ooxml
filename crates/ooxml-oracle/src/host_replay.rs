@@ -82,18 +82,21 @@ pub struct Known {
     pub rule: Option<i64>,
     /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
     /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`,
-    /// `stamp-on-open-2026-11-26`).
+    /// `stamp-on-open-2026-11-26`, `view-follows-word-2026-11-28`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 4] = [
+pub const DECISIONS: [&str; 5] = [
     "structured-problems-2026-11-25",
     "optimistic-batches-2026-11-25",
     "limits-in-details-2026-11-25",
     "stamp-on-open-2026-11-26",
+    // the user's standing rule that Word is the oracle (render final = Accept All), applied by
+    // main's RD1c ruling: the final view follows Word's Accept All (one View module)
+    "view-follows-word-2026-11-28",
 ];
 
 /// The known differences in `text` (the TOML subset the file uses: `[[difference]]` tables
