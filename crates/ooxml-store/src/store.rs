@@ -195,6 +195,8 @@ struct Body<D: DocModel> {
     writes: KeySet<D::Key>,
     /// The keys it wrote only as merges ([`DocModel::merged`]).
     merges: KeySet<D::Key>,
+    /// The conditions it read by that name no keys ([`ReadPredicate::history_keys`]).
+    conditions: crate::history::Conditions<D>,
     caller: Caller,
 }
 
@@ -211,6 +213,7 @@ impl<D: DocModel> Body<D> {
             reads,
             writes,
             merges,
+            conditions: Arc::from([]),
             caller: caller.clone(),
         }
     }
@@ -727,7 +730,7 @@ impl<D: DocModel> Store<D> {
         // transaction can have read them, and its own reads of them are of its own work
         let mut depends = parts.reads.without(&parts.created);
         depends.extend(&parts.writes.without(&parts.merges).without_where(D::derived));
-        let reads = history_reads(parts.reads.without(&parts.created), &parts.predicates);
+        let (reads, conditions) = history_reads(parts.reads.without(&parts.created), &parts.predicates);
         let changes: Arc<[D::Change]> = std::mem::take(&mut parts.changes).into();
         let mut moved = 0;
         let mut waited = Duration::ZERO;
@@ -778,7 +781,8 @@ impl<D: DocModel> Store<D> {
                 }
             };
             let writes = resolved_writes(&doc, parts.writes, &parts.created);
-            let body = Body::new(changes, reads, writes, parts.merges, caller);
+            let mut body = Body::new(changes, reads, writes, parts.merges, caller);
+            body.conditions = conditions;
             let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body, at);
             let held = self.clock.monotonic().saturating_sub(entered);
             queue.leave(&mut state);
@@ -875,6 +879,7 @@ impl<D: DocModel> Store<D> {
             reads: body.reads,
             writes: body.writes,
             merges: body.merges,
+            conditions: body.conditions,
             caller: body.caller.name,
             foreign: body.caller.foreign,
         };
@@ -1007,17 +1012,21 @@ impl<D: DocModel> Store<D> {
 }
 
 /// The reads a step keeps in the history: a read by condition counts there as a read of the
-/// keys it names ([`ReadPredicate::history_keys`]), or of every key when it names none, so
-/// undo and redo find a step entangled at least as they did before such reads (a condition
-/// is checked against the head only at commit).
-fn history_reads<D: DocModel>(mut reads: KeySet<D::Key>, predicates: &[Arc<dyn ReadPredicate<D>>]) -> KeySet<D::Key> {
+/// keys it names ([`ReadPredicate::history_keys`]); one that names none is kept as the
+/// condition itself, which undo and a refresh's take-back ask of the keys in their way (a
+/// step that read by a condition is tied only to a key that meets it, phase 3 CF2d).
+fn history_reads<D: DocModel>(
+    mut reads: KeySet<D::Key>,
+    predicates: &[Arc<dyn ReadPredicate<D>>],
+) -> (KeySet<D::Key>, crate::history::Conditions<D>) {
+    let mut conditions = Vec::new();
     for predicate in predicates {
         match predicate.history_keys() {
             Some(keys) => reads.extend(&KeySet::of(keys)),
-            None => return KeySet::Everything,
+            None => conditions.push(Arc::clone(predicate)),
         }
     }
-    reads
+    (reads, conditions.into())
 }
 
 /// The keys a commit wrote, as `doc` (the version it made) has them: its written keys and

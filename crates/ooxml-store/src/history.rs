@@ -24,10 +24,19 @@ pub(crate) struct Step<D: DocModel> {
     /// The keys it wrote only as merges, made where the change is applied
     /// ([`DocModel::merged`]): two steps writing one only so are not entangled by it.
     pub(crate) merges: KeySet<D::Key>,
+    /// The conditions it read by that name no keys: a key it is tied to is one that meets
+    /// one of them (as the head or the version the step was made on holds it).
+    pub(crate) conditions: Conditions<D>,
     pub(crate) caller: Option<Arc<str>>,
     /// Another editor's commit ([`crate::Caller::foreign`]): no undo takes it back.
     pub(crate) foreign: bool,
 }
+
+/// The conditions a step read by that name no keys.
+pub(crate) type Conditions<D> = Arc<[Arc<dyn crate::ReadPredicate<D>>]>;
+
+/// A step as listed, with the conditions it read by that name no keys.
+pub(crate) type Conditioned<D> = (StepInfo<<D as DocModel>::Key>, Conditions<D>);
 
 /// A step taken out, with the undo that took it out: the version it was applied to, its
 /// change set, and the version it made.
@@ -147,6 +156,14 @@ impl<D: DocModel> History<D> {
 
     pub(crate) fn steps(&self) -> Vec<StepInfo<D::Key>> {
         self.undo.iter().map(info).collect()
+    }
+
+    /// [`History::steps`], each with the conditions it read by that name no keys.
+    pub(crate) fn steps_with_conditions(&self) -> Vec<Conditioned<D>> {
+        self.undo
+            .iter()
+            .map(|step| (info(step), Arc::clone(&step.conditions)))
+            .collect()
     }
 
     pub(crate) fn redoable(&self) -> Vec<StepInfo<D::Key>> {
@@ -284,6 +301,11 @@ impl<D: DocModel> History<D> {
             // lands, and so is one both wrote only as merges: no tie either
             let mut with = step.writes.without(&step.merges).intersection(&later.reads);
             with.extend(&tied_writes::<D>(step, &later.writes, &later.merges));
+            with.extend(&met(
+                &later.conditions,
+                &step.writes.without(&step.merges),
+                &[head.doc(), step.before.doc()],
+            ));
             let with = without_kept::<D>(with);
             if later.foreign && !with.is_empty() {
                 // another editor's change is in the way: no undo takes it back
@@ -395,8 +417,13 @@ impl<D: DocModel> History<D> {
         let undone = undone.ok_or(StoreError::NothingToRedo)?;
         let step = &undone.step;
         // Its changes go on top of the head: what it read and wrote must be as its undo
-        // left them (written since and different; a key written and put back is fine).
-        let mut depends = step.reads.clone();
+        // left them (written since and different; a key written and put back is fine); a
+        // step that read by condition depends on every key, as it is not asked here
+        let mut depends = if step.conditions.is_empty() {
+            step.reads.clone()
+        } else {
+            KeySet::Everything
+        };
         depends.extend(&step.writes);
         let overlap = match head.keys_written_since(undone.result.seq(), &depends) {
             KeySet::Everything if !head.doc().agrees(undone.result.doc(), &KeySet::Everything) => KeySet::Everything,
@@ -512,6 +539,26 @@ pub(crate) fn tied_writes<D: DocModel>(
         .intersection(writes)
         .without_where(D::derived)
         .without(&both)
+}
+
+/// The keys of `keys` that meet one of `conditions` as one of `docs` holds them; every key
+/// when `keys` is every key and there is a condition.
+pub(crate) fn met<D: DocModel>(
+    conditions: &[Arc<dyn crate::ReadPredicate<D>>],
+    keys: &KeySet<D::Key>,
+    docs: &[&D],
+) -> KeySet<D::Key> {
+    if conditions.is_empty() {
+        return KeySet::new();
+    }
+    match keys.keys() {
+        None => KeySet::Everything,
+        Some(keys) => KeySet::of(
+            keys.iter()
+                .filter(|key| conditions.iter().any(|c| docs.iter().any(|doc| c.depends(doc, key))))
+                .cloned(),
+        ),
+    }
 }
 
 /// `keys` without the ones no undo is entangled on ([`DocModel::kept`]).

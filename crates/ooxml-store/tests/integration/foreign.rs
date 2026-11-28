@@ -32,7 +32,9 @@ fn receive(store: &Store<Cells>, base: Seq, cells: &[(u32, i64)]) -> Result<Rece
         &Caller::foreign("Ada"),
         base,
         &(),
-        |step: &StepInfo<u32>| step.writes.intersects(&keys),
+        |step: &StepInfo<u32>, _: &[std::sync::Arc<dyn ooxml_store::ReadPredicate<Cells>>]| {
+            step.writes.intersects(&keys)
+        },
         |tx: &mut Txn<'_, Cells>, _base| {
             for &(cell, value) in cells {
                 tx.read(cell);
@@ -237,4 +239,51 @@ fn another_editors_commit_hands_back_only_what_touches_it_past_merges() {
     let _ = one;
     let head = store.snapshot();
     assert_eq!((head.doc().get(1), head.doc().get(2), head.doc().get(9)), (1, 20, 2));
+}
+
+/// Every cell holding `.0`, as a read by condition naming no keys.
+#[derive(Debug)]
+struct HoldingValue(i64);
+
+impl ooxml_store::ReadPredicate<Cells> for HoldingValue {
+    fn depends(&self, head: &Cells, key: &u32) -> bool {
+        head.0.get(key) == Some(&self.0)
+    }
+}
+
+/// Cell 50 set to how many cells hold `.0`, read by condition.
+struct Counting(i64);
+
+impl ooxml_store::Command<Cells> for Counting {
+    type Out = ();
+    type Error = Fail;
+
+    fn validate(&self, _doc: &Cells) -> Result<(), Fail> {
+        Ok(())
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, Cells>) -> Result<(), Fail> {
+        tx.read_where(std::sync::Arc::new(HoldingValue(self.0)));
+        let count = tx.doc().0.values().filter(|v| **v == self.0).count();
+        for (cell, _) in tx.doc().0.clone().iter().filter(|(_, v)| **v == self.0) {
+            tx.read(*cell);
+        }
+        tx.write(Change::Set(50, Some(i64::try_from(count).unwrap())))?;
+        Ok(())
+    }
+}
+
+#[test]
+fn a_step_that_read_by_condition_is_tied_only_to_keys_that_meet_it() {
+    let store = fresh();
+    let other = put(&store, "a", &[(2, 8)]);
+    let matching = put(&store, "a", &[(1, 7)]);
+    store.run(&Caller::named("b"), &Counting(7)).unwrap();
+    // cell 2 never held 7: the count does not rest on it
+    store.undo_step(other, &KeySet::new()).unwrap();
+    // cell 1 holds 7: the count rests on it
+    assert!(matches!(
+        store.undo_step(matching, &KeySet::new()),
+        Err(StoreError::Entangled { .. })
+    ));
 }

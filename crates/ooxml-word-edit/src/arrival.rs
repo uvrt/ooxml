@@ -213,6 +213,52 @@ impl Arrival {
         })
     }
 
+    /// Whether a step that read by `conditions` (naming no keys) has its answer changed by
+    /// it: a block it changes, removes or adds (or a part it changes) meets one of them as
+    /// the base holds it or as theirs does (`theirs`, their version as a document).
+    #[must_use]
+    pub fn meets(
+        &self,
+        conditions: &[Arc<dyn ooxml_store::ReadPredicate<WordDoc>>],
+        base: &WordDoc,
+        theirs: &WordDoc,
+    ) -> bool {
+        conditions.iter().any(|condition| {
+            self.parts.iter().flat_map(|p| p.keys.iter()).any(|key| {
+                matches!(key, Key::Block { .. } | Key::Part(_))
+                    && (condition.depends(base, key) || condition.depends(theirs, key))
+            })
+        })
+    }
+
+    /// Their version as a document: `base` with the parts it changes as theirs (the
+    /// bookkeeping left out, which no condition reads).
+    ///
+    /// # Errors
+    /// When a change of theirs cannot be applied to the base.
+    pub fn theirs_on(&self, base: &WordDoc) -> Result<WordDoc, EditError> {
+        use ooxml_store::DocModel;
+        let mut doc = base.clone();
+        doc.begin();
+        for part in &self.parts {
+            let name: Arc<str> = Arc::clone(part.name.as_arc());
+            let change = match &part.how {
+                How::Patched(patches) => Change::Arrived {
+                    part: name.clone(),
+                    patches: Some(patches.clone().into()),
+                    keys: Arc::from([]),
+                    from: self.from.clone(),
+                    on: base.package().part(&name).cloned(),
+                },
+                How::Whole | How::Added => self.whole(name, Arc::from([])),
+                How::Removed if base.package().has_part(&name) => Change::Remove { part: name },
+                How::Removed | How::People(_) | How::Rels(..) | How::Types(..) => continue,
+            };
+            doc.apply(&change)?;
+        }
+        Ok(doc)
+    }
+
     /// Take the part `part` whole: its patches could not be placed ([`Unplaced`]).
     pub fn widen(&mut self, part: &str) {
         for arrived in self.parts.iter_mut().filter(|p| *p.name == *part) {
@@ -396,11 +442,24 @@ impl Editor {
             });
         }
         let arrival = RefCell::new(planned);
+        let theirs = std::cell::OnceCell::new();
         let received = self.store().receive(
             &Caller::foreign(editor),
             base,
             &Setup::default(),
-            |step| arrival.borrow().touches(&step.reads, &step.writes, &step.merges),
+            |step, conditions| {
+                let arrival = arrival.borrow();
+                if arrival.touches(&step.reads, &step.writes, &step.merges) {
+                    return true;
+                }
+                if conditions.is_empty() {
+                    return false;
+                }
+                // (their version as a document made once, where a step read by condition)
+                let made = theirs.get_or_init(|| arrival.theirs_on(on.doc()).ok());
+                made.as_ref()
+                    .is_none_or(|theirs| arrival.meets(conditions, on.doc(), theirs))
+            },
             |tx, on| {
                 let prepared = arrival.borrow().prepare(tx, on.doc());
                 match prepared {

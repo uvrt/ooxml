@@ -131,14 +131,17 @@ fn a_matched_cell_written_since_is_a_conflict() {
 }
 
 #[test]
-fn the_history_keeps_a_read_by_condition_as_a_read_of_everything() {
+fn the_history_keeps_a_read_by_condition_as_the_condition_and_its_reads_by_key() {
+    // (phase 3 CF2d: not as a read of everything; undo and a refresh's take-back ask the
+    // condition of the keys in their way, tests/integration/foreign.rs)
     let store = store();
     store
         .run(&Caller::named("finder"), &replace(&store, vec![(0, 5)]))
         .unwrap();
     let steps = store.steps();
     let finder = steps.iter().find(|s| s.caller.as_deref() == Some("finder")).unwrap();
-    assert_eq!(finder.reads, KeySet::Everything);
+    assert_ne!(finder.reads, KeySet::Everything);
+    assert!(finder.reads.keys().is_some_and(|keys| !keys.is_empty()));
 }
 
 /// A condition over two cells only, which says so.

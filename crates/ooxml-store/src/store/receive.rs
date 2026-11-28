@@ -13,8 +13,10 @@
 //! back instead (main's ruling for CF2: the server's version is the truth).
 
 use super::{Conflict, Store};
+use crate::history::met;
 use crate::txn::Ids;
-use crate::{Caller, Committed, DocModel, Error, KeySet, Seq, Snapshot, StepInfo, StoreError, Txn};
+use crate::{Caller, Committed, DocModel, Error, KeySet, ReadPredicate, Seq, Snapshot, StepInfo, StoreError, Txn};
+use std::sync::Arc;
 
 /// A step of this store's taken back because another editor's commit changed what it
 /// touched (or because it was entangled with one that did): the step as it was, and the
@@ -60,8 +62,8 @@ impl<D: DocModel> Store<D> {
     }
 
     /// Commit another editor's change, made on version `base`, as `editor` (a foreign
-    /// caller). `touches` says whether one of this store's steps since `base` touched what the
-    /// change changes; `prepare` makes the change on the transaction's head, given `base`, or
+    /// caller). `touches` says whether one of this store's steps since `base` (with the
+    /// conditions it read by that name no keys) touched what the change changes; `prepare` makes the change on the transaction's head, given `base`, or
     /// says that what it touches grew ([`Prepared::Widened`]).
     ///
     /// Each step since `base` that `touches`, and each later step entangled with one of
@@ -77,19 +79,19 @@ impl<D: DocModel> Store<D> {
         editor: &Caller,
         base: Seq,
         setup: &D::Setup,
-        touches: impl Fn(&StepInfo<D::Key>) -> bool,
+        touches: impl Fn(&StepInfo<D::Key>, &[Arc<dyn ReadPredicate<D>>]) -> bool,
         prepare: impl Fn(&mut Txn<'_, D>, &Snapshot<D>) -> Result<Prepared, E>,
     ) -> Result<Received<D>, E> {
         let start = self.clock.monotonic();
         let _gate = self.enter_gate();
         let on = self.kept(base).ok_or(StoreError::NotKept { seq: base })?;
-        let mut handed_back = self.take_back_since(base, &touches)?;
+        let mut handed_back = self.take_back_since(base, &on, &touches)?;
         let mut attempts = 0;
         loop {
             attempts += 1;
             let mut tx = Txn::new(self.snapshot(), Ids::Borrowed(&self.ids), setup).behind_gate();
             if prepare(&mut tx, &on)? == Prepared::Widened {
-                handed_back.extend(self.take_back_since(base, &touches)?);
+                handed_back.extend(self.take_back_since(base, &on, &touches)?);
                 continue;
             }
             match self.try_commit(editor, tx.into_parts(), true, None) {
@@ -108,14 +110,18 @@ impl<D: DocModel> Store<D> {
     fn take_back_since(
         &self,
         base: Seq,
-        touches: &impl Fn(&StepInfo<D::Key>) -> bool,
+        on: &Snapshot<D>,
+        touches: &impl Fn(&StepInfo<D::Key>, &[Arc<dyn ReadPredicate<D>>]) -> bool,
     ) -> Result<Vec<HandedBack<D>>, Error<D>> {
-        let steps: Vec<StepInfo<D::Key>> = self.steps().into_iter().filter(|s| s.step > base).collect();
+        let listed = self.lock_state().history.steps_with_conditions();
+        let steps: Vec<_> = listed.into_iter().filter(|(s, _)| s.step > base).collect();
+        let head = self.snapshot();
         let mut taken: Vec<&StepInfo<D::Key>> = Vec::new();
-        for step in steps.iter().filter(|s| !s.foreign) {
+        for (step, conditions) in steps.iter().filter(|(s, _)| !s.foreign) {
             // as the history finds a step entangled with a later one (`History::plan_undo`)
             let entangled = taken.iter().any(|t| {
-                let mut with = t.writes.without(&t.merges).intersection(&step.reads);
+                let written = t.writes.without(&t.merges);
+                let mut with = written.intersection(&step.reads);
                 let both = t.merges.intersection(&step.merges);
                 with.extend(
                     &t.writes
@@ -123,9 +129,10 @@ impl<D: DocModel> Store<D> {
                         .without_where(D::derived)
                         .without(&both),
                 );
+                with.extend(&met(conditions, &written, &[head.doc(), on.doc()]));
                 !with.without_where(D::kept).is_empty()
             });
-            if entangled || touches(step) {
+            if entangled || touches(step, conditions) {
                 taken.push(step);
             }
         }

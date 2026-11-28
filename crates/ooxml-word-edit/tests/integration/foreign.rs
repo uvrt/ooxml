@@ -546,3 +546,50 @@ fn a_picture_prepared_before_theirs_comes_in_is_prepared_again_not_refused() {
     assert_eq!(drawn.len(), 2);
     assert_ne!(drawn[0].0, drawn[1].0);
 }
+
+fn replace_all(find: &str, with: &str) -> ooxml_word_edit::ReplaceText {
+    ooxml_word_edit::ReplaceText {
+        pattern: Arc::new(ooxml_word_edit::find::Literal::new(find, true, false, with).unwrap()),
+        across: false,
+        within: None,
+        count: None,
+        keep: ooxml_word_edit::Keep::First,
+        policy: RevisionPolicy::Untracked,
+    }
+}
+
+#[test]
+fn a_replace_of_every_match_is_handed_back_only_where_their_change_meets_its_find() {
+    // apart: their paragraph neither held nor holds the text it replaced
+    let (ours, targets) = opened();
+    ours.run(&Caller::anonymous(), &set_text(&targets[2], "lantern here"))
+        .unwrap();
+    let base = ours.store().snapshot();
+    let replaced = ours
+        .run(&Caller::named("agent"), &replace_all("lantern", "lamp"))
+        .unwrap();
+    assert!(replaced.changed);
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &set_text(&targets[0], "Nothing to find."))
+            .unwrap();
+    });
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    assert!(arrived.handed_back.is_empty(), "their change meets no match of it");
+    // met: their paragraph now holds the text it replaced (a match it did not see)
+    let (ours, targets) = opened();
+    ours.run(&Caller::anonymous(), &set_text(&targets[2], "lantern here"))
+        .unwrap();
+    let base = ours.store().snapshot();
+    let replaced = ours
+        .run(&Caller::named("agent"), &replace_all("lantern", "lamp"))
+        .unwrap();
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &set_text(&targets[0], "A lantern of theirs."))
+            .unwrap();
+    });
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    let back: Vec<Seq> = arrived.handed_back.iter().map(|h| h.step.step).collect();
+    assert_eq!(back, vec![replaced.version.seq()], "a match it did not see came");
+}
