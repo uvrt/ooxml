@@ -312,6 +312,42 @@ impl<D: DocModel> History<D> {
         })
     }
 
+    /// Plan taking back step `at`, the newest step undo can reach, exactly: its "before"
+    /// itself, where every version published since it is one of `ours` (later steps and the
+    /// undos that took them back, so the head holds its "after"'s content though not that
+    /// version itself). What a co-authoring refresh's take-back does where moving the step's
+    /// inverses past those cannot be placed ([`crate::Store::receive`]).
+    pub(crate) fn plan_undo_exact(
+        &self,
+        at: Seq,
+        ours: &std::collections::BTreeSet<Seq>,
+        journal: &Journal<D>,
+    ) -> Result<Planned<D>, Error<D>> {
+        let index = self.undo.len().checked_sub(1).ok_or(StoreError::NothingToUndo)?;
+        let step = self.undo.get(index).ok_or(StoreError::NothingToUndo)?;
+        let since = journal.seqs_since(step.after.seq());
+        let alone = step.after.seq() == at && since.is_some_and(|seqs| seqs.iter().all(|seq| ours.contains(seq)));
+        if !alone {
+            return Err(StoreError::Entangled {
+                step: at,
+                overlap: step.writes.clone(),
+            });
+        }
+        Ok(Planned {
+            target: Target::Undo {
+                index,
+                linear: false,
+                exact: false,
+                plain: false,
+            },
+            step: at,
+            number: None,
+            doc: step.before.doc().clone(),
+            changes: ChangeSet::inverse_of(step.before.doc().clone(), step.changes.clone()),
+            writes: step.writes.clone(),
+        })
+    }
+
     /// Plan redoing step `at` (plain redo's newest when `None`), refusing it when what it
     /// read or wrote holds other content than its undo left.
     pub(crate) fn plan_redo(

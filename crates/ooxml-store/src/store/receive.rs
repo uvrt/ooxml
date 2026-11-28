@@ -127,30 +127,32 @@ impl<D: DocModel> Store<D> {
         // newest first; a step whose undo cannot be moved past a later one (keys apart, places
         // not) takes back every later step of this store's first, then is taken back again
         let mut pending: Vec<StepInfo<D::Key>> = taken.into_iter().cloned().collect();
+        // the versions this take-back made or took out: once only those follow a step, the
+        // head holds its "after"'s content and the step is taken back exactly
+        let mut ours = std::collections::BTreeSet::new();
         while let Some(step) = pending.pop() {
-            match self.undo_step(step.step, &KeySet::new()) {
-                Ok(outcome) => handed_back.push(HandedBack {
-                    step,
-                    previous: outcome.previous,
-                    version: outcome.version,
-                }),
+            let undone = match self.undo_step(step.step, &KeySet::new()) {
                 Err(StoreError::Entangled { .. }) => {
                     let later: Vec<StepInfo<D::Key>> = self
                         .steps()
                         .into_iter()
                         .filter(|s| s.step > step.step && !s.foreign)
                         .collect();
-                    if later.is_empty() {
-                        return Err(StoreError::Entangled {
-                            step: step.step,
-                            overlap: step.writes,
-                        });
+                    if !later.is_empty() {
+                        pending.push(step);
+                        pending.extend(later);
+                        continue;
                     }
-                    pending.push(step);
-                    pending.extend(later);
+                    self.history_op(|history, _, journal| history.plan_undo_exact(step.step, &ours, journal))
                 }
-                Err(error) => return Err(error),
-            }
+                other => other,
+            }?;
+            ours.extend([step.step, undone.version.seq()]);
+            handed_back.push(HandedBack {
+                step,
+                previous: undone.previous,
+                version: undone.version,
+            });
         }
         Ok(handed_back)
     }
