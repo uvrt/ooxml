@@ -428,6 +428,13 @@ impl Accepted {
         out
     }
 
+    /// The grid columns accepting deletes: not kept, and not joined to a column before them
+    /// (docx-agent's `columns_deleted_pending`).
+    #[must_use]
+    pub fn deleted(&self) -> Vec<usize> {
+        self.deleted_columns(self.grid_columns)
+    }
+
     /// The grid columns before `end` accepting deletes (not kept, not joined to a column
     /// before them).
     fn deleted_columns(&self, end: usize) -> Vec<usize> {

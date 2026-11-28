@@ -714,12 +714,11 @@ pub(super) fn table_json(
 ) -> Option<Value> {
     let view = table_view(doc, docx, id, retry).ok()?;
     let deleted = deleted_rows(&view.table);
-    let kept = kept_columns(docx, &view);
+    let (kept, pending) = accepted_columns(docx, &view);
     let mut data = Map::new();
     data.insert("id".into(), json!(view.table.id));
     data.insert("rows".into(), json!(view.table.rows.len() - deleted.len()));
-    data.insert("columns".into(), json!(kept.len()));
-    let pending: Vec<usize> = (0..view.column_count()).filter(|c| !kept.contains(c)).collect();
+    data.insert("columns".into(), json!(kept));
     if !pending.is_empty() {
         data.insert("columns_deleted_pending".into(), json!(pending));
     }
@@ -735,11 +734,16 @@ pub(super) fn table_json(
     Some(Value::Object(data))
 }
 
-/// The grid columns accepting the table's tracked changes keeps (`accepted_columns`).
-fn kept_columns(docx: &Docx, view: &TableView) -> Vec<usize> {
+/// How many columns the table has as accepted, and the grid columns accepting deletes
+/// (`accepted_columns`; a grid column joined to the one before it, no cell dividing them, is
+/// neither).
+fn accepted_columns(docx: &Docx, view: &TableView) -> (usize, Vec<usize>) {
     docx.part(&view.part).map_or_else(
-        || (0..view.column_count()).collect(),
-        |part| TableGrid::new(part, &view.table).kept_columns(),
+        || (view.column_count(), Vec::new()),
+        |part| {
+            let accepted = TableGrid::new(part, &view.table).accepted(&view.table.id);
+            (accepted.width(), accepted.deleted())
+        },
     )
 }
 
