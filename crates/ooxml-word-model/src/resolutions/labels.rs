@@ -11,7 +11,7 @@ use crate::labels::{item_lists, top_level, BlockItems, Counters};
 use crate::model::{Block, Paragraph};
 use crate::value::{text, Text};
 use ooxml_base::{Digest, DigestKey, Digester};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The key of a block's list items: what decides each paragraph's resolved `numPr`.
@@ -54,44 +54,11 @@ fn label_key(key: DigestKey, block: &Block) -> Digest {
     d.finish()
 }
 
-/// The label keys of the last version's blocks by the block (its pointer, the block held):
-/// a block the next version shares is not digested again.
-#[derive(Default)]
-pub(super) struct LabelKeys {
-    last: HashMap<usize, (Block, Digest)>,
-    now: HashMap<usize, (Block, Digest)>,
-}
-
-fn block_pointer(block: &Block) -> usize {
-    match block {
-        Block::Paragraph(p) => Arc::as_ptr(p) as usize,
-        Block::Table(t) => Arc::as_ptr(t) as usize,
-    }
-}
-
 fn same_pointer(a: &Block, b: &Block) -> bool {
     match (a, b) {
         (Block::Paragraph(x), Block::Paragraph(y)) => Arc::ptr_eq(x, y),
         (Block::Table(x), Block::Table(y)) => Arc::ptr_eq(x, y),
         _ => false,
-    }
-}
-
-impl LabelKeys {
-    /// `block`'s label key, kept for the next version.
-    fn of(&mut self, key: DigestKey, block: &Block) -> Digest {
-        let at = block_pointer(block);
-        let d = match self.last.get(&at) {
-            Some((kept, d)) if same_pointer(kept, block) => *d,
-            _ => label_key(key, block),
-        };
-        self.now.insert(at, (block.clone(), d));
-        d
-    }
-
-    /// The version's blocks keyed: the next version is keyed from them.
-    fn finish(&mut self) {
-        self.last = std::mem::take(&mut self.now);
     }
 }
 
@@ -130,24 +97,13 @@ impl Model {
     }
 
     /// Bring the body's labels up to date: the blocks between the unchanged ones at either
-    /// end are taken out and the new ones put in.
-    pub(super) fn update_labels(&mut self, cx: &Context, body: &[Block]) {
-        let keys: Vec<Digest> = body.iter().map(|b| self.block_keys.of(self.key, b)).collect();
-        self.block_keys.finish();
-        let old = std::mem::take(&mut self.label_keys);
-        let prefix = old.iter().zip(&keys).take_while(|(a, b)| a == b).count();
-        let rest = old.len().min(keys.len()) - prefix;
-        let suffix = old
-            .iter()
-            .rev()
-            .zip(keys.iter().rev())
-            .take(rest)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let (removed, added) = (old.len() - prefix - suffix, keys.len() - prefix - suffix);
+    /// end are taken out and the new ones put in. A block is unchanged where it is the very
+    /// block of the last version at that end (its label key taken as it was) or its label
+    /// key is the same.
+    pub(super) fn update_labels(&mut self, cx: &Context, body: &Arc<[Block]>) {
         let top = top_level(&cx.numbering);
-        let mut edits = 0;
-        if old.is_empty() {
+        let Some((old, old_keys)) = self.labelled.take() else {
+            let keys: Vec<Digest> = body.iter().map(|b| label_key(self.key, b)).collect();
             let mut made = Vec::with_capacity(body.len());
             for (block, key) in body.iter().zip(&keys) {
                 made.push(self.items_of(cx, top, *key, block));
@@ -155,9 +111,41 @@ impl Model {
             self.labels = made.into_iter().collect();
             self.stats.label_blocks = body.len();
             self.stats.label_edits = body.len();
-            self.label_keys = keys;
+            self.labelled = Some((Arc::clone(body), keys));
             return;
+        };
+        let mut keys: Vec<Option<Digest>> = vec![None; body.len()];
+        let key_at = |keys: &mut Vec<Option<Digest>>, k: usize, old_k: usize| -> bool {
+            let (Some(new), Some(was), Some(was_key)) = (body.get(k), old.get(old_k), old_keys.get(old_k)) else {
+                return false;
+            };
+            let key = if same_pointer(new, was) {
+                *was_key
+            } else {
+                label_key(self.key, new)
+            };
+            if let Some(slot) = keys.get_mut(k) {
+                *slot = Some(key);
+            }
+            key == *was_key
+        };
+        let shorter = old.len().min(body.len());
+        let mut prefix = 0;
+        while prefix < shorter && key_at(&mut keys, prefix, prefix) {
+            prefix += 1;
         }
+        let rest = shorter - prefix;
+        let mut suffix = 0;
+        while suffix < rest && key_at(&mut keys, body.len() - 1 - suffix, old.len() - 1 - suffix) {
+            suffix += 1;
+        }
+        let (removed, added) = (old.len() - prefix - suffix, body.len() - prefix - suffix);
+        let keys: Vec<Digest> = keys
+            .into_iter()
+            .zip(body.iter())
+            .map(|(key, block)| key.unwrap_or_else(|| label_key(self.key, block)))
+            .collect();
+        let mut edits = 0;
         for _ in 0..removed {
             if self.labels.remove(prefix).is_ok() {
                 edits += 1;
@@ -172,7 +160,7 @@ impl Model {
         }
         self.stats.label_blocks = added;
         self.stats.label_edits = edits;
-        self.label_keys = keys;
+        self.labelled = Some((Arc::clone(body), keys));
     }
 }
 

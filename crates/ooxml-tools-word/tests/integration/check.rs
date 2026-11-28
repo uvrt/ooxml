@@ -64,6 +64,19 @@ pub(crate) fn limited(
         Arc::new(Unlimited),
     )
     .unwrap();
+    checked_head(&editor, number, arguments, last, layout, limit)
+}
+
+/// `check` with `arguments` of `editor`'s latest version (`number`), `layout` handed to it
+/// and laying out within `limit` where given.
+pub(crate) fn checked_head(
+    editor: &Editor,
+    number: u64,
+    arguments: Value,
+    last: &LastCheck,
+    layout: Option<&EnginePages>,
+    limit: Option<LayoutLimit<'_>>,
+) -> Value {
     let doc = editor.store().snapshot().doc().clone();
     let version = Version::new("a.docx", doc.package(), number)
         .with_owned(Some(Owned {
@@ -329,7 +342,7 @@ fn a_version_laid_out_is_summarised_whole_past_the_limit_on_laying_out() {
     // whole however long its pages take to paint
     let (first, _) = versions();
     let layout = EnginePages::of(engine());
-    layout.laid(&crate::common::read(&first), &Never).unwrap();
+    layout.laid(&crate::common::reading(&first), &Never).unwrap();
     let limit = LayoutLimit {
         cancel: &Past,
         timeout: Duration::from_millis(1),

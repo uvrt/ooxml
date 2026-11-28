@@ -72,7 +72,7 @@ pub(crate) fn block_pages(
             .map_or(cancel as &dyn Cancel, |l| l as &dyn Cancel),
         limit: layout_cancel.as_ref().map(|l| l.timeout()),
     };
-    let laid = match edit.lay_out(head.doc().package()) {
+    let laid = match edit.lay_out(head.doc()) {
         Ok(laid) => laid,
         Err(error @ (EditError::LayoutStopped(_) | EditError::Unsupported(_))) => return Ok(Err(error.to_string())),
         Err(other) => return Err(SessionError::format(other)),

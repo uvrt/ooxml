@@ -21,7 +21,7 @@ use ooxml_opc::Package;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{
     block_and_drawing_ids, drawing_numbers, load_state, BlockId, DocumentId, IdPool, LoadedState, PartsDelta,
-    StoryTable, VersionDelta,
+    VersionDelta,
 };
 use ooxml_word_model::WordPackage;
 use ooxml_xml::{Patch, PatchError, Tree};
@@ -121,8 +121,6 @@ pub struct Shared {
     pub(crate) fields: crate::fields::scan::FieldScans,
     /// Tables' shapes as Accept All leaves them, memoised by content.
     pub(crate) accepted: crate::facts::AcceptedShapes,
-    /// The document's stories, interned once: what its versions' change sets key blocks by.
-    stories: Mutex<StoryTable>,
     /// The document's identity, whatever its version: what its store's version numbers are
     /// named with ([`ooxml_word_model::ids::VersionRef`]).
     document: DocumentId,
@@ -254,7 +252,6 @@ impl WordDoc {
                 fields: crate::fields::scan::FieldScans::new(Arc::clone(&budget)),
                 accepted: crate::facts::AcceptedShapes::new(Arc::clone(&budget), crate::facts::accepted_weight),
                 facts: Facts::new(budget),
-                stories: Mutex::new(StoryTable::new()),
                 document: DocumentId::fresh(),
                 strict,
             }),
@@ -343,9 +340,10 @@ impl WordDoc {
                 stories: Vec::new(),
             };
         };
-        // the stories interned under the lock; the comparison on a copy of the table
+        // the document's stories (its readings', which key its blocks), interned under the
+        // lock; the comparison on a copy of the table
         let mut stories = {
-            let mut table = self.shared.stories.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut table = new.stories();
             for part in old.parts.iter().chain(&new.parts) {
                 let _ = table.intern(&part.story);
             }

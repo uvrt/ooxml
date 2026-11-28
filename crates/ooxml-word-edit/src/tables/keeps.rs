@@ -300,7 +300,7 @@ pub(crate) fn table_pages(
     let Some(layout) = layout else {
         return Ok(Some(Err(Unknown("no layout".to_owned()))));
     };
-    Ok(Some(match layout.lay_out(sink.doc().package()) {
+    Ok(Some(match layout.lay_out(sink.doc()) {
         Ok(laid) => laid.block_pages(&found.id),
         Err(stopped) => Err(Unknown(stopped.to_string())),
     }))

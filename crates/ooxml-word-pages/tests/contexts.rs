@@ -262,15 +262,17 @@ fn a_trial_from_a_version_before_a_style_edit_is_not_laid_out_and_changes_nothin
     let mut kept = engine();
     let before = kept.lay_out_bytes(Arc::clone(&first)).unwrap().unwrap();
     let after = kept.lay_out_bytes(Arc::clone(&second)).unwrap().unwrap();
-    let opened = |bytes: &Arc<[u8]>| {
-        ooxml_word_model::WordPackage::open(
+    // a trial's version read in the engine's chain of readings, after the last one given
+    let opened = |engine: &PageEngine, bytes: &Arc<[u8]>| {
+        let package = ooxml_word_model::WordPackage::open(
             ooxml_opc::Package::open(Arc::clone(bytes), &ooxml_base::Limits::default()).unwrap(),
         )
-        .0
+        .0;
+        Arc::new(ooxml_word_model::docx::Docx::open_after(&package, engine.given_reading().unwrap()).unwrap())
     };
     let never = Never;
     let trial = kept
-        .trial(&opened(&package(PLAIN, 40, Some(7))), &before, &never)
+        .trial(&opened(&kept, &package(PLAIN, 40, Some(7))), &before, &never)
         .unwrap();
     assert!(trial.is_none(), "a trial in a context the engine left");
     assert!(Arc::ptr_eq(kept.last().unwrap(), &after));
@@ -282,7 +284,7 @@ fn a_trial_from_a_version_before_a_style_edit_is_not_laid_out_and_changes_nothin
     assert_eq!(drawn(&mut kept, &next), fresh(&edited));
     // a trial from the last version is laid out as before
     let trial = kept
-        .trial(&opened(&package(LARGE, 40, Some(9))), &next, &never)
+        .trial(&opened(&kept, &package(LARGE, 40, Some(9))), &next, &never)
         .unwrap();
     assert!(trial.is_some());
 }

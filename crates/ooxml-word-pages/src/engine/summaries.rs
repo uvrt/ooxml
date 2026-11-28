@@ -212,11 +212,10 @@ impl PageEngine {
             let drawn = key
                 .as_ref()
                 .map(|key| crate::page_reads::page_blocks(layout, &key.items));
-            // A page laid out the same as the version read before's same page, of the same
-            // blocks, draws the same body lines: their keys are taken, not read from its
-            // geometry again.
+            // A page drawn as the version read before's same page, of the same blocks, draws
+            // the same body lines: their keys are taken, not read from its geometry again.
             let taken = donor.as_ref().zip(key.as_ref()).and_then(|(donor, key)| {
-                let same = donor.pages.get(page)?.as_ref()?.is(key) && donor.blocks.get(page)? == &drawn;
+                let same = donor.pages.get(page)?.as_ref()?.drawn_as(key) && donor.blocks.get(page)? == &drawn;
                 same.then(|| donor.keys.get(page).cloned()).flatten()
             });
             let found = taken.unwrap_or_else(|| {

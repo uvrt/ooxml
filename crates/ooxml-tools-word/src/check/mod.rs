@@ -237,7 +237,7 @@ fn with_layout(
         .last()
         .cloned();
     let stop = c.owned.layout_limit.map_or(c.cancel, |limit| limit.cancel);
-    let laid = layout.laid(c.version.package, stop);
+    let laid = layout.laid(&c.version.docx()?, stop);
     // `layout`: the time laying the version out, where the engine had not laid it out last
     if !matches!((&last, &laid), (Some(last), Ok(laid)) if Arc::ptr_eq(last, laid)) {
         timing.insert("layout".into(), seconds(started));

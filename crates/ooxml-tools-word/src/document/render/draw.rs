@@ -11,7 +11,7 @@ use super::store::{page_key, ImageKey};
 use crate::{LayoutLimit, NotLaid, Owned, WordLayout};
 use ooxml_base::Cancel;
 use ooxml_tools::{Failure, Refusal, ToolError, TryCall, WayOut};
-use ooxml_word_model::WordPackage;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_pages::png::{sized::sized, PageRaster};
 use ooxml_word_pages::{DiskFonts, LaidVersion};
 use serde_json::{json, Map, Value};
@@ -75,21 +75,21 @@ fn not_supported(who: &str, doc: &str, why: &NotLaid) -> ToolError {
     )
 }
 
-/// The version `package` laid out by `layout` within the call's layout limit.
+/// The version `reading` laid out by `layout` within the call's layout limit.
 ///
 /// # Errors
 /// As [`laid_to_draw`]'s, `render` named.
 pub(super) fn laid(
     layout: &dyn WordLayout,
     owned: &Owned<'_>,
-    package: &WordPackage,
+    reading: &Arc<Docx>,
     doc: &str,
     cancel: &dyn Cancel,
 ) -> Result<Arc<LaidVersion>, ToolError> {
-    laid_to_draw("render", layout, owned.layout_limit, (package, doc), cancel)
+    laid_to_draw("render", layout, owned.layout_limit, (reading, doc), cancel)
 }
 
-/// The version `package` (of the document `doc`) laid out by `layout` to draw its pages,
+/// The version `reading` (of the document `doc`) laid out by `layout` to draw its pages,
 /// within `limit` (the call's limit on laying out; `None`: as long as `cancel` lets it run):
 /// what `render` and the session's live view draw from.
 ///
@@ -100,11 +100,11 @@ pub fn laid_to_draw(
     who: &str,
     layout: &dyn WordLayout,
     limit: Option<LayoutLimit<'_>>,
-    (package, doc): (&WordPackage, &str),
+    (reading, doc): (&Arc<Docx>, &str),
     cancel: &dyn Cancel,
 ) -> Result<Arc<LaidVersion>, ToolError> {
     let stop = limit.map_or(cancel, |limit| limit.cancel);
-    match layout.laid(package, stop) {
+    match layout.laid(reading, stop) {
         Ok(laid) => Ok(laid),
         Err(NotLaid::Stopped) => {
             cancel

@@ -10,7 +10,7 @@ use crate::coverage::coverage_facts;
 use crate::version::{LayoutCounts, Owned};
 use crate::WordLayout;
 use ooxml_base::Cancel;
-use ooxml_word_model::WordPackage;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_pages::LaidVersion;
 use serde_json::Value;
 use std::sync::{Arc, PoisonError};
@@ -21,16 +21,16 @@ pub(crate) struct LaidRead<'a> {
     laid: Arc<LaidVersion>,
 }
 
-/// `package` laid out by `owned`'s engine within the call's layout limit (else until
+/// `version` (a reading) laid out by `owned`'s engine within the call's layout limit (else until
 /// `cancel`): `None` where the call has no layout; `Err` the failure as docx-agent says it.
 pub(crate) fn laid<'a>(
     owned: &Owned<'a>,
-    package: &WordPackage,
+    version: &Arc<Docx>,
     cancel: &dyn Cancel,
 ) -> Option<Result<LaidRead<'a>, String>> {
     let layout = owned.layout?;
     let stop = owned.layout_limit.map_or(cancel, |limit| limit.cancel);
-    Some(match layout.laid(package, stop) {
+    Some(match layout.laid(version, stop) {
         Ok(laid) => Ok(LaidRead { layout, laid }),
         Err(why) => {
             let (code, message) = crate::values::not_laid(why);

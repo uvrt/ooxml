@@ -153,7 +153,8 @@ fn a_page_measured_with_its_text_boxes_and_footnotes_for_a_version_and_a_trial()
         ooxml_opc::Package::open(Arc::from(bytes), &ooxml_base::Limits::default()).unwrap(),
     )
     .0;
-    let trial = engine.trial(&package, &version, &Never).unwrap().unwrap();
+    let reading = ooxml_word_model::docx::Docx::open_after(&package, engine.given_reading().unwrap()).unwrap();
+    let trial = engine.trial(&Arc::new(reading), &version, &Never).unwrap().unwrap();
     assert_eq!(engine.beyond_facts(Laid::Trial(&trial), 0), beyond);
 }
 
