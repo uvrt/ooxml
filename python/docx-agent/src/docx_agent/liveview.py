@@ -12,6 +12,24 @@ changes it -- asks the session for the pages and for the ones an edit changed::
     ...
     shown = view(session, "d1", since=shown.token)       # after edits: the pages they changed
 
+The changes feed sends less (phase 3 step CF): only the groups that changed on each page --
+a paragraph, a table row's rules, a drawing -- each in its own coordinates, an offset alone
+for a group that only moved, pictures by content address, once.  A :class:`FeedClient` keeps
+the latest drawing of every page and applies each answer::
+
+    from docx_agent.liveview import FeedClient
+
+    client = FeedClient()
+    client.update(session, "d1")                         # first call: every page
+    put_all(client.page_count, client.svg)               # client.svg(page): the page as SVG
+    ...
+    answer = client.update(session, "d1")                # after edits: what changed since
+    for number in client.changed(answer):
+        put(number, client.svg(number))
+
+docs/liveview.md is the client protocol: how an answer's ``list``, ``groups``, ``moved``,
+``removed``, ``defs`` and ``order`` apply, and what a stale ``since`` and a full answer are.
+
 The work is the Rust host's (``HostedSession.live_view`` and ``page_svg``, ooxml-edit's): the version is
 laid out by the document's page engine, the last versions views were given are kept within
 the session's memory budget, and a token names one (``<session>-<doc>-<state number>``).
@@ -29,8 +47,8 @@ from typing import Any, Mapping, MutableMapping
 
 from ooxml_edit.tools import hosted as _hosted
 
-__all__ = ["PageSvg", "UnknownToken", "View", "ViewPage", "embed_images", "externalise_images",
-           "page_svg", "view"]
+__all__ = ["FeedClient", "PageSvg", "UnknownToken", "View", "ViewPage", "changes", "embed_images",
+           "embed_pictures", "externalise_images", "page_svg", "view"]
 
 #: :func:`page_svg`'s ``images``.
 IMAGE_MODES = ("external", "embedded")
@@ -113,6 +131,128 @@ def page_svg(where: Any, *args: Any, text: str = "text", images: str = "external
     if images == "external":
         svg = externalise_images(svg, store)
     return PageSvg(page, token, svg, store, list(warnings))
+
+
+def changes(where: Any, *args: str, since: str | None = None, pages: bool = True) -> dict[str, Any]:
+    """``changes(session, doc)``: what changed in the document after ``since`` (a ``token`` an
+    answer gave; ``None``: everything) -- the changes feed's answer as
+    ``HostedSession.changes`` gives it (docs/liveview.md).  ``pages=False`` never lays out:
+    the version, parts and blocks only.  Raises the session's refusal (a ``ToolError``) for a
+    version it does not lay out yet, ``TimeoutError`` past the session's limit on laying out."""
+    session, doc, _ = _target(where, args, "changes", 0)
+    return session.changes(doc, since, pages=pages)
+
+
+def _quote(text: str) -> str:
+    """``text`` as an attribute value, quoted as the Rust writer quotes it (``exact::quote``)."""
+    escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    escaped = escaped.replace("\n", "&#10;").replace("\r", "&#13;").replace("\t", "&#9;")
+    if '"' in escaped:
+        if "'" in escaped:
+            return '"' + escaped.replace('"', "&quot;") + '"'
+        return "'" + escaped + "'"
+    return '"' + escaped + '"'
+
+
+@dataclass
+class _Group:
+    dy: int
+    svg: str
+    defs: str = ""
+
+
+@dataclass
+class FeedClient:
+    """The latest drawing of every page of one document, kept by applying the changes feed's
+    answers in order (docs/liveview.md): ``token`` (the next ``since``), each page's
+    ``frames`` (``width``, ``height`` in points, ``width_px``, ``height_px``), its groups'
+    order and content, and the ``pictures`` sent, by content address (``(mime, bytes)``)."""
+
+    token: str | None = None
+    frames: list[dict[str, Any]] = field(default_factory=list)
+    order: list[list[str]] = field(default_factory=list)
+    groups: list[dict[str, _Group]] = field(default_factory=list)
+    pictures: dict[str, tuple[str, bytes]] = field(default_factory=dict)
+
+    @property
+    def page_count(self) -> int:
+        return len(self.frames)
+
+    def update(self, where: Any, *args: str) -> dict[str, Any]:
+        """``update(session, doc)``: the answer since this client's ``token``, applied."""
+        answer = changes(where, *args, since=self.token)
+        self.apply(answer)
+        return answer
+
+    def apply(self, answer: Mapping[str, Any]) -> None:
+        """Apply one answer (with pages): a full one replaces every page; otherwise the page
+        list where it is given, then each changed page's removals, groups, offsets and order."""
+        pages = answer.get("pages")
+        if pages is None:
+            raise ValueError("this answer has no pages: ask the changes feed with pages=True")
+        if answer.get("full"):
+            self.order, self.groups = [], []
+        listed = pages.get("list")
+        if listed is not None:
+            self.frames = [dict(frame) for frame in listed]
+            del self.order[len(listed):], self.groups[len(listed):]
+            while len(self.order) < len(listed):
+                self.order.append([])
+                self.groups.append({})
+        for change in pages["changed"]:
+            k = change["page"] - 1
+            groups = self.groups[k]
+            for gone in change["removed"]:
+                groups.pop(gone, None)
+            defs = change["defs"]
+            for id_, group in change["groups"].items():
+                groups[id_] = _Group(group["dy"], group["svg"], defs.get(id_, ""))
+            for id_, dy in change["moved"].items():
+                groups[id_].dy = dy
+            if "order" in change:
+                self.order[k] = list(change["order"])
+        self.pictures.update(answer.get("pictures", {}))
+        self.token = answer["token"]
+
+    @staticmethod
+    def changed(answer: Mapping[str, Any]) -> list[int]:
+        """The 1-based pages an answer changed."""
+        return [change["page"] for change in answer["pages"]["changed"]]
+
+    def svg(self, page: int, *, embed: bool = False) -> str:
+        """Page ``page`` (1-based) as one SVG document, byte for byte what the feed's writer
+        writes for it (``feed_svg``); pictures referenced ``href="picture:<hash>"``, or
+        embedded with ``embed`` (:func:`embed_pictures`)."""
+        k = page - 1
+        frame = self.frames[k]
+        out = [f'<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="{frame["width"]}" '
+               f'height="{frame["height"]}" viewBox="0 0 {frame["width_px"]} {frame["height_px"]}">\n'
+               f'<rect width="{frame["width_px"]}" height="{frame["height_px"]}" fill="#FFFFFF"/>']
+        for id_ in self.order[k]:
+            group = self.groups[k][id_]
+            out.append(f'\n<g data-feed-group={_quote(id_)} transform="translate(0,{group.dy})">')
+            if group.defs:
+                out.append(f"\n<defs>{group.defs}</defs>")
+            out.append(group.svg)
+            out.append("\n</g>")
+        out.append("\n</svg>\n")
+        svg = "".join(out)
+        return embed_pictures(svg, self.pictures) if embed else svg
+
+
+#: A picture the changes feed draws by its content address.
+_PICTURE_HREF = re.compile(r'href="picture:([0-9a-f]{32})"')
+
+
+def embed_pictures(svg: str, pictures: Mapping[str, tuple[str, bytes]]) -> str:
+    """``svg`` (a :class:`FeedClient` page's) with every picture it references by content
+    address embedded as a ``data:`` URI; an address ``pictures`` lacks raises ``KeyError``."""
+
+    def replace(match: re.Match) -> str:
+        mime, data = pictures[match.group(1)]
+        return f'href="data:{mime};base64,{base64.b64encode(data).decode("ascii")}"'
+
+    return _PICTURE_HREF.sub(replace, svg)
 
 
 def _target(where: Any, args: tuple, name: str, rest: int) -> tuple[Any, str, tuple]:

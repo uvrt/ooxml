@@ -21,14 +21,16 @@
 
 mod cache;
 mod records;
+mod wire;
 
 pub use records::BlockChanges;
+pub(crate) use wire::hosted;
 
 use crate::live_view::{LiveViews, ViewError};
 use crate::word::Word;
 use arc_swap::ArcSwap;
 use cache::SvgCache;
-use ooxml_base::CacheBudget;
+use ooxml_base::{CacheBudget, Context};
 use ooxml_session::{CallCancel, CallContext, DocId, Session};
 use ooxml_store::Snapshot;
 use ooxml_tools::ToolError;
@@ -211,18 +213,27 @@ impl ChangesFeed for Session {
         let ask = Ask {
             word,
             doc,
-            layout,
-            session: self,
+            layout: Some(layout),
+            nonce: self.nonce(),
+            ports: self.context(),
             context,
         };
-        let seq = since.and_then(|s| since_seq(s, self.nonce()));
-        let (published, behind) = word.feed.current(&ask, pages)?;
-        let mut answer = word.feed.answer(&ask, &published, seq, pages)?;
+        asked(&ask, since, pages)
+    }
+}
+
+/// What changed after `since` (with `pages`, the pages too), as `ask` reads it.
+pub(crate) fn asked(ask: &Ask<'_>, since: Option<&str>, pages: bool) -> Result<Changes, ViewError> {
+    {
+        let word = ask.word;
+        let seq = since.and_then(|s| since_seq(s, ask.nonce));
+        let (published, behind) = word.feed.current(ask, pages)?;
+        let mut answer = word.feed.answer(ask, &published, seq, pages)?;
         if answer.is_none() {
             // a page's SVG could not be written again (its layout no longer painted): the
             // pages are written afresh, and everything is sent
-            let published = word.feed.afresh(&ask)?;
-            answer = word.feed.answer(&ask, &published, None, pages)?;
+            let published = word.feed.afresh(ask)?;
+            answer = word.feed.answer(ask, &published, None, pages)?;
         }
         let mut changes = answer.ok_or_else(|| ViewError::NotDrawn(not_drawn()))?;
         changes.since = since.map(str::to_owned);
@@ -232,12 +243,18 @@ impl ChangesFeed for Session {
 }
 
 /// One call's document and what it reads it with.
-struct Ask<'a> {
-    word: &'a Word,
-    doc: &'a DocId,
-    layout: &'a dyn WordLayout,
-    session: &'a Session,
-    context: &'a CallContext,
+pub(crate) struct Ask<'a> {
+    pub(crate) word: &'a Word,
+    pub(crate) doc: &'a DocId,
+    /// The engine its pages are laid out with (`None`: a call without pages, which lays
+    /// nothing out).
+    pub(crate) layout: Option<&'a dyn WordLayout>,
+    /// The session's nonce.
+    pub(crate) nonce: &'a str,
+    /// The session's ports (its cancellation and clock).
+    pub(crate) ports: &'a Context,
+    /// The call's context.
+    pub(crate) context: &'a CallContext,
 }
 
 fn not_drawn() -> ToolError {
@@ -422,23 +439,23 @@ impl Feed {
         head: &Snapshot<WordDoc>,
         previous: Option<&PagesAt>,
     ) -> Result<Arc<PagesAt>, ViewError> {
-        let context = ask.session.context();
-        let cancel = CallCancel::new(ask.context, &*context.cancel, &*context.clock);
+        let cancel = CallCancel::new(ask.context, &*ask.ports.cancel, &*ask.ports.clock);
         let laying = cancel.layout();
         let limit = laying.as_ref().map(crate::word::limit);
         let package = (head.doc().package(), &*ask.doc.to_string());
-        let laid = laid_to_draw(WHO, ask.layout, limit, package, &cancel).map_err(ViewError::NotDrawn)?;
+        let layout = ask.layout.ok_or_else(|| ViewError::NotDrawn(not_drawn()))?;
+        let laid = laid_to_draw(WHO, layout, limit, package, &cancel).map_err(ViewError::NotDrawn)?;
         // the next advance compares with it: digested before the engine stops painting it
-        lock(ask.layout).watch(&laid);
+        lock(layout).watch(&laid);
         let seq = head.seq().0;
         let count = laid.page_count();
         let to_write: BTreeSet<usize> = match previous {
-            Some(p) => changed_pages(ask, p, &laid, head),
+            Some(p) => changed_pages(layout, p, &laid, head),
             None => (0..count).collect(),
         };
         let mut written = BTreeMap::new();
         for page in to_write.into_iter().filter(|p| *p < count) {
-            let made = lock(ask.layout).feed_page(&laid, page).map(|(made, _)| made);
+            let made = lock(layout).feed_page(&laid, page).map(|(made, _)| made);
             let made = made.ok_or_else(|| ViewError::NotDrawn(not_drawn()))?;
             written.insert(page, made);
         }
@@ -477,7 +494,7 @@ impl Feed {
         pages: bool,
     ) -> Result<Option<Changes>, ViewError> {
         let doc = published.doc.as_ref().ok_or_else(|| ViewError::NotDrawn(not_drawn()))?;
-        let nonce = ask.session.nonce();
+        let nonce = ask.nonce;
         let (version, state) = match (pages, &published.pages) {
             (true, Some(p)) => (p.records.seq, p.state),
             _ => (doc.records.seq, doc.records.state),
@@ -526,7 +543,7 @@ impl Feed {
             let written = match self.cache.get(found.page, record.changed..=records.seq) {
                 Some(page) => page,
                 None => {
-                    let made = Arc::new(lock(ask.layout).feed_page(&at.laid, found.page)?.0);
+                    let made = Arc::new(lock(ask.layout?).feed_page(&at.laid, found.page)?.0);
                     self.cache
                         .keep(found.page, records.seq, &made, &|| ask.word.views.let_go_older());
                     made
@@ -581,7 +598,7 @@ fn page_change(
 /// text box's text, a drawing's paint: what a page's comparison does not digest; a page that
 /// draws it anew is one the comparison lists), and those past the last before.
 fn changed_pages(
-    ask: &Ask<'_>,
+    layout: &dyn WordLayout,
     previous: &PagesAt,
     laid: &Arc<LaidVersion>,
     head: &Snapshot<WordDoc>,
@@ -590,7 +607,7 @@ fn changed_pages(
     if Arc::ptr_eq(&previous.laid, laid) {
         return BTreeSet::new();
     }
-    let compared = lock(ask.layout).compare(laid, &previous.laid, &HashMap::new());
+    let compared = lock(layout).compare(laid, &previous.laid, &HashMap::new());
     let Some(reflow) = compared else {
         return (0..count).collect();
     };

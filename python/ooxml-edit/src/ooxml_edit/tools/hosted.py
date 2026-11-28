@@ -4,7 +4,8 @@ The Rust core's Python module (``ooxml_core``) is internal (decision D6): the fa
 here, and a format library through this module's :func:`rust_host`, :func:`tool_specs`,
 :func:`host_tools`, :func:`host_held_kinds` and :func:`open_refusal`; an application through the
 :class:`~.dispatch.Toolbox`, its sessions (the live view: :meth:`HostedSession.live_view` and
-:meth:`HostedSession.page_svg`) and :mod:`ooxml_edit.chunks`.
+:meth:`HostedSession.page_svg`; the changes feed: :meth:`HostedSession.changes`) and
+:mod:`ooxml_edit.chunks`.
 
 A format whose documents the Rust host holds says so with :attr:`~.session.DocumentFormat.host`
 (a format library's): an object with
@@ -1047,6 +1048,26 @@ class HostedSession(Session):
         with _viewing():
             svg, warnings = self.rust.page_svg(doc_id, page, token, text=text)
         return svg, list(warnings)
+
+    def changes(self, doc_id: str, since: str | None = None, *, pages: bool = True) -> dict[str, Any]:
+        """What changed in the document ``doc_id`` after ``since`` (the changes feed): a dict of
+        ``version`` (the store's seq), ``state``, ``session``, ``token`` (the next ``since``),
+        ``since``, ``full`` (everything is sent: no ``since``, or one the feed cannot answer
+        exactly), ``behind`` (where present: the head's seq, the answer being of an earlier
+        version while another caller advanced the feed), ``parts``, ``blocks`` (``changed``,
+        ``came``, ``gone``) and, with ``pages``, ``pages`` (``list``: every page's frame where
+        the list changed; ``changed``: each changed page's ``order``, ``groups`` (``{id: {dy,
+        svg}}``), ``moved`` (``{id: dy}``), ``removed``, ``defs`` and ``pictures``); and
+        ``pictures``: the bytes of the pictures new since ``since``, ``{hash: (mime, bytes)}``,
+        each sent once.  ``pages=False`` never lays out.  docx_agent.liveview's ``FeedClient``
+        applies answers.  Readable from another thread while agents edit.  Raises the host's
+        refusal (a ``ToolError``: ``not_supported`` for a format with no feed, a version not
+        laid out yet), ``TimeoutError`` past the limit on laying out."""
+        with _viewing():
+            text, pictures = self.rust.changes(doc_id, since, pages=pages)
+        answer = json.loads(text)
+        answer["pictures"] = {hash_: (mime, bytes(data)) for hash_, mime, data in pictures}
+        return answer
 
     def memory_now(self, doc_id: str) -> dict[str, float]:
         """What this process holds, in MB (``describe``'s, the application's): ``document``,
