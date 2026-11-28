@@ -8,6 +8,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use crate::common::{written, Monotonic, Rng, Unlimited};
+use crate::interleave::Paused;
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Command, KeySet, Seq, Snapshot, StoreConfig, StoreError, Txn};
@@ -16,7 +17,9 @@ use ooxml_word_edit::{
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 fn editor(name: &str) -> Editor {
@@ -234,6 +237,97 @@ fn a_scoped_undo_takes_back_a_step_later_steps_moved() {
     assert!(Arc::ptr_eq(&editor.store().snapshot(), &head));
 }
 
+fn set(target: &str, text: &str) -> Edit {
+    Edit::Set(SetText {
+        target: ooxml_word_model::address::Address::from(target.to_owned()),
+        text: text.to_owned(),
+        policy: RevisionPolicy::Untracked,
+    })
+}
+
+/// A text edit prepared on the version a first edit wrote (its part's ids written, so the
+/// paragraph's textId is renewed), committed past an undo of that first edit (the part back
+/// to its ids as given at open, where a first write keeps a textId): its textId is the one a
+/// serial run in commit order gives, decided where it lands and not where it was prepared
+/// (lane fix-textid-mint; seed 21's version 3 of the history test below, forced). Alone and
+/// as a batch's ops.
+#[test]
+fn a_text_edit_committed_past_an_undo_of_the_first_write_keeps_the_serial_text_id() {
+    let probe = editor("samplelib/sample-long.docx");
+    let targets = targets(&probe);
+    let first = set(&targets[20], "First");
+    let second = set(&targets[10], "Second");
+    past_an_undo(&first, second.clone());
+    past_an_undo(
+        &first,
+        ooxml_store::Batch::new(vec![second, set(&targets[12], "Third"), set(&targets[10], "Again")]),
+    );
+}
+
+/// `first` committed, `last` prepared on its version, `first` undone meanwhile, then `last`
+/// committed (by rebase, its one attempt): the version it made equals a serial run's.
+fn past_an_undo<C>(first: &Edit, last: C)
+where
+    C: Command<WordDoc, Error = EditError> + Send + Sync,
+    C::Out: Send,
+{
+    let concurrent = editor("samplelib/sample-long.docx");
+    let one = concurrent.store().run(&Caller::named("one"), first).unwrap().version;
+    let (prepared, wait) = channel();
+    let (release, go) = channel();
+    let paused = Paused {
+        command: last,
+        prepared,
+        go: Mutex::new(go),
+        first: AtomicBool::new(true),
+    };
+    let (undone, done) = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| concurrent.store().run(&Caller::named("two"), &paused).unwrap());
+        // prepared on the first edit's version; the first edit undone meanwhile
+        wait.recv().unwrap();
+        let undone = concurrent.store().undo_step(one.seq(), &KeySet::new()).unwrap().version;
+        release.send(()).unwrap();
+        (undone, handle.join().unwrap())
+    });
+    assert_eq!(
+        done.attempts, 1,
+        "committed by rebase past the undo, not prepared again"
+    );
+    assert!(Arc::ptr_eq(done.previous.as_ref().unwrap(), &undone));
+    let serial = editor("samplelib/sample-long.docx");
+    let one = serial.store().run(&Caller::anonymous(), first).unwrap().version;
+    serial.store().undo_step(one.seq(), &KeySet::new()).unwrap();
+    let made = serial
+        .store()
+        .run(&Caller::anonymous(), &paused.command)
+        .unwrap()
+        .version;
+    assert_eq!(made.seq(), done.version.seq());
+    assert_eq!(text_ids(&made), text_ids(&done.version));
+    assert_eq!(written(made.doc()), written(done.version.doc()));
+}
+
+/// Each story part's textIds, in document order, by part; a textId repeated in a part fails.
+fn text_ids(version: &Snapshot<WordDoc>) -> Vec<(String, Vec<String>)> {
+    let doc = version.doc();
+    let docx = doc.docx().unwrap();
+    docx.parts
+        .iter()
+        .map(|part| {
+            let bytes = doc.package().read(&part.part).unwrap().unwrap();
+            let xml = std::str::from_utf8(&bytes).unwrap();
+            let ids: Vec<String> = xml
+                .split(":textId=\"")
+                .skip(1)
+                .filter_map(|rest| rest.split('"').next().map(str::to_owned))
+                .collect();
+            let unique: BTreeSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "a textId repeated in {}", part.part);
+            (part.part.clone(), ids)
+        })
+        .collect()
+}
+
 /// What a writer did, as committed.
 #[derive(Debug, Clone)]
 enum Op {
@@ -296,6 +390,16 @@ fn writers_run(seed: u64, writers: usize, per_writer: usize) -> usize {
             Op::Redo(step) => serial.store().redo_step(*step).unwrap().version,
         };
         assert_eq!(made.seq(), *at, "seed {seed}: commit order");
+        // the ids a version gives (its textIds, none repeated in a part, and its ledger) are
+        // a function of the committed history: the serial replay's
+        assert_eq!(text_ids(&made), text_ids(version), "seed {seed}: version {at} ({op:?})");
+        let (mine, theirs) = (made.doc().ids(), version.doc().ids());
+        assert_eq!(mine.cursors(), theirs.cursors(), "seed {seed}: version {at}: cursors");
+        assert_eq!(
+            mine.values().collect::<BTreeSet<u32>>(),
+            theirs.values().collect::<BTreeSet<u32>>(),
+            "seed {seed}: version {at}: the ledger's values"
+        );
         assert_eq!(
             written(made.doc()),
             written(version.doc()),
@@ -309,6 +413,16 @@ fn writers_run(seed: u64, writers: usize, per_writer: usize) -> usize {
 fn writers_undoing_their_own_steps_equal_their_serial_order() {
     let history_ops: usize = [21u64, 22].iter().map(|&seed| writers_run(seed, 4, 8)).sum();
     assert!(history_ops > 0, "some undo or redo should have committed");
+}
+
+/// Two hundred seeds of the history test above (lane fix-textid-mint: an edit prepared before
+/// an undo and committed after it, in every interleaving the seeds reach; run with
+/// `--ignored`, in release).
+#[test]
+#[ignore = "the end gate's long run: cargo test --release -- --ignored"]
+fn two_hundred_seeds_of_four_writers_with_undo() {
+    let history_ops: usize = (1000..1200u64).map(|seed| writers_run(seed, 4, 8)).sum();
+    println!("200 seeds, 4 writers x 8 ops: {history_ops} undos and redos committed");
 }
 
 /// The lane's end gate: sixty seeds of eight writers (run with `--ignored`, in release).

@@ -168,16 +168,22 @@ pub enum DrawFrom {
     Annotation(u32),
     /// What a stand-in was drawn as by a [`Change::Draw`] before it in the transaction.
     Drawn(Arc<str>),
-    /// A textId renewed: the next value of `seed`, unless `part` is read with ids given at
-    /// open and not yet written in the version the change's transaction begins on where it
-    /// is applied -- an unwritten id counts as fresh at its block's first write, so the
-    /// attribute is left as it is. Decided where applied, so a first edit committed past
-    /// another renews as a serial run would.
+    /// A textId renewed: the next value of `seed`, unless the block's id is unwritten where
+    /// the change is applied ([`super::WordDoc::para_id_written`]: `part` read with ids
+    /// given at open and not yet written in the version the change's transaction begins on,
+    /// and `para_id` not one the saved part holds) -- an unwritten id counts as fresh at its
+    /// block's first write, so it keeps the value the element it replaces holds there (the
+    /// attribute left as it is where that element has none). Decided wholly where applied,
+    /// never where prepared: a first edit committed past another renews as a serial run
+    /// would, and so does an edit prepared on a written part committed past an undo that
+    /// took the part back to its ids as given at open.
     Renewed {
         /// The sequence.
         seed: Arc<str>,
         /// The part the block is in.
         part: Arc<str>,
+        /// The block's paraId (8 hex digits), as given at open where the part is unwritten.
+        para_id: Arc<str>,
     },
 }
 
