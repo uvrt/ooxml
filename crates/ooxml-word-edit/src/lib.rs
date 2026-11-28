@@ -44,6 +44,7 @@ mod address_keys;
 #[cfg(test)]
 mod address_reference_tests;
 mod after;
+mod arrival;
 mod beside;
 mod block_checks;
 mod blocks;
@@ -126,6 +127,7 @@ pub mod units;
 pub mod validate;
 mod work;
 
+pub use arrival::{ledger_of, Arrival, ArrivalError, Arrived, Unplaced};
 pub use beside::{DeletePlaced, InsertBeside, Placed, Side, TextPlace};
 pub use comments::{
     AddComments, CommentEdit, CommentEdited, CommentEdits, CommentMade, CommentWrite, EditCommentText, ItemMade, Who,

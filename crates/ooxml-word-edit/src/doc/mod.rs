@@ -542,6 +542,79 @@ impl WordDoc {
     fn received(&self, part: &str, tree: &Tree) -> Result<(Package, Ids), ModelError> {
         let before = self.package.tree(part).ok().flatten();
         let package = self.package.written().with_new_tree(part, tree.clone());
+        self.stamped_in(package, part, before, tree)
+    }
+
+    /// The package and ids after a part another writer put in place (`Change::Received`)
+    /// or another editor's version brought (`Change::Arrived`); other changes change
+    /// nothing here.
+    pub(crate) fn taken_in(&self, change: &super::Change) -> Result<(Package, Ids), ModelError> {
+        match change {
+            super::Change::Received { part, tree } => self.received(part, tree),
+            super::Change::Arrived {
+                part,
+                patches,
+                from,
+                on,
+                ..
+            } => self.arrived(part, patches.as_deref(), from, on.as_ref()),
+            _ => Ok((self.package.package().clone(), self.ids.clone())),
+        }
+    }
+
+    /// The package with `part` as another editor's version `from` has it
+    /// ([`super::Change::Arrived`]): `patches` applied to the part here (or the part whole
+    /// where `None`); saved as `from` holds it where the part here is `on`, the part the
+    /// patches were worked out against; stamped where it lands as [`WordDoc::received`]
+    /// stamps, every part read with ids given at open written.
+    pub(crate) fn arrived(
+        &self,
+        part: &str,
+        patches: Option<&[ooxml_xml::Patch]>,
+        from: &Package,
+        on: Option<&ooxml_opc::PartVersion>,
+    ) -> Result<(Package, Ids), ModelError> {
+        let here = self.package.part(part);
+        let before = self.package.tree(part).ok().flatten();
+        let written = self.package.written();
+        let (package, tree) = match (patches, &before) {
+            (Some(patches), Some(before_tree)) => {
+                let mut tree = before_tree.clone();
+                for patch in patches {
+                    tree = patch.apply(&tree)?;
+                }
+                let as_theirs = matches!((here, on), (Some(here), Some(on)) if here.same(on));
+                let package = if as_theirs {
+                    written.with_part_as_in(part, from, Some(tree.clone()))?
+                } else {
+                    written.with_tree(part, tree.clone())?
+                };
+                (package, tree)
+            }
+            (Some(_), None) => return Err(ModelError::NoPart(part.to_owned())),
+            (None, _) => {
+                let package = written.with_part_as_in(part, from, None)?;
+                let tree = match package.tree(part) {
+                    Ok(Some(tree)) => tree,
+                    // not XML: nothing to stamp
+                    _ => return Ok((package, self.ids.clone())),
+                };
+                (package, tree)
+            }
+        };
+        self.stamped_in(package, part, before, &tree)
+    }
+
+    /// `package`, which holds `tree` as `part`, with the part stamped where it is a story
+    /// part whose blocks lack valid, unique ids ([`ooxml_word_model::stamp::received`]),
+    /// `before` the part as this version had it, and the ids the stamps drew.
+    fn stamped_in(
+        &self,
+        package: Package,
+        part: &str,
+        before: Option<Tree>,
+        tree: &Tree,
+    ) -> Result<(Package, Ids), ModelError> {
         let main = ooxml_word_model::parts::main_part(&package)?;
         let story = match &main {
             Some(main) if *main == ooxml_opc::name::normalize(part) => Some("body".to_owned()),

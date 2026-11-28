@@ -35,6 +35,25 @@ pub enum StoreError<K: Ord + Debug, E: std::error::Error + 'static> {
         /// The keys it wrote that are in the way.
         overlap: KeySet<K>,
     },
+    /// Another editor's commit ([`crate::Caller::foreign`]) changed keys the transaction
+    /// depends on since it was prepared: refused, not prepared again, so the caller reads
+    /// them again and decides. Also an undo or redo entangled with such a commit.
+    #[error("{editor} changed {overlap:?} (version {step}) since this was prepared")]
+    ForeignChange {
+        /// The other editor's version.
+        step: Seq,
+        /// Who made it.
+        editor: std::sync::Arc<str>,
+        /// The keys in the way.
+        overlap: KeySet<K>,
+    },
+    /// The version a commit from another editor was made on is not one the store keeps
+    /// ([`crate::Store::receive`]).
+    #[error("version {seq} is not kept")]
+    NotKept {
+        /// The version asked for.
+        seq: Seq,
+    },
     /// The step asked for is no longer the one undo or redo would take next: another
     /// commit, undo or redo came first ([`crate::Store::undo_newest`]).
     #[error("the step that made version {step} is not the next to take any more")]

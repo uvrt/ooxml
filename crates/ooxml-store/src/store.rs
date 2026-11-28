@@ -40,6 +40,9 @@ use crate::{
 use std::sync::Arc;
 use std::time::Duration;
 
+mod receive;
+pub use receive::{HandedBack, Prepared, Received};
+
 /// A store's configuration, a value given when it opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreConfig {
@@ -73,24 +76,52 @@ impl Default for StoreConfig {
 /// outside the commit lock before it checks under it.
 const MOVED_TRIES: u32 = 3;
 
-/// Who runs a command; kept with its history step (scoped undo by writer).
+/// Who runs a command; kept with its history step (scoped undo by writer). A foreign caller
+/// is another editor whose commit came in from outside the session (a co-authoring
+/// refresh, [`Store::receive`]): no undo takes its step back, and a transaction whose keys
+/// it changed meanwhile is refused rather than prepared again
+/// ([`StoreError::ForeignChange`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Caller(Option<Arc<str>>);
+pub struct Caller {
+    name: Option<Arc<str>>,
+    foreign: bool,
+}
 
 impl Caller {
     /// No name.
     pub fn anonymous() -> Self {
-        Self(None)
+        Self::default()
     }
 
     /// A named caller.
     pub fn named(name: &str) -> Self {
-        Self(Some(Arc::from(name)))
+        Self {
+            name: Some(Arc::from(name)),
+            foreign: false,
+        }
+    }
+
+    /// Another editor, by name.
+    pub fn foreign(editor: &str) -> Self {
+        Self {
+            name: Some(Arc::from(editor)),
+            foreign: true,
+        }
     }
 
     /// The name.
     pub fn name(&self) -> Option<&str> {
-        self.0.as_deref()
+        self.name.as_deref()
+    }
+
+    /// Whether it is another editor.
+    pub fn is_foreign(&self) -> bool {
+        self.foreign
+    }
+
+    /// The foreign editor's name, for the journal.
+    fn foreign_name(&self) -> Option<Arc<str>> {
+        self.name.clone().filter(|_| self.foreign)
     }
 }
 
@@ -138,12 +169,31 @@ struct Done<D: DocModel> {
     waited: Duration,
 }
 
+/// A transaction's work as it applies to a head: the version, and the changes that make it.
+type Onto<D> = (D, Arc<[<D as DocModel>::Change]>);
+
+/// Why a commit section published nothing: a conflict, and the other editor's commit in the
+/// way where one is ([`Since::foreign_in_way`]).
+struct Conflict<D: DocModel> {
+    foreign: Option<crate::journal::ForeignHit<D::Key>>,
+}
+
+impl<D: DocModel> Conflict<D> {
+    /// The conflict of `parts` (depending on `depends`) with the entries `since` its base,
+    /// up to `head`.
+    fn of(since: &Since<D>, depends: &KeySet<D::Key>, parts: &TxnParts<D>, head: &Snapshot<D>) -> Self {
+        Conflict {
+            foreign: since.foreign_in_way(depends, &parts.predicates, head.doc()),
+        }
+    }
+}
+
 /// A committed transaction's record, before it has versions around it.
 struct Body<D: DocModel> {
     changes: Arc<[D::Change]>,
     reads: KeySet<D::Key>,
     writes: KeySet<D::Key>,
-    caller: Option<Arc<str>>,
+    caller: Caller,
 }
 
 /// A store's history as [`Store::listed`] reads it, in one go.
@@ -442,7 +492,7 @@ impl<D: DocModel> Store<D> {
     /// a conflict (nothing changed; the caller prepares again on a newer head).
     pub fn commit(&self, caller: &Caller, tx: Txn<'_, D>) -> Option<Committed<D, ()>> {
         let start = self.clock.monotonic();
-        let done = self.try_commit(caller, tx.into_parts(), false, None);
+        let done = self.try_commit(caller, tx.into_parts(), false, None).ok();
         if done.is_none() {
             self.counts.conflict();
         }
@@ -458,7 +508,7 @@ impl<D: DocModel> Store<D> {
         at: Option<Seq>,
         start: Duration,
     ) -> Option<Committed<D, ()>> {
-        let done = self.try_commit(caller, tx.into_parts(), true, at)?;
+        let done = self.try_commit(caller, tx.into_parts(), true, at).ok()?;
         Some(self.committed(done, (), 1, true, start))
     }
 
@@ -568,7 +618,12 @@ impl<D: DocModel> Store<D> {
     /// read the whole document), prepare and commit behind the gate, so that no other commit
     /// comes between: prepared on the head outside the commit lock, as every command is (an
     /// undo meanwhile, which the gate lets through, only has it prepared again).
-    fn attempts<'t, O, E>(
+    ///
+    /// A conflict with another editor's commit ([`Caller::foreign`]) that changed what the
+    /// transaction depends on is not prepared again: it is refused as
+    /// [`StoreError::ForeignChange`], so a person's edit is never overwritten by a blind
+    /// re-run (co-authoring design: the conflict goes back to the agent).
+    fn attempts<'t, O, E: From<Error<D>>>(
         &self,
         caller: &Caller,
         begin: impl Fn(Snapshot<D>) -> Txn<'t, D>,
@@ -581,8 +636,15 @@ impl<D: DocModel> Store<D> {
             let mut tx = begin(self.snapshot());
             let out = prepare(&mut tx)?;
             let whole = tx.reads().keys().is_none();
-            if let Some(done) = self.try_commit(caller, tx.into_parts(), false, None) {
-                return Ok(self.committed(done, out, attempts, false, start));
+            match self.try_commit(caller, tx.into_parts(), false, None) {
+                Ok(done) => return Ok(self.committed(done, out, attempts, false, start)),
+                Err(Conflict {
+                    foreign: Some((step, editor, overlap)),
+                }) => {
+                    self.counts.conflict();
+                    return Err(StoreError::ForeignChange { step, editor, overlap }.into());
+                }
+                Err(Conflict { foreign: None }) => {}
             }
             self.counts.conflict();
             if whole {
@@ -599,9 +661,18 @@ impl<D: DocModel> Store<D> {
             attempts += 1;
             let mut tx = begin(self.snapshot()).behind_gate();
             let out = prepare(&mut tx)?;
-            if let Some(mut done) = self.try_commit(caller, tx.into_parts(), true, None) {
-                done.waited += closing;
-                return Ok(self.committed(done, out, attempts, true, start));
+            match self.try_commit(caller, tx.into_parts(), true, None) {
+                Ok(mut done) => {
+                    done.waited += closing;
+                    return Ok(self.committed(done, out, attempts, true, start));
+                }
+                Err(Conflict {
+                    foreign: Some((step, editor, overlap)),
+                }) => {
+                    self.counts.conflict();
+                    return Err(StoreError::ForeignChange { step, editor, overlap }.into());
+                }
+                Err(Conflict { foreign: None }) => {}
             }
             self.counts.conflict();
         }
@@ -613,9 +684,15 @@ impl<D: DocModel> Store<D> {
     /// Where the head moved meanwhile it is checked again from the newer head; after
     /// [`MOVED_TRIES`] such moves, under the lock. `gated`: the caller holds the gate; `at`:
     /// the number to publish under (drawn already, for this content), else the next.
-    fn try_commit(&self, caller: &Caller, mut parts: TxnParts<D>, gated: bool, at: Option<Seq>) -> Option<Done<D>> {
+    fn try_commit(
+        &self,
+        caller: &Caller,
+        mut parts: TxnParts<D>,
+        gated: bool,
+        at: Option<Seq>,
+    ) -> Result<Done<D>, Conflict<D>> {
         if parts.changes.is_empty() {
-            return Some(Done {
+            return Ok(Done {
                 version: parts.base,
                 previous: None,
                 changed: false,
@@ -652,7 +729,7 @@ impl<D: DocModel> Store<D> {
                     let head = self.head.load();
                     state.journal.since_base(parts.base.seq()).map(|since| (head, since))
                 };
-                let (head, since) = since?;
+                let (head, since) = since.ok_or(Conflict { foreign: None })?;
                 early = Some((
                     Arc::clone(&head),
                     self.onto((&parts, &changes), &depends, &head, &since)?,
@@ -674,7 +751,8 @@ impl<D: DocModel> Store<D> {
                     let since = if Arc::ptr_eq(&head, &parts.base) {
                         Since::none()
                     } else {
-                        state.journal.since_base(parts.base.seq())?
+                        let since = state.journal.since_base(parts.base.seq());
+                        since.ok_or(Conflict { foreign: None })?
                     };
                     self.onto((&parts, &changes), &depends, &head, &since)?
                 }
@@ -683,14 +761,14 @@ impl<D: DocModel> Store<D> {
                 changes,
                 reads,
                 writes: resolved_writes(&doc, parts.writes, &parts.created),
-                caller: caller.0.clone(),
+                caller: caller.clone(),
             };
             let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body, at);
             let held = self.clock.monotonic().saturating_sub(entered);
             queue.leave(&mut state);
             drop(state);
             drop(garbage);
-            return Some(Done {
+            return Ok(Done {
                 version,
                 previous: Some(head),
                 changed: true,
@@ -708,11 +786,23 @@ impl<D: DocModel> Store<D> {
     /// a change that cannot be rebased or applied.
     fn onto(
         &self,
+        work: (&TxnParts<D>, &Arc<[D::Change]>),
+        depends: &KeySet<D::Key>,
+        head: &Snapshot<D>,
+        since: &Since<D>,
+    ) -> Result<Onto<D>, Conflict<D>> {
+        self.onto_head(work, depends, head, since)
+            .ok_or_else(|| Conflict::of(since, depends, work.0, head))
+    }
+
+    /// [`Store::onto`], `None` on a conflict.
+    fn onto_head(
+        &self,
         (parts, changes): (&TxnParts<D>, &Arc<[D::Change]>),
         depends: &KeySet<D::Key>,
         head: &Snapshot<D>,
         since: &Since<D>,
-    ) -> Option<(D, Arc<[D::Change]>)> {
+    ) -> Option<Onto<D>> {
         if Arc::ptr_eq(head, &parts.base) {
             return Some((parts.work.clone(), Arc::clone(changes)));
         }
@@ -760,16 +850,18 @@ impl<D: DocModel> Store<D> {
         self.head.store(Arc::clone(&version));
         let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
+        let foreign = body.caller.foreign_name();
         let step = Step {
             before,
             after: Arc::clone(&version),
             changes: changes.clone(),
             reads: body.reads,
             writes: body.writes,
-            caller: body.caller,
+            caller: body.caller.name,
+            foreign: body.caller.foreign,
         };
         let garbage = state.history.commit(step);
-        self.journal(state, seq, changes, writes.clone());
+        self.journal(state, seq, changes, writes.clone(), foreign);
         (version, writes, garbage)
     }
 
@@ -865,7 +957,7 @@ impl<D: DocModel> Store<D> {
         let garbage = state
             .history
             .record(planned.target, head, Arc::clone(&version), changes.clone());
-        self.journal(&mut state, seq, changes, planned.writes.clone());
+        self.journal(&mut state, seq, changes, planned.writes.clone(), None);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
@@ -882,8 +974,15 @@ impl<D: DocModel> Store<D> {
 impl<D: DocModel> Store<D> {
     /// Keep the change set that made version `seq`: within the rebase window, and back to
     /// the oldest version the history may still move a change set from.
-    fn journal(&self, state: &mut State<D>, seq: Seq, changes: ChangeSet<D>, writes: KeySet<D::Key>) {
-        state.journal.push(seq, changes, writes);
+    fn journal(
+        &self,
+        state: &mut State<D>,
+        seq: Seq,
+        changes: ChangeSet<D>,
+        writes: KeySet<D::Key>,
+        foreign: Option<Arc<str>>,
+    ) {
+        state.journal.push(seq, changes, writes, foreign);
         let needed = state.history.oldest_reach();
         state.journal.trim(self.config.rebase_window, needed);
     }

@@ -22,6 +22,8 @@ pub(crate) struct Step<D: DocModel> {
     pub(crate) reads: KeySet<D::Key>,
     pub(crate) writes: KeySet<D::Key>,
     pub(crate) caller: Option<Arc<str>>,
+    /// Another editor's commit ([`crate::Caller::foreign`]): no undo takes it back.
+    pub(crate) foreign: bool,
 }
 
 /// A step taken out, with the undo that took it out: the version it was applied to, its
@@ -33,6 +35,10 @@ struct Undone<D: DocModel> {
     result: Snapshot<D>,
     /// The undo's content was the step's "before" itself (the head was still its "after").
     exact: bool,
+    /// Kept for plain redo though out of plain redo's list: plain undo took it back past
+    /// another editor's commit, or such a commit came after its plain undo. A commit of this
+    /// session's drops it, as it drops plain redo's.
+    plain: bool,
 }
 
 /// A step as [`crate::Store::steps`] lists it.
@@ -48,6 +54,8 @@ pub struct StepInfo<K: Ord> {
     pub from_number: u64,
     /// Who made it.
     pub caller: Option<Arc<str>>,
+    /// Whether another editor made it ([`crate::Caller::foreign`]).
+    pub foreign: bool,
     /// What it read.
     pub reads: KeySet<K>,
     /// What it wrote.
@@ -71,8 +79,14 @@ pub struct HistoryOutcome<D: DocModel> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Target {
     /// `undo[index]`; `linear` for plain undo (its redo is dropped by the next commit);
-    /// `exact` when the new content is the step's "before" itself.
-    Undo { index: usize, linear: bool, exact: bool },
+    /// `exact` when the new content is the step's "before" itself; `plain` for plain undo
+    /// taken past another editor's commit (scoped, but kept for plain redo).
+    Undo {
+        index: usize,
+        linear: bool,
+        exact: bool,
+        plain: bool,
+    },
     /// `redo[index]` when `linear`, else `undone[index]`.
     Redo { index: usize, linear: bool },
 }
@@ -146,6 +160,21 @@ impl<D: DocModel> History<D> {
         undo.chain(redo).find(|version| version.number() == number).cloned()
     }
 
+    /// The version `seq` where the undo list keeps it (a step's "after" or "before"), and
+    /// whether every step published after it is still in that list or was taken back (so
+    /// the steps after it are known): `None` when it is not kept.
+    pub(crate) fn kept(&self, seq: Seq) -> Option<Snapshot<D>> {
+        let oldest = self.undo.front()?;
+        if seq < oldest.before.seq() {
+            return None;
+        }
+        self.undo
+            .iter()
+            .flat_map(|step| [&step.before, &step.after])
+            .find(|version| version.seq() == seq)
+            .cloned()
+    }
+
     /// The newest step `caller` made that undo can reach.
     pub(crate) fn latest_by(&self, caller: &str) -> Option<Seq> {
         self.undo
@@ -171,11 +200,30 @@ impl<D: DocModel> History<D> {
         }
     }
 
-    /// A new commit: the step goes on the undo list and plain redo is dropped.
+    /// A new commit: the step goes on the undo list and plain redo is dropped. Another
+    /// editor's commit drops nothing: plain redo's steps are kept for plain redo past it,
+    /// each brought back only where it is not entangled with that commit.
     pub(crate) fn commit(&mut self, step: Step<D>) -> Garbage<D> {
+        let foreign = step.foreign;
         let mut garbage = self.push(step);
-        garbage.take_redo(&mut self.redo);
+        if foreign {
+            self.undone
+                .extend(self.redo.drain(..).map(|undone| Undone { plain: true, ..undone }));
+        } else {
+            garbage.take_redo(&mut self.redo);
+            let (plain, kept): (VecDeque<_>, VecDeque<_>) = self.undone.drain(..).partition(|u| u.plain);
+            self.undone = kept;
+            for gone in plain {
+                garbage._versions.extend([gone.result, gone.on]);
+                garbage._steps.push(gone.step);
+            }
+        }
         garbage
+    }
+
+    /// The newest step undo can reach that this session made (none of another editor's).
+    fn newest_own(&self) -> Option<usize> {
+        self.undo.iter().rposition(|step| !step.foreign)
     }
 
     fn push(&mut self, step: Step<D>) -> Garbage<D> {
@@ -203,8 +251,11 @@ impl<D: DocModel> History<D> {
         head: &Snapshot<D>,
         journal: &Journal<D>,
     ) -> Result<Planned<D>, Error<D>> {
+        // plain undo takes back the newest step of this session's, past another editor's
+        // later commits only where it is not entangled with them
+        let plain = at.is_none() && self.undo.back().is_some_and(|step| step.foreign);
         let index = match at {
-            None => self.undo.len().checked_sub(1).ok_or(StoreError::NothingToUndo)?,
+            None => self.newest_own().ok_or(StoreError::NothingToUndo)?,
             Some(seq) => self
                 .undo
                 .iter()
@@ -212,18 +263,32 @@ impl<D: DocModel> History<D> {
                 .ok_or(StoreError::UnknownStep { step: seq })?,
         };
         let step = self.undo.get(index).ok_or(StoreError::NothingToUndo)?;
+        if step.foreign {
+            return Err(StoreError::ForeignChange {
+                step: step.after.seq(),
+                editor: step.caller.clone().unwrap_or_else(|| Arc::from("another editor")),
+                overlap: step.writes.clone(),
+            });
+        }
         // Every change since the step is a later step still in this list, or the undo of one
         // (which put its keys back): only the later steps here can depend on it.
         let mut overlap = step.writes.intersection(shared);
         for later in self.undo.iter().skip(index + 1) {
-            overlap.extend(&step.writes.intersection(&later.reads));
+            let mut with = step.writes.intersection(&later.reads);
             // a derived key two steps write is recomputed where the undo lands: no tie
-            overlap.extend(&step.writes.intersection(&later.writes).without_where(D::derived));
+            with.extend(&step.writes.intersection(&later.writes).without_where(D::derived));
+            let with = without_kept::<D>(with);
+            if later.foreign && !with.is_empty() {
+                // another editor's change is in the way: no undo takes it back
+                return Err(StoreError::ForeignChange {
+                    step: later.after.seq(),
+                    editor: later.caller.clone().unwrap_or_else(|| Arc::from("another editor")),
+                    overlap: with,
+                });
+            }
+            overlap.extend(&with);
         }
-        let overlap = match overlap {
-            KeySet::Keys(keys) => KeySet::Keys(keys.into_iter().filter(|key| !D::kept(key)).collect()),
-            KeySet::Everything => KeySet::Everything,
-        };
+        let overlap = without_kept::<D>(overlap);
         if !overlap.is_empty() {
             return Err(StoreError::Entangled {
                 step: step.after.seq(),
@@ -235,14 +300,51 @@ impl<D: DocModel> History<D> {
         Ok(Planned {
             target: Target::Undo {
                 index,
-                linear: at.is_none(),
+                linear: at.is_none() && !plain,
                 exact,
+                plain,
             },
             step: step.after.seq(),
-            number: (at.is_none() && exact).then(|| step.before.number()),
+            number: (at.is_none() && !plain && exact).then(|| step.before.number()),
             doc,
             changes,
             writes,
+        })
+    }
+
+    /// Plan taking back step `at`, the newest step undo can reach, exactly: its "before"
+    /// itself, where every version published since it is one of `ours` (later steps and the
+    /// undos that took them back, so the head holds its "after"'s content though not that
+    /// version itself). What a co-authoring refresh's take-back does where moving the step's
+    /// inverses past those cannot be placed ([`crate::Store::receive`]).
+    pub(crate) fn plan_undo_exact(
+        &self,
+        at: Seq,
+        ours: &std::collections::BTreeSet<Seq>,
+        journal: &Journal<D>,
+    ) -> Result<Planned<D>, Error<D>> {
+        let index = self.undo.len().checked_sub(1).ok_or(StoreError::NothingToUndo)?;
+        let step = self.undo.get(index).ok_or(StoreError::NothingToUndo)?;
+        let since = journal.seqs_since(step.after.seq());
+        let alone = step.after.seq() == at && since.is_some_and(|seqs| seqs.iter().all(|seq| ours.contains(seq)));
+        if !alone {
+            return Err(StoreError::Entangled {
+                step: at,
+                overlap: step.writes.clone(),
+            });
+        }
+        Ok(Planned {
+            target: Target::Undo {
+                index,
+                linear: false,
+                exact: false,
+                plain: false,
+            },
+            step: at,
+            number: None,
+            doc: step.before.doc().clone(),
+            changes: ChangeSet::inverse_of(step.before.doc().clone(), step.changes.clone()),
+            writes: step.writes.clone(),
         })
     }
 
@@ -255,7 +357,15 @@ impl<D: DocModel> History<D> {
         journal: &Journal<D>,
     ) -> Result<Planned<D>, Error<D>> {
         let (index, linear) = match at {
-            None => (self.redo.len().checked_sub(1).ok_or(StoreError::NothingToRedo)?, true),
+            None if self.redo.is_empty() => (
+                // plain undo's steps kept past another editor's commit, the newest first
+                self.undone
+                    .iter()
+                    .rposition(|u| u.plain)
+                    .ok_or(StoreError::NothingToRedo)?,
+                false,
+            ),
+            None => (self.redo.len() - 1, true),
             Some(seq) => {
                 let made = |undone: &Undone<D>| undone.step.after.seq() == seq;
                 match self.undone.iter().position(made) {
@@ -321,7 +431,12 @@ impl<D: DocModel> History<D> {
             _versions: Vec::new(),
         };
         match target {
-            Target::Undo { index, linear, exact } => {
+            Target::Undo {
+                index,
+                linear,
+                exact,
+                plain,
+            } => {
                 if let Some(step) = self.undo.remove(index) {
                     let undone = Undone {
                         step,
@@ -329,6 +444,7 @@ impl<D: DocModel> History<D> {
                         changes,
                         result: version,
                         exact,
+                        plain,
                     };
                     if linear {
                         self.redo.push(undone);
@@ -370,8 +486,17 @@ fn info<D: DocModel>(step: &Step<D>) -> StepInfo<D::Key> {
         number: step.after.number(),
         from_number: step.before.number(),
         caller: step.caller.clone(),
+        foreign: step.foreign,
         reads: step.reads.clone(),
         writes: step.writes.clone(),
+    }
+}
+
+/// `keys` without the ones no undo is entangled on ([`DocModel::kept`]).
+fn without_kept<D: DocModel>(keys: KeySet<D::Key>) -> KeySet<D::Key> {
+    match keys {
+        KeySet::Keys(keys) => KeySet::Keys(keys.into_iter().filter(|key| !D::kept(key)).collect()),
+        KeySet::Everything => KeySet::Everything,
     }
 }
 

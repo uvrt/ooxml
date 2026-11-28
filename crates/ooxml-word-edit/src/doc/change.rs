@@ -102,6 +102,26 @@ pub enum Change {
         /// Its tree, as written.
         tree: Tree,
     },
+    /// A part as another editor's version of the document has it (a co-authoring refresh,
+    /// [`crate::Arrival`]): `patches`, the changes from the version that editor's save was
+    /// made from, applied in place (the blocks they do not touch keep their ids and what is
+    /// kept of them); `None`, the part whole as `from` has it. Where the part it lands on is
+    /// `on` (the very part the patches were worked out against), the result is the part as
+    /// `from` holds it, so it saves as that editor wrote it; elsewhere it is written. A block
+    /// left without a valid, unique id where it lands is stamped there, by the rule of a part
+    /// another writer put ([`ooxml_word_model::stamp::received`]).
+    Arrived {
+        /// The part.
+        part: Arc<str>,
+        /// Its changes, or `None` for the part whole.
+        patches: Option<Arc<[Patch]>>,
+        /// The keys it writes.
+        keys: Arc<[Key]>,
+        /// The other editor's version.
+        from: Package,
+        /// The part the patches were worked out against, where it had one.
+        on: Option<ooxml_opc::PartVersion>,
+    },
     /// A part put in place as bytes, kept as given (media, or any part a bridged tool wrote
     /// that is not XML).
     Bytes {
@@ -232,6 +252,7 @@ impl Change {
             | Change::Head { part, .. }
             | Change::Put { part, .. }
             | Change::Received { part, .. }
+            | Change::Arrived { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. }
