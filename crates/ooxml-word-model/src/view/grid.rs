@@ -8,7 +8,9 @@
 //!   `RedundantPlain`, Word's plain re-save of one with no revision at all);
 //! - the grid spans to the widest row: a row past `w:tblGrid` adds columns (`Merge`, and the
 //!   re-save of three corpus documents written so), and columns past every row go
-//!   (`UncoveredColumn`);
+//!   (`UncoveredColumn`); but a row reaching past the widest a table is fitted to
+//!   ([`past_widest`]: 63 columns) widens nothing, Word re-griding it a way of its own, so the
+//!   grid then stays `w:tblGrid` and a span past it counts its columns as written;
 //! - a vertical merge either side of a pending properties change (`w:tcPrChange`) has stays,
 //!   in the final view ([`View::merge_element`]).
 //!
@@ -18,7 +20,7 @@
 //! Must not: build a model, word a change, or change a table.
 
 use super::{content_kept, row_ends, View};
-use crate::docx::tables::{grid_span, row_cells, RowSpec};
+use crate::docx::tables::{grid_span, past_widest, row_cells, RowSpec};
 use crate::xmlread::{attr_in, child_in, Ns};
 use ooxml_xml::Element;
 use std::collections::{BTreeSet, HashSet};
@@ -121,8 +123,9 @@ pub struct ViewGrid {
     columns: Vec<Range<usize>>,
     /// The source grid's column count.
     count: usize,
-    /// Where the widest row of the view ends, in source grid columns (the source grid's
-    /// count for a table of no rows).
+    /// Where the view's grid ends, in source grid columns: the widest row's end, or the
+    /// source grid's count for a table of no rows or one a row reaches past the widest a
+    /// table is fitted to.
     reach: usize,
 }
 
@@ -137,7 +140,8 @@ impl ViewGrid {
     /// The grid of a table of `count` source grid columns whose rows in the view are `rows`.
     #[must_use]
     pub fn build(rows: &[RowShape], count: usize) -> ViewGrid {
-        let reach = rows.iter().map(|r| r.end).max().unwrap_or(count);
+        let widest = rows.iter().map(|r| r.end).max().unwrap_or(count);
+        let reach = if past_widest(count, widest) { count } else { widest };
         // the places a row of the view has a cell edge at, up to the widest row: the view's
         // columns run between them (by runs, so a span of billions of columns is one)
         let mut edges: BTreeSet<usize> = BTreeSet::from([0, reach]);
@@ -223,13 +227,16 @@ impl ViewGrid {
         self.columns.iter().filter(|c| c.start >= self.count).count()
     }
 
-    /// How many of the view's columns the source columns `columns` cover.
+    /// How many of the view's columns the source columns `columns` cover; past the view's
+    /// grid (a row reaching past the widest a table is fitted to), each column counts.
     #[must_use]
     pub fn span(&self, columns: &Range<usize>) -> usize {
-        self.columns
+        let inside = self
+            .columns
             .iter()
             .filter(|c| columns.start <= c.start && c.start < columns.end)
-            .count()
+            .count();
+        inside + columns.end.saturating_sub(columns.start.max(self.reach))
     }
 
     /// How many of the view's columns a cell over the source columns `parts` covers (its own,
@@ -313,6 +320,21 @@ mod tests {
                 .collect(),
             end,
         }
+    }
+
+    #[test]
+    fn a_row_past_the_widest_table_widens_nothing() {
+        let rows = [
+            row(
+                0,
+                &[(0, 2_147_483_645, true), (2_147_483_645, 2_147_483_646, true)],
+                2_147_483_646,
+            ),
+            row(0, &[(0, 1, true), (1, 2, true)], 2),
+        ];
+        let grid = ViewGrid::build(&rows, 2);
+        assert!(grid.is_source());
+        assert_eq!(grid.span(&(0..2_147_483_645)), 2_147_483_645);
     }
 
     #[test]
