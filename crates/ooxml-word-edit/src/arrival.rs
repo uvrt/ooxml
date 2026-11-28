@@ -152,6 +152,10 @@ impl Arrival {
     /// it changes, the whole of a part it changes, or anything of a part it takes whole.
     #[must_use]
     pub fn touches(&self, reads: &KeySet<Key>, writes: &KeySet<Key>) -> bool {
+        // (a part whose content is theirs as it was, saved otherwise, touches nothing)
+        if self.parts.iter().all(|part| part.touched.is_empty()) {
+            return false;
+        }
         let (Some(reads), Some(writes)) = (reads.keys(), writes.keys()) else {
             return true;
         };
@@ -268,7 +272,18 @@ impl Editor {
     /// that is not XML; a take-back the history refuses.
     pub fn receive(&self, editor: &str, base: Seq, from: Package) -> Result<Arrived, EditError> {
         let on = self.store().kept(base).ok_or(StoreError::NotKept { seq: base })?;
-        let arrival = RefCell::new(Arrival::plan(on.doc(), from)?);
+        let planned = Arrival::plan(on.doc(), from)?;
+        if planned.is_empty() {
+            // their version is this one's base as it is: nothing comes in, nothing is handed back
+            return Ok(Arrived {
+                version: self.store().snapshot(),
+                previous: None,
+                handed_back: Vec::new(),
+                parts: Vec::new(),
+                blocks: Vec::new(),
+            });
+        }
+        let arrival = RefCell::new(planned);
         let received = self.store().receive(
             &Caller::foreign(editor),
             base,

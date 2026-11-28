@@ -371,7 +371,8 @@ fn another_editor(shared: &Editor, targets: &[String], seed: u64, count: usize) 
                 .iter()
                 .map(|h| (h.step.step, h.version.seq()))
                 .collect();
-            arrived.previous.is_some().then(|| {
+            // (a version that changed nothing here still makes the undos it handed back)
+            (arrived.previous.is_some() || !arrived.handed_back.is_empty()).then(|| {
                 let made = Made::Foreign {
                     base: base.seq(),
                     file,
@@ -381,6 +382,18 @@ fn another_editor(shared: &Editor, targets: &[String], seed: u64, count: usize) 
             })
         })
         .collect()
+}
+
+/// The run's commits, as an assertion names them: each version and what made it.
+fn listed(records: &[(Seq, Made, Snapshot<WordDoc>)]) -> String {
+    let named: Vec<String> = records
+        .iter()
+        .map(|(at, made, _)| match made {
+            Made::Edit(_) => format!("{} edit", at.0),
+            Made::Foreign { base, back, .. } => format!("{} foreign on {} handing back {back:?}", at.0, base.0),
+        })
+        .collect();
+    named.join("; ")
 }
 
 /// What another editor's versions did in a run.
@@ -417,7 +430,12 @@ fn replay_serially(bytes: &Arc<[u8]>, records: &[(Seq, Made, Snapshot<WordDoc>)]
             }
         };
         seq = made_here.seq();
-        assert_eq!(seq, *at, "seed {seed}: commit order");
+        assert_eq!(
+            seq,
+            *at,
+            "seed {seed}: commit order, the run's commits {}",
+            listed(records)
+        );
         assert_eq!(
             written(made_here.doc()),
             written(version.doc()),
