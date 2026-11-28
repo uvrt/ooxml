@@ -43,8 +43,8 @@ pub fn table_html(reader: &mut Reader<'_>, table: &TableRecord) -> String {
             if cell.row_span > 1 {
                 attributes.push_str(&format!(" rowspan=\"{}\"", cell.row_span));
             }
-            if cell.column_span > 1 {
-                attributes.push_str(&format!(" colspan=\"{}\"", cell.column_span));
+            if cell.view_span > 1 {
+                attributes.push_str(&format!(" colspan=\"{}\"", cell.view_span));
             }
             let blocks = build(reader, &cell.records, false);
             cells.push_str(&format!("<{tag}{attributes}>{}</{tag}>", blocks_html(&blocks)));

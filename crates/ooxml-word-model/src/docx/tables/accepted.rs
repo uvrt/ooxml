@@ -2,8 +2,9 @@
 //! positions (`tools/objects.py`, `_Accepted`; `edit/tables.py`, `accepted_columns` and
 //! `cells_lost_on_accept`; `edit/provenance.py`, `accepted_rows`): the document rows kept
 //! (a row whose deletion is pending is not counted), the grid columns kept (Word's Accept
-//! All: a deleted cell whose content is kept widens the cell before it, a grid column only
-//! removed cells cover goes), the positions a cell taken into the one before it covers, the
+//! All rebuilds the grid, [`ViewGrid`]: a deleted cell whose content is kept widens the cell
+//! before it, a grid column only removed cells cover goes, grid columns no cell divides are
+//! one), the positions a cell taken into the one before it covers, the
 //! cells Accept All removes with their text; a position given as accepted mapped to the
 //! document's row and grid column, refused past the table (with its shape as accepted) or in
 //! a cell Accept All removes, and what it stepped over or into said once as a note. The one
@@ -15,7 +16,7 @@ use super::labels::labelled;
 use super::{placed_cells, TableGrid};
 use crate::address::AddressError;
 use crate::ids::W;
-use crate::view::{cell_ends, content_kept, CellEnds, View};
+use crate::view::{cell_ends, content_kept, CellEnds, View, ViewGrid};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
@@ -72,6 +73,9 @@ pub(super) struct Layout {
     pub(super) rows: Vec<usize>,
     pub(super) lost: BTreeSet<(usize, usize)>,
     pub(super) cell_ends: bool,
+    pub(super) joined: Vec<Range<usize>>,
+    pub(super) grid_columns: usize,
+    pub(super) columns: usize,
 }
 
 /// A position refused: the error, and the argument it is about.
@@ -109,7 +113,9 @@ pub struct Accepted {
     /// Whether a cell's last paragraph mark is a pending deletion Accept All takes away (the
     /// next cell taken in, or the cell removed with its text).
     pub cell_ends: bool,
-    /// The grid's column count.
+    /// The grid's column count as accepted, before columns go or are joined: `w:tblGrid`'s
+    /// to the widest row, and one for each column of the view past it
+    /// ([`ViewGrid::grid_columns`], [`ViewGrid::past_grid`]).
     pub columns: usize,
     /// The document's row count.
     pub total_rows: usize,
@@ -119,6 +125,11 @@ pub struct Accepted {
     headers: BTreeMap<usize, String>,
     /// The positions of `given` whose cell is a pending tracked merge's (`w:cellDel`).
     merged: ColumnRuns<()>,
+    /// The grid columns that are one column as accepted (no cell divides them), each run of
+    /// two or more.
+    joined: Vec<Range<usize>>,
+    /// `w:tblGrid`'s columns before the widest row's end: those a column not kept is one of.
+    grid_columns: usize,
 }
 
 /// Python's `" ".join(text.split())`, shortened to `limit` characters with an ellipsis
@@ -179,14 +190,16 @@ impl TableGrid<'_> {
             rows,
             lost,
             cell_ends,
+            joined,
+            grid_columns,
+            columns,
         } = self.accepted_layout();
         let row_texts = (0..self.rows.len())
             .filter(|r| !rows.contains(r))
             .map(|r| (r, self.first_cell_text(r)))
             .collect();
-        let columns = self.column_count();
-        let headers = (0..columns)
-            .filter(|c| !kept.contains(c))
+        let headers = (0..grid_columns)
+            .filter(|c| !kept.contains(c) && !joined.iter().any(|j| j.contains(c)))
             .map(|c| (c, self.cell_all_text(0, c).unwrap_or_default()))
             .collect();
         // a run is one cell's columns, so one position of it answers for all
@@ -211,13 +224,14 @@ impl TableGrid<'_> {
             row_texts,
             headers,
             merged,
+            joined,
+            grid_columns,
         }
     }
 
     /// The rows, columns and cells as accepted, without the texts a note says.
     pub(super) fn accepted_layout(&self) -> Layout {
         let mut out = Layout::default();
-        let mut covered: BTreeMap<usize, bool> = BTreeMap::new();
         let columns = self.column_count();
         for (r, row) in self.rows.iter().enumerate() {
             let deleted_row = View::Final.removes_row(row);
@@ -253,7 +267,7 @@ impl TableGrid<'_> {
             let mut before: Option<usize> = None;
             for (cell, start, span) in &cells {
                 let me = Arc::as_ptr(cell);
-                let mut deleted = View::Final.removes_cell(cell);
+                let deleted = View::Final.removes_cell(cell);
                 let into = taken.iter().find(|(t, _)| *t == me).map(|(_, s)| *s);
                 let widens = match before {
                     Some(first) if deleted && content_kept(cell) => Some(first),
@@ -261,29 +275,21 @@ impl TableGrid<'_> {
                 };
                 if let Some(first) = widens.or(into) {
                     out.given.insert(r, *start..start.saturating_add(*span), first);
-                    // a cell widening the one before it stays; one taken into it goes
-                    deleted = widens.is_none();
                 } else if removed.contains(&me) {
-                    deleted = true;
                     if !deleted_row {
                         out.lost.insert((r, *start));
                     }
                 } else if !deleted {
                     before = Some(*start);
                 }
-                if deleted_row {
-                    continue;
-                }
-                // only the grid's columns are counted (`kept`), so a span past them stops there
-                for column in *start..start.saturating_add(*span).min(columns) {
-                    let was = covered.get(&column).copied().unwrap_or(true);
-                    covered.insert(column, was && deleted);
-                }
             }
         }
-        out.kept = (0..columns)
-            .filter(|c| !covered.get(c).copied().unwrap_or(false))
-            .collect();
+        let rows: Vec<&Element> = self.rows.iter().map(|r| &**r).collect();
+        let grid = ViewGrid::of(View::Final, &rows, columns);
+        out.grid_columns = grid.grid_columns();
+        out.columns = grid.grid_columns() + grid.past_grid();
+        out.kept = grid.starts();
+        out.joined = grid.columns().iter().filter(|c| c.len() > 1).cloned().collect();
         out
     }
 
@@ -361,6 +367,8 @@ impl Accepted {
             row_texts: BTreeMap::new(),
             headers: BTreeMap::new(),
             merged: ColumnRuns::default(),
+            joined: Vec::new(),
+            grid_columns: columns,
         }
     }
 
@@ -405,7 +413,7 @@ impl Accepted {
     /// What its columns are as accepted (`shape`).
     #[must_use]
     pub fn shape(&self) -> String {
-        let skipped: Vec<usize> = (0..self.columns).filter(|c| !self.kept.contains(c)).collect();
+        let skipped = self.deleted_columns(self.grid_columns);
         let mut out = format!("{} has columns 0 to {}", self.table, last(self.width()));
         if !skipped.is_empty() {
             out.push_str(&format!(
@@ -413,7 +421,40 @@ impl Accepted {
                 joined(&skipped)
             ));
         }
+        if let Some(said) = self.joining(usize::MAX) {
+            out.push_str(if skipped.is_empty() { " as accepted; " } else { "; " });
+            out.push_str(&said);
+        }
         out
+    }
+
+    /// The grid columns before `end` accepting deletes (not kept, not joined to a column
+    /// before them).
+    fn deleted_columns(&self, end: usize) -> Vec<usize> {
+        (0..end.min(self.grid_columns))
+            .filter(|c| !self.kept.contains(c) && !self.joined.iter().any(|j| j.contains(c)))
+            .collect()
+    }
+
+    /// The runs of grid columns before `end` that are one column as accepted, said: `grid
+    /// columns 0 and 1 are one column in this view (no cell divides them)`.
+    fn joining(&self, end: usize) -> Option<String> {
+        let runs: Vec<String> = self
+            .joined
+            .iter()
+            .filter(|j| j.start < end)
+            .map(|j| match j.len() {
+                2 => format!("{} and {}", j.start, j.start + 1),
+                _ => format!("{} to {}", j.start, j.end - 1),
+            })
+            .collect();
+        (!runs.is_empty()).then(|| {
+            let verb = if runs.len() == 1 { "are" } else { "are each" };
+            format!(
+                "grid columns {} {verb} one column in this view (no cell divides them)",
+                runs.join(", ")
+            )
+        })
     }
 
     /// The document row of position `row`, refused past the last; a row skipped said once
@@ -465,13 +506,22 @@ impl Accepted {
             });
         };
         if usize::try_from(column).ok() != Some(grid) {
-            let gone: Vec<usize> = (0..grid).filter(|c| !self.kept.contains(c)).collect();
-            let head = format!(
-                "col positions count {} as accepted: grid column {} has a tracked deletion not yet accepted and is \
-                 not counted (word_changes reaches it)",
-                self.table,
-                said(&gone, &self.headers)
-            );
+            let gone = self.deleted_columns(grid);
+            let head = if gone.is_empty() {
+                format!("col positions count {} as accepted", self.table)
+            } else {
+                format!(
+                    "col positions count {} as accepted: grid column {} has a tracked deletion not yet accepted and is \
+                     not counted (word_changes reaches it)",
+                    self.table,
+                    said(&gone, &self.headers)
+                )
+            };
+            let head = match self.joining(grid) {
+                Some(joining) if gone.is_empty() => format!("{head}: {joining}"),
+                Some(joining) => format!("{head}; {joining}"),
+                None => head,
+            };
             if !notes.iter().any(|n| n.starts_with(&head)) {
                 notes.push(format!("{head}; col {column} is grid column {grid}"));
             }

@@ -1,8 +1,9 @@
 //! Owns: a table read in the view (docx-agent's `Reader._table_blocks`): its rows in the
 //! view (a row deleted as a tracked change gone from the final view, one inserted from the
 //! original), header rows, cells placed by `w:gridBefore` and `w:gridSpan`, vertical merges
-//! (and a pending tracked one, as accepting leaves it), cells the view leaves out, each cell's
-//! blocks; the paragraphs whose marks are deleted just before the table joined into its first
+//! (and a pending tracked one, as accepting leaves it), cells the view leaves out, the grid
+//! as Word rebuilds it from the cells left ([`ViewGrid`]: each cell's span in its columns),
+//! each cell's blocks; the paragraphs whose marks are deleted just before the table joined into its first
 //! cell's first paragraph.
 //!
 //! A row whose deletion is pending goes whole in the final view, and a merge whose first
@@ -18,9 +19,10 @@ use super::{CellRecord, Item2, Placed, Reader, Record, TableRecord};
 use crate::docx::find_path;
 use crate::docx::tables::{merge_heads, row_cells, RowSpec, VMerge};
 use crate::ids::W;
-use crate::view::{content_kept, View};
+use crate::view::{content_kept, View, ViewGrid};
 use ooxml_xml::Element;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 /// A row's `w:tc`, also inside row-level `w:sdt` and `w:customXml` (the grid's walk,
@@ -116,7 +118,6 @@ impl Reader<'_> {
             g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
         });
         let mut grid = Grid {
-            columns,
             prefix,
             counting_header: true,
             heads: self.merge_heads(&root, &entry.rows),
@@ -135,19 +136,19 @@ impl Reader<'_> {
         if grid.rows.is_empty() {
             return (Vec::new(), grid.placed);
         }
-        let dropped: HashSet<usize> = grid.hidden.iter().flatten().copied().collect();
-        let mut width = grid.columns;
-        if !dropped.is_empty() {
-            let shown: HashSet<usize> = grid
-                .rows
-                .iter()
-                .flatten()
-                .flat_map(|c| c.column..c.column + c.column_span)
-                .collect();
-            width -= (0..grid.columns)
-                .filter(|c| !shown.contains(c) && dropped.contains(c))
-                .count();
+        let rows: Vec<Arc<Element>> = entry
+            .rows
+            .iter()
+            .filter_map(|(path, _)| crate::docx::at_path(&root, path).cloned())
+            .collect();
+        let rows: Vec<&Element> = rows.iter().map(|r| &**r).collect();
+        let view_grid = ViewGrid::of(self.view, &rows, columns);
+        for (line, ranges) in grid.rows.iter_mut().zip(&grid.ranges) {
+            for (cell, range) in line.iter_mut().zip(ranges) {
+                cell.view_span = view_grid.span(range);
+            }
         }
+        let width = view_grid.width();
         let record = TableRecord {
             id: entry.id,
             element: Arc::clone(&table.element),
@@ -178,20 +179,21 @@ impl Reader<'_> {
             grid.counting_header = false;
         }
         let mut line: Vec<CellRecord> = Vec::new();
-        let mut gone_here = HashSet::new();
+        let mut ranges: Vec<Range<usize>> = Vec::new();
         let spec = RowSpec::of(&row.element);
         let mut column = spec.before;
         let all = cells(row);
         for (n, tc) in all.iter().enumerate() {
             let span = spec.cells.get(n).map_or(1, |c| c.span);
+            let here = column..column + span;
             if self.view.removes_cell(&tc.element) {
                 // one whose content is not deleted widens the cell before it, as Word's
                 // Accept All does (round 54, R110)
-                match line.last_mut() {
-                    Some(before) if self.view == View::Final && content_kept(&tc.element) => {
+                if let (Some(before), Some(range)) = (line.last_mut(), ranges.last_mut()) {
+                    if self.view == View::Final && content_kept(&tc.element) {
                         before.column_span += span;
+                        range.end = here.end;
                     }
-                    _ => gone_here.extend(column..column + span),
                 }
             } else if let (true, Some(origin)) = (
                 self.continues(&tc.element) && !grid.heads.contains_key(&(r, n)),
@@ -208,7 +210,7 @@ impl Reader<'_> {
                 };
                 let (records, placed) = self.cell_records(part, tc, first, style);
                 grid.placed |= placed;
-                for c in column..column + span {
+                for c in here.clone() {
                     grid.origins.insert(c, (grid.rows.len(), line.len()));
                 }
                 let id = format!("{table_id}/c{r},{column}");
@@ -218,16 +220,17 @@ impl Reader<'_> {
                     column,
                     row_span: 1,
                     column_span: span,
+                    view_span: here.len(),
                     records,
                     path: tc.path.clone(),
                 });
+                ranges.push(here);
             }
             column += span;
         }
-        grid.columns = grid.columns.max(column + spec.after);
         if !line.is_empty() || all.is_empty() {
             grid.rows.push(line);
-            grid.hidden.push(gone_here);
+            grid.ranges.push(ranges);
         }
     }
 
@@ -259,12 +262,12 @@ impl Reader<'_> {
 /// A table's rows as they are read.
 #[derive(Default)]
 struct Grid {
-    columns: usize,
     origins: HashMap<usize, (usize, usize)>,
     /// The cells continuing a merge the final view starts again or leaves alone.
     heads: HashMap<(usize, usize), VMerge>,
     rows: Vec<Vec<CellRecord>>,
-    hidden: Vec<HashSet<usize>>,
+    /// Each row's cells' source grid columns in the view.
+    ranges: Vec<Vec<Range<usize>>>,
     header_rows: usize,
     counting_header: bool,
     placed: bool,

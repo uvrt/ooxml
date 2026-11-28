@@ -277,3 +277,51 @@ fn word_cases() -> Vec<(&'static str, Vec<Vec<String>>, bool)> {
         ),
     ]
 }
+
+/// Word's Accept All of a deleted cell whose content stays, in the only row dividing grid
+/// columns 0 and 1 (lane fix-final-grid, 19830c99, `HostSplit`): the two are one column.
+#[test]
+fn columns_no_cell_divides_once_accepted_are_one_position() {
+    let deleted = format!(r#"<w:cellDel w:id="3" {AUTHOR}/>"#);
+    let a = accepted(&table(&[
+        row(&[cell(&text("A"), r#"<w:gridSpan w:val="2"/>"#), plain("C")], ""),
+        row(&[plain("D"), cell(&text(""), &deleted), plain("F")], ""),
+    ]));
+    assert_eq!(a.kept, [0, 2]);
+    assert_eq!(a.width(), 2);
+    assert_eq!(
+        a.shape(),
+        "t:X has columns 0 to 1 as accepted; grid columns 0 and 1 are one column in this view (no cell divides them)"
+    );
+    let mut notes = Vec::new();
+    assert_eq!(a.to_grid(1, "col", &mut notes), Ok(2));
+    assert_eq!(
+        notes,
+        [
+            "col positions count t:X as accepted: grid columns 0 and 1 are one column in this view (no cell divides \
+          them); col 1 is grid column 2"
+        ]
+    );
+}
+
+/// The same table's final-view Markdown: no cell spans the one column grid columns 0 and 1
+/// make, as in Word's Accept All of it.
+#[test]
+fn the_final_markdown_counts_spans_in_the_view_grid() {
+    let deleted = format!(r#"<w:cellDel w:id="3" {AUTHOR}/>"#);
+    let body = table(&[
+        row(&[cell(&text("A"), r#"<w:gridSpan w:val="2"/>"#), plain("C")], ""),
+        row(&[plain("D"), cell(&text(""), &deleted), plain("F")], ""),
+    ]);
+    let docx = Docx::open(
+        &package(&Parts {
+            body,
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
+    .unwrap();
+    let markdown = ooxml_word_model::markdown::to_plain_markdown(&docx, None).unwrap();
+    assert!(!markdown.contains("colspan"), "{markdown}");
+    assert!(markdown.contains("| A | C |"), "{markdown}");
+}

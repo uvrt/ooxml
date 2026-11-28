@@ -548,7 +548,7 @@ fn table(reader: &mut Reader<'_>, t: &TableRecord) -> Vec<Block> {
 fn gfm(reader: &Reader<'_>, t: &TableRecord) -> Option<Table> {
     let mut rows = Vec::new();
     for line in &t.rows {
-        if line.len() != t.columns || line.iter().any(|c| c.row_span != 1 || c.column_span != 1) {
+        if line.len() != t.columns || line.iter().any(|c| c.row_span != 1 || c.view_span != 1) {
             return None;
         }
         let mut cells = Vec::new();

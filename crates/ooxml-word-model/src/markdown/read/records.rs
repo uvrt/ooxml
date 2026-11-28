@@ -199,8 +199,11 @@ pub struct CellRecord {
     pub column: usize,
     /// Rows it spans.
     pub row_span: usize,
-    /// Columns it spans.
+    /// Grid columns it spans.
     pub column_span: usize,
+    /// Columns it spans in the view's grid, as Word rebuilds it ([`crate::view::ViewGrid`]):
+    /// what the Markdown says.
+    pub view_span: usize,
     /// Its blocks.
     pub records: Vec<Record>,
     /// The `w:tc`'s place in its part.

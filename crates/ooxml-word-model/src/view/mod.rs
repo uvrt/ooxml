@@ -8,7 +8,9 @@
 //! - a paragraph's properties change (`w:pPrChange`, [`View::paragraph_properties`]);
 //! - a row's record (`w:trPr`), a cell's (`w:cellDel`, `w:cellIns`) and a pending vertical
 //!   merge (`w:cellMerge`); a deleted cell whose content stays, and the cells whose end Accept
-//!   All takes away ([`cells`]).
+//!   All takes away ([`cells`]);
+//! - a table's grid as Word rebuilds it from the cells the view leaves ([`ViewGrid`]), and a
+//!   vertical merge under a cell's properties change (`w:tcPrChange`, [`View::merge_element`]).
 //!
 //! Every reading asks here: the layout's reader (`read`), the tools' text, tables, facts and
 //! Markdown readings, and the change grouping. Names are WordprocessingML's in either
@@ -17,9 +19,11 @@
 //! Must not: build a model, word a change, or change a document.
 
 mod cells;
+mod grid;
 mod joins;
 
 pub use cells::{cell_ends, content_kept, row_ends, CellEnds};
+pub use grid::{RowShape, ViewGrid};
 pub use joins::{plan as join_plan, Joined, Joining};
 
 use crate::docx::tables::VMerge;
@@ -141,12 +145,13 @@ impl View {
     }
 
     /// A cell's part in a vertical merge in this view: in the final view a pending tracked
-    /// merge (`w:cellMerge`) as accepting leaves it, otherwise its `w:vMerge` as written.
+    /// merge (`w:cellMerge`) as accepting leaves it, otherwise its `w:vMerge` in this view
+    /// ([`View::merge_element`]).
     #[must_use]
     pub fn merge(self, cell: &Element) -> VMerge {
-        let properties = child_in(cell, Ns::W, "tcPr");
         if self == View::Final {
-            if let Some(tracked) = properties.and_then(|p| child_in(p, Ns::W, "cellMerge")) {
+            let tracked = child_in(cell, Ns::W, "tcPr").and_then(|p| child_in(p, Ns::W, "cellMerge"));
+            if let Some(tracked) = tracked {
                 return match attr_in(tracked, Some(Ns::W), "vMerge") {
                     Some("rest") => VMerge::Restart,
                     Some("cont") => VMerge::Continue,
@@ -154,10 +159,7 @@ impl View {
                 };
             }
         }
-        match properties
-            .and_then(|p| child_in(p, Ns::W, "vMerge"))
-            .map(|m| attr_in(m, Some(Ns::W), "val"))
-        {
+        match self.merge_element(cell).map(|m| attr_in(m, Some(Ns::W), "val")) {
             Some(None | Some("continue")) => VMerge::Continue,
             Some(Some("restart")) => VMerge::Restart,
             _ => VMerge::None,
