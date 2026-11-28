@@ -3,9 +3,9 @@
 //! `w:gridBefore` and `w:gridSpan`, a vertically merged cell answering at each position it
 //! covers with its origin; the grid's column count (`w:tblGrid`); the rows accepting the
 //! tracked changes keeps, and the columns (`accepted_columns`, the grid Word's Accept All
-//! rebuilds, [`crate::view::ViewGrid`]: a deleted cell whose content is kept widens the cell
-//! before it, a grid column only removed cells cover goes, columns no cell divides are one,
-//! the grid spans to the widest row); a cell's text; a cell found by labels (`labels`).
+//! rebuilds, [`crate::view::ViewGrid`]: a deleted cell merged into the cell beside it or gone
+//! with the cells after it moved left, columns between the cells' edges, the grid spanning
+//! to the widest row); a cell's text; a cell found by labels (`labels`).
 //!
 //! Must not: change a table or resolve its formatting.
 
@@ -25,10 +25,11 @@ mod grid_reference_tests;
 mod labels;
 mod merge_heads;
 mod places;
-pub use accepted::{Accepted, Axis, ColumnRuns, Misplaced};
+pub use accepted::{Accepted, Axis, ColumnRuns, Misplaced, MOVED_COLUMN};
 pub use grid::{
-    grid_columns, grid_count, grid_span, grid_value, past_widest, placed_row_cells, row_cells, source_cells, CellSpec,
-    Coverage, Elements, Grid, GridCell, GridRow, GridSource, RowSpec, GRID_VALUE_MAX, TABLE_COLUMNS_MAX,
+    grid_columns, grid_count, grid_span, grid_value, grid_widths, past_widest, placed_row_cells, row_cells,
+    source_cells, CellSpec, Coverage, Elements, Grid, GridCell, GridRow, GridSource, RowSpec, GRID_VALUE_MAX,
+    TABLE_COLUMNS_MAX,
 };
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{merge_heads, VMerge};

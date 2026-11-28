@@ -154,6 +154,7 @@ pub(super) fn placing<'e>(
     retry: &TryCall,
 ) -> Result<(PlaceRows, Placing), ToolError> {
     let (_, view, accepted) = super::edit_table::accepted_on(args, editing, tx.doc(), retry)?;
+    accepted.whole_table("from", retry)?;
     let mut timing = Timing::default();
     let started = Instant::now();
     let locale = editing.locale.cloned().unwrap_or_default();

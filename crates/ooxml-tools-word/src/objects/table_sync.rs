@@ -224,6 +224,7 @@ pub(super) fn syncing<'a, 'r>(
     let doc = tx.doc().clone();
     let doc = &doc;
     let (docx, view, accepted) = super::edit_table::accepted_on(args, editing, doc, retry)?;
+    accepted.whole_table("table", retry)?;
     let notes = arguments(args, retry)?;
     let mut timing = Timing::default();
     let started = Instant::now();

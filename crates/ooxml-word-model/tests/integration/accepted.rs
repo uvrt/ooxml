@@ -102,6 +102,49 @@ fn a_column_only_deleted_cells_cover_goes() {
     assert_eq!(notes.len(), 1);
 }
 
+/// Word's Accept All removes a deleted cell that keeps nothing and moves the cells after it
+/// left (Word 16.106, lane fix-moved-left, `Stagger-gone`): where that differs between rows,
+/// a column as accepted is a different grid column in different rows. A position by row is
+/// that row's own cell; a whole column (or every column, as a sync or a copy writes them) is
+/// refused as not supported, naming the rows that differ.
+#[test]
+fn a_column_whose_cells_move_left_in_some_rows_is_mapped_by_row_and_refused_whole() {
+    let del = format!(r#"<w:cellDel w:id="2" {AUTHOR}/>"#);
+    let a = accepted(&table(&[
+        row(&[cell(&gone("x"), &del), plain("B1"), plain("C1")], ""),
+        row(&[plain("A2"), cell(&gone("y"), &del), plain("C2")], ""),
+        row(&[plain("A3"), plain("B3"), plain("C3")], ""),
+    ]));
+    assert!(a.active() && a.any_moved());
+    assert_eq!(a.width(), 3);
+    assert_eq!(a.deleted(), Vec::<usize>::new());
+    let mut notes = Vec::new();
+    assert_eq!(a.to_row_grid(0, 0, "col", &mut notes).unwrap(), 1);
+    assert_eq!(a.to_row_grid(1, 1, "col", &mut notes).unwrap(), 2);
+    assert_eq!(a.to_row_grid(2, 1, "col", &mut notes).unwrap(), 1);
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[0].ends_with("col 0 is grid column 1 in that row"), "{notes:?}");
+    let refused = a.to_grid(0, "index", &mut notes).unwrap_err();
+    assert_eq!((refused.error.code, refused.field.as_str()), ("not_supported", "index"));
+    assert!(
+        refused.error.message.contains("in row(s) 0 pending cell changes"),
+        "{}",
+        refused.error.message
+    );
+    let whole = a.whole_columns(0..a.width(), "table").unwrap_err();
+    assert!(
+        whole
+            .error
+            .message
+            .starts_with("table: cols 0 to 2 of t:X as accepted is not one grid column in every row: in row(s) 0, 1"),
+        "{}",
+        whole.error.message
+    );
+    // the last column is only row 2's C3, where it was: one grid column
+    assert!(a.whole_columns(2..3, "index").is_ok());
+    assert_eq!(a.to_grid(2, "index", &mut notes).unwrap(), 2);
+}
+
 #[test]
 fn cells_taken_in_answer_as_the_cell_taking_them_and_a_lost_cell_is_refused() {
     let del = format!(r#"<w:cellDel w:id="3" {AUTHOR}/>"#);

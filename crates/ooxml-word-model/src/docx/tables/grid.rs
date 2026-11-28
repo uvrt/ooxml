@@ -471,6 +471,20 @@ impl Origins {
     }
 }
 
+/// The widths of `table`'s `w:tblGrid` columns, twips (0 for one with no valid width).
+#[must_use]
+pub fn grid_widths(table: &Element) -> Vec<i64> {
+    table
+        .find(Some(W), "tblGrid")
+        .map(|g| {
+            crate::w::TblGrid::new(g)
+                .columns()
+                .map(|c| c.w().unwrap_or(0))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The number of `w:gridCol` in `table`'s `w:tblGrid`.
 #[must_use]
 pub fn grid_columns(table: &Element) -> usize {

@@ -23,8 +23,8 @@ mod cells;
 mod grid;
 mod joins;
 
-pub use cells::{cell_ends, content_kept, row_ends, CellEnds};
-pub use grid::{RowShape, ShapeCell, ViewGrid};
+pub use cells::{cell_ends, content_kept, content_kept_in, row_ends, CellEnds};
+pub use grid::{Fate, RowShape, ShapeCell, ViewCell, ViewGrid, ViewRow};
 pub use joins::{plan as join_plan, Joined, Joining};
 
 use crate::docx::tables::VMerge;
@@ -123,18 +123,24 @@ impl View {
     }
 
     /// Whether this view removes the row: a record of the row (`w:trPr`) it does not keep
-    /// (Word 16.106, round 60 R137), or, in the final view, none of its cells left
-    /// ([`cells`]: every cell deleted, or those left gone with their ends; Word 16.106, lane
-    /// ph3-rd1c). The row goes whole, its cells and the tables nested in them with it.
+    /// (Word 16.106, round 60 R137), or none of its cells left -- in the final view every
+    /// cell deleted, or those left gone with their ends ([`cells`]; Word 16.106, lane
+    /// ph3-rd1c), in the original every cell inserted (Reject All, Word 16.106, lane
+    /// fix-moved-left, `RowRemoved`). The row goes whole, its cells and the tables nested in
+    /// them with it.
     #[must_use]
     pub fn removes_row(self, row: &Element) -> bool {
         child_in(row, Ns::W, "trPr").is_some_and(|p| self.drops_any(p))
-            || (self == View::Final && cells::no_cell_left(row))
+            || match self {
+                View::Final => cells::no_cell_left(row),
+                View::Original => cells::every_cell_removed(View::Original, row),
+                View::Markup => false,
+            }
     }
 
     /// Whether this view removes the cell: its deletion (`w:cellDel`) in the final view,
     /// its insertion (`w:cellIns`) in the original. A deleted cell whose content stays
-    /// widens the cell before it in the final view ([`content_kept`]).
+    /// is merged into a cell beside it ([`content_kept_in`], [`ViewGrid`]).
     #[must_use]
     pub fn removes_cell(self, cell: &Element) -> bool {
         let record = match self {
