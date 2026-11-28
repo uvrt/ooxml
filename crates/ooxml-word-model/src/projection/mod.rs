@@ -20,6 +20,7 @@ pub(crate) mod memo;
 pub(crate) use memo::Projections;
 
 use crate::document::{Context, Notes, WordDocument};
+use crate::docx::numbering::ListMembers;
 use crate::docx::{Docx, StoryPart, VersionNames};
 use crate::error::WordError;
 use crate::ids::{BlockKey, StoryIx, VersionDelta};
@@ -629,7 +630,8 @@ pub fn read_context(
 /// The context `trees` (theme, settings, styles, numbering) read, taking each piece from
 /// `before` where the parts it is read from are the same (`same`, by part, in that order):
 /// the colours (theme, settings; or equal), the settings, the font scheme (theme), the styles
-/// (styles, colours) and the numbering (numbering, styles, colours).
+/// (styles, colours), the numbering (numbering, styles, colours) and the lists' membership
+/// (styles, numbering).
 pub(crate) fn read_context_after(before: Option<(&Context, [bool; 4])>, trees: [Option<&Tree>; 4]) -> Context {
     let [theme, settings, styles, numbering] = trees;
     let kept = |k: usize| {
@@ -669,8 +671,24 @@ pub(crate) fn read_context_after(before: Option<(&Context, [bool; 4])>, trees: [
                 .unwrap_or_default(),
         ),
     };
+    // which list a paragraph is in: the styles' and the numbering part's own rule, whatever
+    // the colours
+    let members = match (kept(2), kept(3)) {
+        (Some(cx), Some(_)) => Arc::clone(&cx.members),
+        _ => {
+            let style_elements: Vec<Arc<Element>> = styles.map_or_else(Vec::new, |t| {
+                t.root()
+                    .child_elements()
+                    .filter(|e| crate::xmlread::Ns::W.named(e, "style"))
+                    .cloned()
+                    .collect()
+            });
+            Arc::new(ListMembers::read(&style_elements, numbering.map(|t| &**t.root())))
+        }
+    };
     Context {
         numbering: numbering_read,
+        members,
         settings: match kept(1) {
             Some(cx) => Arc::clone(&cx.settings),
             None => Arc::new(settings.map(|t| Settings::read(t.root())).unwrap_or_default()),
