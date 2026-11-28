@@ -176,6 +176,12 @@ impl Docx {
         self.derived.sections(self)
     }
 
+    /// Which list a paragraph's properties put it in, read once per version.
+    #[must_use]
+    pub fn list_members(&self) -> &Arc<numbering::ListMembers> {
+        self.derived.list_members(self)
+    }
+
     /// The relationships of its package's part `source` (`""` for the package's own),
     /// read once per version.
     ///

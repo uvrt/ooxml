@@ -1,8 +1,9 @@
 //! Owns: reading a part's stories into the source model ([`Reader`]) as docx2svg's parser
 //! (`docx2svg.parse.document`) reads them -- runs and their marks, fields threaded through
-//! the part, bookmarks, tables, drawings' anchors, sections -- in a view of tracked changes
-//! ([`View`]; the layout reads the final view: what Accept All leaves, the repository's rule
-//! for the render).
+//! the part, bookmarks, tables, drawings' anchors, the section a paragraph ends (its
+//! `w:sectPr` read by `crate::docx::sections`) -- in a view of tracked changes ([`View`];
+//! the layout reads the final view: what Accept All leaves, the repository's rule for the
+//! render).
 //!
 //! Must not: resolve properties, or read a part's bytes (the document does, `crate::document`).
 
@@ -13,13 +14,11 @@ mod join;
 mod paragraph;
 pub mod paths;
 mod runs;
-mod sections;
 mod tables;
 pub mod vml;
 
 pub use blocks::{body_story, BodyElement};
 pub use fields::Fields;
-pub use sections::{section_props, sections};
 pub use tables::{cell_conditions, leading_header_rows};
 
 use crate::ids::BlockKey;

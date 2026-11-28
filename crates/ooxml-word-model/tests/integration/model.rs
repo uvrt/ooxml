@@ -116,6 +116,38 @@ fn list(items: &[(i64, i64)]) -> Parts {
 }
 
 #[test]
+fn a_paragraph_joined_by_its_deleted_mark_is_in_the_list_of_the_mark_that_stays() {
+    // the final view joins a paragraph whose mark is deleted to the next: the paragraph
+    // made is the next one's mark's, so it is in that mark's list (as Word's Accept All)
+    let deleted = r#"<w:rPr><w:del w:id="9" w:author="A" w:date="2026-01-01T00:00:00Z"/></w:rPr>"#;
+    let numbered = r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>"#;
+    let body = |first: &str, second: &str| {
+        format!(
+            "{}{}{}",
+            p(&format!("{first}{deleted}"), "", "alpha"),
+            p(second, "", "bravo"),
+            item(1, 0)
+        )
+    };
+    let labels = |body: String| {
+        open(&Parts {
+            body,
+            numbering: Some(NUMBERING.into()),
+            ..Parts::default()
+        })
+        .1
+        .body_labels()
+    };
+    // the deleted mark's list goes with it
+    assert_eq!(labels(body(numbered, "")), vec![None, Some("1.".to_owned())]);
+    // the mark that stays brings its own
+    assert_eq!(
+        labels(body("", numbered)),
+        vec![Some("1.".to_owned()), Some("2.".to_owned())]
+    );
+}
+
+#[test]
 fn labels_count_as_word_counts_them() {
     let (_, d) = open(&list(&[
         (1, 0),
