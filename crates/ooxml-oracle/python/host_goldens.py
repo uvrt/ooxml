@@ -143,10 +143,13 @@ ALLOWED_RULES = frozenset({1})
 #: 2026-11-26; the final view follows Word's Accept All -- the user's standing rule that Word is the
 #: oracle, render final = Accept All, applied by main's RD1c ruling -- 2026-11-28; the original
 #: view of a cell with a pending tcPrChange shows its old properties, clean, with the grid rebuilt --
-#: the user's decision, 2026-11-28).
+#: the user's decision, 2026-11-28; a check's reflow lists the pages whose drawing changed, charts
+#: and other parts included -- the user's standing rule that defects are fixed when found, main's
+#: ruling, 2026-11-28).
 ALLOWED_DECISIONS = frozenset({"structured-problems-2026-11-25", "optimistic-batches-2026-11-25",
                                "limits-in-details-2026-11-25", "stamp-on-open-2026-11-26",
-                               "view-follows-word-2026-11-28", "original-clean-grid-2026-11-28"})
+                               "view-follows-word-2026-11-28", "original-clean-grid-2026-11-28",
+                               "drawing-compare-2026-11-28"})
 #: Repository folders whose files an input may name instead of a copy in host/inputs.
 REPOSITORY_INPUTS = (ORACLE / "fixtures", ORACLE / "corpus", ORACLE / "cases" / "inputs",
                      DOCX_AGENT / "tests" / "goldens")

@@ -22,7 +22,9 @@
 # the user's standing rule that Word is the oracle, render final = Accept All, applied by main's
 # RD1c ruling), "original-clean-grid-2026-11-28" (the user's decision: the original view of a cell with
 # a pending tcPrChange shows its old properties, clean, with the grid rebuilt, where Word's Review >
-# Original draws the row's unchanged cells 18 pt wide) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
+# Original draws the row's unchanged cells 18 pt wide), "drawing-compare-2026-11-28" (the user's
+# standing rule that defects are fixed when found; main's ruling: a check's reflow lists the pages
+# whose drawing changed, charts and other parts included) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
 # from the first read: the streams' ids by place are re-targeted by
 # the re-target tool (lane ph3-st1, removed in ST2), and what the map cannot say -- the renames stamping
 # made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry
@@ -954,3 +956,13 @@ case = "test_tracked_reshape_r55::test_deleting_the_first_cell_of_a_pending_merg
 tool = "word_edit_table"
 fields = ["result.data.columns"]
 cause = "Lane fix-final-grid (ooxml-word-model view grid, #459): the grid now spans the widest row (4 cells on a w:tblGrid of 3), so columns is 4 where the recording said 3; both differ from Word's Accept All of this table (measured: 2), which moves the cells left of each deleted one before it rebuilds the grid -- follow-up lane fix-grid-moved-left"
+
+# drawing-compare-2026-11-28 (lane fix-feed-compare): the page compare digests everything a page
+# is drawn with but paths, the parts beside the text its drawing reads included.
+[[difference]]
+decision = "drawing-compare-2026-11-28"
+stream = "docx/tests/test_charts"
+case = "test_charts::test_a_chart_in_a_nested_group_is_addressed_down_the_groups#1"
+tool = "edit_chart"
+fields = ["result.checks.reflow.changed"]
+cause = "Lane fix-feed-compare (ooxml-word-pages digests, drawn_parts): setting a value of the chart on page 1 changes the chart's part, which page 1 draws; the recording's compare left drawn parts out and said no page changed"

@@ -83,14 +83,14 @@ pub struct Known {
     /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
     /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`,
     /// `stamp-on-open-2026-11-26`, `view-follows-word-2026-11-28`,
-    /// `original-clean-grid-2026-11-28`).
+    /// `original-clean-grid-2026-11-28`, `drawing-compare-2026-11-28`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 6] = [
+pub const DECISIONS: [&str; 7] = [
     "structured-problems-2026-11-25",
     "optimistic-batches-2026-11-25",
     "limits-in-details-2026-11-25",
@@ -102,6 +102,10 @@ pub const DECISIONS: [&str; 6] = [
     // pending w:tcPrChange shows its old properties, clean, with the grid rebuilt; Word's Review >
     // Original draws the row's unchanged cells 18 pt wide, which it does not follow
     "original-clean-grid-2026-11-28",
+    // the user's standing rule that defects are fixed when found; main's ruling (2026-11-28,
+    // lane fix-feed-compare): a check's reflow lists the pages whose drawing changed, charts
+    // and other parts included
+    "drawing-compare-2026-11-28",
 ];
 
 /// The known differences in `text` (the TOML subset the file uses: `[[difference]]` tables
