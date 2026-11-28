@@ -1059,8 +1059,8 @@ class HostedSession(Session):
         the list changed; ``changed``: each changed page's ``order``, ``groups`` (``{id: {dy,
         svg}}``), ``moved`` (``{id: dy}``), ``removed``, ``defs`` and ``pictures``); and
         ``pictures``: the bytes of the pictures new since ``since``, ``{hash: (mime, bytes)}``,
-        each sent once.  ``pages=False`` never lays out.  docx_agent.liveview's ``FeedClient``
-        applies answers.  Readable from another thread while agents edit.  Raises the host's
+        each sent once.  ``pages=False`` never lays out.  A format library's live-view client
+        applies the answers.  Readable from another thread while agents edit.  Raises the host's
         refusal (a ``ToolError``: ``not_supported`` for a format with no feed, a version not
         laid out yet), ``TimeoutError`` past the limit on laying out."""
         with _viewing():
