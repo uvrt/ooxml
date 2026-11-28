@@ -61,8 +61,15 @@ impl KeptElement {
 }
 
 impl Weigh for KeptElement {
+    /// What the entry holds of its own: the blocks it holds are its element's reading,
+    /// which the versions holding the element hold too (an entry whose element no version
+    /// holds is swept), so they are counted where the versions' documents are.
     fn weight(&self) -> usize {
-        256 + self.read.blocks.len() * 1024
+        std::mem::size_of::<KeptElement>()
+            + std::mem::size_of::<BodyElement>()
+            + self.open.len() * std::mem::size_of::<OpenState>()
+            + self.read.blocks.len() * std::mem::size_of::<Block>()
+            + self.read.cached.len() * std::mem::size_of::<Text>()
     }
 }
 
