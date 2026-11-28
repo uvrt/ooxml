@@ -118,6 +118,12 @@ fn read(s: &Session, d: &DocId, since: Option<&str>, reader: Reader, label: &str
     };
     let (before, full, relaid) = digested();
     let context = CallContext::default();
+    // the head laid out first, apart: what both readers pay alike (design section 7c)
+    let laying = Instant::now();
+    let head = s.snapshot(d).unwrap();
+    let package = head.word().unwrap().package().clone();
+    let _ = pages.laid(&package, &Never).unwrap();
+    let laid_out = laying.elapsed();
     let started = Instant::now();
     let (token, listed, bytes, groups) = match reader {
         Reader::View => {
@@ -159,7 +165,8 @@ fn read(s: &Session, d: &DocId, since: Option<&str>, reader: Reader, label: &str
         "changes"
     };
     println!(
-        "{label}: {what} {} ({} pages {shown:?}, {groups} groups, {:.1} KB; digested {}, taken {}; laid out whole {}, again {})",
+        "{label}: head laid out {}, then {what} {} ({} pages {shown:?}, {groups} groups, {:.1} KB; digested {}, taken {}; laid out whole {}, again {})",
+        ms(laid_out),
         ms(took),
         listed.len(),
         bytes as f64 / 1024.0,
