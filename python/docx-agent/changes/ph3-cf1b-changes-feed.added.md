@@ -10,4 +10,10 @@
   - An undo sends only the pages it changed.
   - A stale `since` gets a full answer.
   - `view` and `page_svg` stay as they were.
-- Measured through the Python facade: FEED_NUMBERS
+- Measured through the Python facade (machine fonts, load about 13–15), feed against today's view plus
+  `page_svg`:
+  - **One letter:** 1.1 KB against 76 KB (report-fields), and 4.5 KB against 33 KB (long-61, 2,880 pages).
+  - **A paragraph inserted near the start:** 251 KB against 530 KB, and 48 KB against 661 KB, at
+    0.65–0.76 s against 2.2–2.6 s on report-fields.
+  - **The undo of that insert:** 0.6–1.6 s against 2.9 s (report-fields), and 7.3–8.3 s against 10.7–25 s
+    (long-61).
