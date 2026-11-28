@@ -22,6 +22,7 @@ use ooxml_tools_word::{word_fields, CallEditor, Editing, EnginePages, LastCheck,
 use ooxml_word_edit::{Editor, InsertParagraph, RevisionPolicy, SetText};
 use ooxml_word_layout::facts::LayoutFacts;
 use ooxml_word_layout::incremental::same_item;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -42,14 +43,9 @@ fn ms(d: Duration) -> String {
     format!("{:.1} ms", d.as_secs_f64() * 1000.0)
 }
 
-fn laid(engine: &Mutex<PageEngine>, package: &Package) -> (Arc<LaidVersion>, Duration) {
+fn laid(engine: &Mutex<PageEngine>, version: &Arc<Docx>) -> (Arc<LaidVersion>, Duration) {
     let started = Instant::now();
-    let version = engine
-        .lock()
-        .unwrap()
-        .lay_out(&crate::common::read(package), None)
-        .unwrap()
-        .unwrap();
+    let version = engine.lock().unwrap().lay_out(version, None).unwrap().unwrap();
     (version, started.elapsed())
 }
 
@@ -79,13 +75,14 @@ fn same_layout(name: &str, ours: &LaidVersion, whole: &LaidVersion) {
 fn run(name: &str, bytes: &Arc<[u8]>, edit: &dyn Fn(&Editor, &Arc<Mutex<PageEngine>>) -> Duration) {
     let kept = Arc::new(Mutex::new(engine()));
     let editor = editor(bytes);
-    let opened = editor.store().snapshot().doc().package().clone();
+    let opened = editor.store().snapshot().doc().docx().unwrap();
     let (_, first) = laid(&kept, &opened);
     let edited = edit(&editor, &kept);
-    let package = editor.store().snapshot().doc().package().clone();
-    let (ours, again) = laid(&kept, &package);
+    let head = editor.store().snapshot().doc().clone();
+    let (package, reading) = (head.package().clone(), head.docx().unwrap());
+    let (ours, again) = laid(&kept, &reading);
     let fresh = Mutex::new(engine());
-    let (whole, full) = laid(&fresh, &package);
+    let (whole, full) = laid(&fresh, &reading);
     same_layout(name, &ours, &whole);
     let started = Instant::now();
     let pages = EnginePages::new(Arc::clone(&kept), kept.lock().unwrap().seed());

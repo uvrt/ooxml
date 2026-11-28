@@ -1,7 +1,8 @@
 //! Owns: reading a part's stories into the source model ([`Reader`]) as docx2svg's parser
 //! (`docx2svg.parse.document`) reads them -- runs and their marks, fields threaded through
-//! the part, bookmarks, tables, drawings' anchors, sections -- in the final view of tracked
-//! changes: what Accept All leaves (the repository's rule for the render).
+//! the part, bookmarks, tables, drawings' anchors, sections -- in a view of tracked changes
+//! ([`View`]; the layout reads the final view: what Accept All leaves, the repository's rule
+//! for the render).
 //!
 //! Must not: resolve properties, or read a part's bytes (the document does, `crate::document`).
 
@@ -26,6 +27,7 @@ use crate::model::{ParaProps, RunProps};
 use crate::props::{paragraph_properties, run_properties};
 use crate::theme::ThemeColours;
 use crate::value::{text, Text};
+use crate::view::View;
 use crate::w;
 use crate::xmlread::local;
 use ooxml_xml::Element;
@@ -143,16 +145,23 @@ fn below(place: &[u32], rel: &[usize]) -> Vec<u32> {
     out
 }
 
-/// Reads stories of one package: theme colours read as Word draws them.
+/// Reads stories of one package in a view of their tracked changes: theme colours read as
+/// Word draws them.
 #[derive(Debug, Clone, Copy)]
 pub struct Reader<'c> {
     colours: &'c ThemeColours,
+    view: View,
 }
 
 impl<'c> Reader<'c> {
-    /// A reader with the package's theme colours.
-    pub fn new(colours: &'c ThemeColours) -> Reader<'c> {
-        Reader { colours }
+    /// A reader with the package's theme colours, reading in `view`.
+    pub fn new(colours: &'c ThemeColours, view: View) -> Reader<'c> {
+        Reader { colours, view }
+    }
+
+    /// The view it reads in.
+    pub(crate) fn view(&self) -> View {
+        self.view
     }
 
     /// A `w:rPr` as written (`None` where there is none).

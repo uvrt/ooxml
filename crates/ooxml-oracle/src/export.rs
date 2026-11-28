@@ -40,9 +40,10 @@ pub const KEY: DigestKey = DigestKey::new(0x0123_4567_89ab_cdef, 0x0fed_cba9_876
 pub fn open(bytes: Vec<u8>) -> Result<(Model, WordDocument), String> {
     let package = Package::open(Arc::from(bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let mut model = Model::new(Arc::new(Unlimited), KEY);
-    let document = model
-        .open(&ooxml_word_model::WordPackage::open(package).0)
-        .map_err(|e| e.to_string())?;
+    let reading =
+        ooxml_word_model::docx::Docx::open(&ooxml_word_model::WordPackage::open(package).0, Arc::new(Unlimited))
+            .map_err(|e| e.to_string())?;
+    let document = model.project(&reading, None).map_err(|e| e.to_string())?;
     Ok((model, document))
 }
 

@@ -7,7 +7,6 @@ use super::fields::Fields;
 use super::{At, KeyOf, Reader, Steps};
 use crate::model::{Block, Graphic, InlineObject, Paragraph, Run, Table};
 use crate::value::{text, Text};
-use crate::view::View;
 use crate::w;
 use crate::xmlread::child;
 use ooxml_xml::Element;
@@ -44,7 +43,7 @@ impl Reader<'_> {
             unkeyed,
             para_id: w::P::new(element).para_id().map(text),
             joins: Arc::from(Vec::new()),
-            mark_deleted: View::Final.removes_mark(element),
+            mark_deleted: self.view().removes_mark(element),
             section,
             bookmarks: Arc::from(bookmarks),
         }

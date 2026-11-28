@@ -48,7 +48,7 @@ pub use texts::PartTexts;
 
 pub use walk::{at_path, live_paths, Found};
 
-use crate::ids::{story_name, PartIds, W};
+use crate::ids::{story_name, PartIds, StoryIx, StoryTable, W};
 use crate::parts::{main_part, story_parts};
 use crate::{WordError, WordPackage};
 use facts::PartFacts;
@@ -69,6 +69,9 @@ pub struct StoryPart {
     pub tree: Tree,
     /// Its paragraphs', tables' and rows' ids.
     pub ids: PartIds,
+    /// Its story's index in the document's stories (`None` past the table's limit): what its
+    /// blocks are keyed by in every version.
+    pub index: Option<StoryIx>,
     facts: OnceLock<Arc<PartFacts>>,
     texts: OnceLock<Arc<PartTexts>>,
     /// The document's latest readings of the part: the paragraphs and blocks this version
@@ -90,6 +93,7 @@ impl StoryPart {
             None => PartIds::new(&story, tree.root()),
         };
         StoryPart {
+            index: kept.story(&story),
             part,
             story,
             tree,
@@ -199,6 +203,36 @@ impl Docx {
     /// As [`Docx::open`].
     pub fn open_after(package: &WordPackage, before: &Docx) -> Result<Docx, WordError> {
         Docx::read(package, Some(before), Arc::clone(&before.kept))
+    }
+
+    /// What the document's versions keep across them (its one chain of readings).
+    pub(crate) fn kept(&self) -> &Kept {
+        &self.kept
+    }
+
+    /// Whether `other` is a version of the same document's chain of readings: its blocks are
+    /// keyed by the same stories.
+    #[must_use]
+    pub fn same_chain(&self, other: &Docx) -> bool {
+        Arc::ptr_eq(&self.kept, &other.kept)
+    }
+
+    /// Whether `other`'s blocks are keyed as this version's: a version of the same chain of
+    /// readings, or of one whose stories have the same indexes (two chains opened from the
+    /// same document's packages intern its parts in the same order).
+    #[must_use]
+    pub fn keyed_alike(&self, other: &Docx) -> bool {
+        if self.same_chain(other) {
+            return true;
+        }
+        let ours = self.kept.stories().clone();
+        ours.agrees(&other.kept.stories())
+    }
+
+    /// The document's stories (one table for all its versions): what its blocks' keys and its
+    /// versions' change sets name stories by.
+    pub fn stories(&self) -> std::sync::MutexGuard<'_, StoryTable> {
+        self.kept.stories()
     }
 
     /// What its versions keep of its tables' readings: entries and bytes.

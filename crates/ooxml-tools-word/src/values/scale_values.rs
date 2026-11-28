@@ -149,7 +149,7 @@ const KINDS: &str = "a target is a paragraph, a range, a cell, a table's column 
 #[allow(clippy::too_many_arguments)]
 pub fn scale_values(
     doc: &WordDoc,
-    docx: &Docx,
+    docx: &Arc<Docx>,
     name: &str,
     scale: &ReadScale,
     range: Option<&[String]>,
@@ -187,7 +187,7 @@ pub fn scale_values(
     }
     let laid = match pages {
         None => None,
-        Some(_) => match lay_out(layout, doc.package(), cancel) {
+        Some(_) => match lay_out(layout, docx, cancel) {
             Some(Ok(laid)) => Some(laid),
             Some(Err(why)) if why.unlaid().is_some() => {
                 return Err(pages_refused("scale", why, without_pages(name, range, &[], &["scale"])))

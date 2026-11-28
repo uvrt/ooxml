@@ -89,6 +89,13 @@ impl StoryTable {
         self.names.len()
     }
 
+    /// Whether every index both tables hold names the same story in each: a key of either
+    /// names the same block in the other.
+    #[must_use]
+    pub fn agrees(&self, other: &StoryTable) -> bool {
+        self.names.iter().zip(&other.names).all(|(a, b)| a == b)
+    }
+
     /// Never: the body is always interned.
     #[must_use]
     pub fn is_empty(&self) -> bool {

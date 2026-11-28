@@ -121,8 +121,8 @@ fn read(s: &Session, d: &DocId, since: Option<&str>, reader: Reader, label: &str
     // the head laid out first, apart: what both readers pay alike (design section 7c)
     let laying = Instant::now();
     let head = s.snapshot(d).unwrap();
-    let package = head.word().unwrap().package().clone();
-    let _ = pages.laid(&package, &Never).unwrap();
+    let reading = head.word().unwrap().docx().unwrap();
+    let _ = pages.laid(&reading, &Never).unwrap();
     let laid_out = laying.elapsed();
     let started = Instant::now();
     let (token, listed, bytes, groups) = match reader {

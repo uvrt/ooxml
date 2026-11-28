@@ -39,6 +39,7 @@ use ooxml_base::Cancel;
 use ooxml_session::{CallCancel, CallContext, DocId, DocKind, Session, SessionError};
 use ooxml_tools::{Refusal, ToolError, WayOut};
 use ooxml_tools_word::{laid_to_draw, EnginePages, LayoutLimit, WordLayout};
+use ooxml_word_edit::WordDoc;
 use ooxml_word_pages::{LaidVersion, PageEngine};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -222,7 +223,8 @@ impl LiveView for Session {
         let laid = match found.as_ref().and_then(|kept| kept.version()) {
             Some(laid) => Arc::clone(laid),
             None => {
-                let laid = laid_to_draw(WHO, layout, limit, (head.doc().package(), &doc.to_string()), &cancel)
+                let reading = read(head.doc()).map_err(ViewError::NotDrawn)?;
+                let laid = laid_to_draw(WHO, layout, limit, (&reading, &doc.to_string()), &cancel)
                     .map_err(ViewError::NotDrawn)?;
                 // a later view compares with it: digested before the engine stops painting it
                 lock(layout).watch(&laid);
@@ -315,8 +317,8 @@ impl LiveView for Session {
                         let cancel = CallCancel::new(context, &*self.context().cancel, &*self.context().clock);
                         let laying = cancel.layout();
                         let limit = laying.as_ref().map(crate::word::limit);
-                        let package = (kept.at.doc().package(), &*doc.to_string());
-                        let spare = spared(layout, package, (limit, &cancel)).map_err(ViewError::NotDrawn)?;
+                        let version = (kept.at.doc(), &*doc.to_string());
+                        let spare = spared(layout, version, (limit, &cancel)).map_err(ViewError::NotDrawn)?;
                         // the next page of this version is painted from it, not laid out again
                         word.views.keep_spare(&kept, &spare);
                         spare
@@ -398,17 +400,25 @@ fn points(value: ooxml_base::Q) -> f64 {
     n / d
 }
 
-/// `package` (a version of the document, and the id a refusal names it by) laid out on a
+/// `version` (a version of the document, and the id a refusal names it by) laid out on a
 /// spare of `layout`'s engine (`stop`: the call's limit on laying out and its
 /// cancellation).
 fn spared(
     layout: &dyn WordLayout,
-    package: (&ooxml_word_model::WordPackage, &str),
+    (version, doc): (&WordDoc, &str),
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Result<Spare, ToolError> {
     let engine = Arc::new(EnginePages::of(layout.seed().spare()));
-    let version = laid_to_draw(WHO, &*engine, limit, package, cancel)?;
+    let reading = read(version)?;
+    let version = laid_to_draw(WHO, &*engine, limit, (&reading, doc), cancel)?;
     Ok(Spare { engine, version })
+}
+
+/// `version`'s reading (the document's one chain), as a tool says it could not be read.
+pub(crate) fn read(version: &WordDoc) -> Result<Arc<ooxml_word_model::docx::Docx>, ToolError> {
+    version
+        .docx()
+        .map_err(|e| ToolError::internal(format!("the document could not be read: {e}"), "live_view:read"))
 }
 
 /// The 1-based pages of `now` (its layout and its count of pages) whose drawing differs
@@ -434,7 +444,7 @@ fn changed(
             let summary = lock(layout).summary(now)?;
             let spare = match old.spare() {
                 Some(spare) => spare,
-                None => spared(layout, (old.at.doc().package(), ""), stop).ok()?,
+                None => spared(layout, (old.at.doc(), ""), stop).ok()?,
             };
             let before = lock(&*spare.engine).summary(&spare.version)?;
             summary.compare(&before, &none).changed

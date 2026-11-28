@@ -51,6 +51,7 @@ use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
 use ooxml_word_layout::{DocumentLayout, WordLayout};
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{Anchor, VersionDelta, VersionRef};
 use ooxml_word_model::value::Text;
 use ooxml_word_model::{Model, WordPackage};
@@ -182,6 +183,8 @@ struct Source {
     package: Package,
     /// It as read, stamped at open ([`WordPackage::open`]).
     read: WordPackage,
+    /// Its reading: the engine's own chain of readings, for a caller that gives bytes.
+    reading: Arc<Docx>,
 }
 
 /// Where an engine's memory is counted: what the version in use needs (its memos, never
@@ -245,6 +248,10 @@ pub struct PageEngine {
     /// That version, where its store named it (the delta it was given with led to it): a
     /// delta given next is taken for the change only where it was worked out against it.
     given_version: Option<VersionRef>,
+    /// That version's reading: a version whose blocks are keyed by other stories (of a chain
+    /// of readings that interned the stories otherwise, [`Docx::keyed_alike`]) is laid out by
+    /// a new generation.
+    given_reading: Option<Arc<Docx>>,
     /// What it is made from, and the last version it laid out, published there.
     seed: EngineSeed,
 }
@@ -309,6 +316,7 @@ impl PageEngine {
             digest_limit: crate::digest_cache::DIGEST_CACHE_BYTES,
             given: None,
             given_version: None,
+            given_reading: None,
             seed,
         }
     }
@@ -331,6 +339,12 @@ impl PageEngine {
     /// What it did so far.
     pub fn stats(&self) -> EngineStats {
         self.stats
+    }
+
+    /// The reading of the last version given: what a version a caller makes from it (a
+    /// trial of a change) is read after, in the same chain of readings.
+    pub fn given_reading(&self) -> Option<&Arc<Docx>> {
+        self.given_reading.as_ref()
     }
 
     /// The last version laid out, if any.
@@ -358,12 +372,14 @@ impl PageEngine {
             None => Package::open(Arc::clone(archive.bytes()), &self.limits)?,
         };
         let (read, _) = WordPackage::open_after(package.clone(), before.as_ref().map(|b| &b.read));
+        let reading = self.reading_of(&read, before.as_ref())?;
         self.source = Some(Source {
             archive,
             package,
-            read: read.clone(),
+            read,
+            reading: Arc::clone(&reading),
         });
-        self.lay_out(&read, None)
+        self.lay_out(&reading, None)
     }
 
     /// Lay out the version of the last one given with `parts` put in place (bytes) or
@@ -389,15 +405,29 @@ impl PageEngine {
             };
         }
         let (read, _) = WordPackage::open_after(package.clone(), Some(&source.read));
+        let reading = self.reading_of(&read, Some(&source))?;
         self.source = Some(Source {
             archive: source.archive,
             package,
-            read: read.clone(),
+            read,
+            reading: Arc::clone(&reading),
         });
-        self.lay_out(&read, None)
+        self.lay_out(&reading, None)
     }
 
-    /// `package` with `name` as `bytes`: a tree, parsed once, where the part is XML.
+    /// The reading of `read`, a version given as bytes: from the version given before it
+    /// that way (the engine's own chain of readings, on its `held` budget), else a first one.
+    fn reading_of(&self, read: &WordPackage, before: Option<&Source>) -> Result<Arc<Docx>, PagesError> {
+        Ok(Arc::new(match before {
+            Some(before) => Docx::open_after(read, &before.reading)?,
+            None => Docx::open(read, Arc::clone(&self.budgets.held))?,
+        }))
+    }
+
+    /// `package` with `name` as `bytes`: a tree, parsed once, where the part is XML, sharing
+    /// every subtree it has alike with the part's tree in `package` (what the version before
+    /// read of an unchanged block is taken again: the projection's memo holds it by the
+    /// element).
     fn put(&self, package: &Package, name: &str, bytes: &Arc<[u8]>) -> Result<Package, PagesError> {
         let xml = name.ends_with(".xml") || name.ends_with(".rels");
         Ok(if xml {
@@ -405,7 +435,8 @@ impl PageEngine {
                 part: name.to_owned(),
                 error,
             })?;
-            package.with_new_tree(name, tree)
+            let before = package.tree(name).ok().flatten();
+            package.with_new_tree(name, ooxml_xml::shared_with(before, tree))
         } else {
             package.with_bytes(name, Arc::clone(bytes))
         })
@@ -461,10 +492,10 @@ impl PageEngine {
     /// Its Word parts do not open.
     pub fn lay_out(
         &mut self,
-        package: &WordPackage,
+        version: &Arc<Docx>,
         delta: Option<&VersionDelta>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        self.lay_out_within(package, delta, None)
+        self.lay_out_within(version, delta, None)
     }
 
     /// [`PageEngine::lay_out`], stopped where `cancel` says so (asked before each top-level
@@ -476,10 +507,10 @@ impl PageEngine {
     /// engine then lays the next version out from the one it laid out before.
     pub fn lay_out_until(
         &mut self,
-        package: &WordPackage,
+        version: &Arc<Docx>,
         cancel: &dyn Cancel,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        self.lay_out_within(package, None, Some(cancel))
+        self.lay_out_within(version, None, Some(cancel))
     }
 
     /// Keep `package` as the version given last, and what it changed from the one given
@@ -505,25 +536,46 @@ impl PageEngine {
         self.changed.sort();
     }
 
+    /// Keep `version` as the reading given last. A version whose blocks are keyed by other
+    /// stories than the last one's (another chain of readings that interned the document's
+    /// stories otherwise) is laid out by a new generation, unless it is the version laid out
+    /// last asked again.
+    fn note_reading(&mut self, version: &Arc<Docx>) {
+        let other_chain = self.given_reading.as_ref().is_some_and(|r| !r.keyed_alike(version));
+        let asked_again = self
+            .generation
+            .as_ref()
+            .is_some_and(|g| g.last_for(&version.package).is_some());
+        if other_chain && !asked_again {
+            self.settle_watched();
+            self.generation = None;
+        }
+        if !other_chain || !asked_again {
+            self.given_reading = Some(Arc::clone(version));
+        }
+    }
+
     /// [`PageEngine::lay_out_until`] where `cancel` is given; the last version laid out
     /// published to its seed, whatever the outcome.
     fn lay_out_within(
         &mut self,
-        package: &WordPackage,
+        version: &Arc<Docx>,
         delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
-        let laid = self.lay_out_given(package, delta, cancel);
+        let laid = self.lay_out_given(version, delta, cancel);
         self.publish();
         laid
     }
 
     fn lay_out_given(
         &mut self,
-        package: &WordPackage,
+        version: &Arc<Docx>,
         delta: Option<&VersionDelta>,
         cancel: Option<&dyn Cancel>,
     ) -> Result<Result<Arc<LaidVersion>, Fallback>, PagesError> {
+        let package = &version.package;
+        self.note_reading(version);
         self.note_given(package, delta);
         let fonts = self.setup.document(package);
         let (generation, mut cause) = self.generation_for(fonts);
@@ -533,8 +585,8 @@ impl PageEngine {
             return Ok(Ok(last));
         }
         let started = Instant::now();
-        let document = generation.model.open(package)?;
-        let opened = generation.opened.replace(package.package().clone());
+        let document = generation.model.project(version, delta)?;
+        let opened = generation.opened.replace(package.clone());
         self.stats.open_time += started.elapsed();
         if generation.model.stats().context_changed && generation.new_context(&self.locale, &self.budgets.held) {
             cause = Some(context_cause(&self.changed));
@@ -575,7 +627,7 @@ impl PageEngine {
         let said = say(generation, (&laid, previous.as_deref()), drawings.as_ref(), &with);
         self.stats.pages_said = generation.said.stats();
         self.serial += 1;
-        let version = Arc::new(LaidVersion {
+        let laid_version = Arc::new(LaidVersion {
             drawings,
             said,
             relaid_cause: cause,
@@ -599,14 +651,13 @@ impl PageEngine {
         // memos held goes now (unless the new version's facts are to be made from it),
         // not with every version kept.
         drop(previous);
-        generation.last = Some(Arc::clone(&version));
-        generation.laid_from = Some(package.package().clone());
+        generation.last = Some(Arc::clone(&laid_version));
+        generation.laid_from = Some(package.clone());
         // Published before the sweep: the version before, no longer held there, is swept.
-        self.seed
-            .publish(Some((package.package().clone(), Arc::clone(&version))));
+        self.seed.publish(Some((package.clone(), Arc::clone(&laid_version))));
         let swept = generation.sweep();
         self.stats.swept += swept as u64;
-        Ok(Ok(version))
+        Ok(Ok(laid_version))
     }
 
     /// Why a version was laid out whole, from the first changed part of `reason`'s kind.

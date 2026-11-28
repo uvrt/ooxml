@@ -32,9 +32,10 @@ fn run(args: &[String]) -> Result<Value, String> {
     let bytes: Arc<[u8]> = Arc::from(std::fs::read(path).map_err(|e| format!("{path}: {e}"))?);
     let package = Package::open(Arc::clone(&bytes), &Limits::default()).map_err(|e| e.to_string())?;
     let mut model = Model::new(Arc::new(Unlimited), KEY);
-    let document = model
-        .open(&ooxml_word_model::WordPackage::open(package).0)
-        .map_err(|e| e.to_string())?;
+    let reading =
+        ooxml_word_model::docx::Docx::open(&ooxml_word_model::WordPackage::open(package).0, Arc::new(Unlimited))
+            .map_err(|e| e.to_string())?;
+    let document = model.project(&reading, None).map_err(|e| e.to_string())?;
     let glyphs = Arc::new(WordGlyphs::new(fonts_of(&fonts, Some(&bytes))?));
     let budget: Arc<dyn CacheBudget> = Arc::new(Unlimited);
     let mut engine = WordLayout::new(

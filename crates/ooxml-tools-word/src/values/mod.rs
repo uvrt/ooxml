@@ -23,10 +23,10 @@ use crate::pages::{NotLaid, WordLayout};
 use ooxml_base::Cancel;
 use ooxml_tools::{Failure, ToolError, TryCall, WayOut};
 use ooxml_word_model::docx::tables::cells_at;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::W;
 use ooxml_word_model::ids::{BlockKey, StoryIx};
-use ooxml_word_model::WordPackage;
 use ooxml_word_pages::LaidVersion;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
@@ -41,9 +41,9 @@ pub(crate) struct Pages {
 }
 
 impl Pages {
-    /// `package` laid out by `layout`, stopped where `cancel` says so.
-    pub(crate) fn of(layout: &dyn WordLayout, package: &WordPackage, cancel: &dyn Cancel) -> Result<Pages, NotLaid> {
-        let version = layout.laid(package, cancel)?;
+    /// `reading` (a version's) laid out by `layout`, stopped where `cancel` says so.
+    pub(crate) fn of(layout: &dyn WordLayout, reading: &Arc<Docx>, cancel: &dyn Cancel) -> Result<Pages, NotLaid> {
+        let version = layout.laid(reading, cancel)?;
         let mut body: HashMap<BlockKey, BTreeSet<usize>> = HashMap::new();
         for (index, page) in version.facts().pages.iter().enumerate() {
             for key in page.lines.iter().filter_map(|l| l.anchor).map(|a| a.block) {
@@ -83,10 +83,10 @@ pub(crate) fn not_laid(why: NotLaid) -> (&'static str, String) {
 /// where the host gives no layout.
 pub(crate) fn lay_out(
     layout: Option<&dyn WordLayout>,
-    package: &WordPackage,
+    reading: &Arc<Docx>,
     cancel: &dyn Cancel,
 ) -> Option<Result<Pages, NotLaid>> {
-    layout.map(|layout| Pages::of(layout, package, cancel))
+    layout.map(|layout| Pages::of(layout, reading, cancel))
 }
 
 /// The pages asked for (`pages`) refused because the version was not laid out (`why`): as

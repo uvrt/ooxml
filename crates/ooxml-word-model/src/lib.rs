@@ -6,13 +6,13 @@
 //! - generated `w:` views ([`w`], from `schema/w.views` by `cargo xtask codegen`);
 //! - declared properties per level ([`props`], [`value`]), the styles part ([`styles`]),
 //!   numbering ([`numbering`]), settings ([`settings`]) and the theme ([`theme`]);
-//! - the source model ([`model`]) read in the final view of tracked changes, with fields
+//! - the source model ([`model`]) read in a view of tracked changes, with fields
 //!   threaded through each part ([`read`]);
 //! - the styles cascade, tables' resolved formats and faces per character slot
 //!   ([`resolve`]);
 //! - list labels counted as Word counts them, kept incrementally ([`labels`]);
-//! - opening versions of one document, reusing what is unchanged ([`Model`],
-//!   [`WordDocument`]);
+//! - a version's layout model projected from its reading, reusing what is unchanged
+//!   ([`projection`], [`WordDocument`]), with its labels and resolved formats ([`Model`]);
 //! - stable addressing: block ids, the id ledger and its `docx-ids.1.` state ([`ids`]);
 //! - a version as docx-agent's reading tools read it ([`docx`], [`parts`]);
 //! - a field's text from a number (its format and switches) and a `SEQ` counted, which the
@@ -40,10 +40,11 @@ pub mod markdown;
 pub mod mc;
 pub mod model;
 pub mod numbering;
-mod open;
 pub mod parts;
+pub mod projection;
 pub mod props;
 pub mod read;
+mod resolutions;
 pub mod resolve;
 pub mod settings;
 pub mod stamp;
@@ -58,5 +59,6 @@ pub mod xmlread;
 
 pub use document::{Context, Notes, ResolvedParagraph, WordDocument};
 pub use error::WordError;
-pub use open::{context_parts, read_context, Model, OpenStats};
+pub use projection::{read_context, Projection, ProjectionStats};
+pub use resolutions::{Model, OpenStats};
 pub use stamp::WordPackage;

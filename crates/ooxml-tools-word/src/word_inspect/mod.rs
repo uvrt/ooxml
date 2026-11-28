@@ -127,7 +127,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     let mut data = Value::Object(data);
     if let (Some(placer), Some(asked)) = (placer, writer.placing.take()) {
         cancel.check().map_err(cancelled)?;
-        let answers = placed(args, placer, &asked, version, &docx, cancel)?;
+        let answers = placed(args, placer, &asked, &docx, cancel)?;
         crate::placements::fill(&mut data, &answers);
     }
     let mut done = Done::new(format!("Inspected {}", args.target));
@@ -140,8 +140,7 @@ fn placed(
     args: &WordInspect,
     placer: Placing<'_>,
     asked: &[Vec<String>],
-    version: &Version<'_>,
-    docx: &ooxml_word_model::docx::Docx,
+    docx: &std::sync::Arc<ooxml_word_model::docx::Docx>,
     cancel: &dyn Cancel,
 ) -> Result<Vec<Map<String, Value>>, ToolError> {
     match placer {
@@ -150,8 +149,7 @@ fn placed(
             .ok_or_else(|| ToolError::internal("the layout did not place the blocks", "word_inspect:layout")),
         Placing::Own(layout, limit) => {
             let stop = limit.map_or(cancel, |l| l.cancel);
-            let laid = placing::Laid::new(layout, version.package, docx, stop)
-                .map_err(|why| not_laid(args, why, limit, cancel))?;
+            let laid = placing::Laid::new(layout, docx, stop).map_err(|why| not_laid(args, why, limit, cancel))?;
             Ok(laid.place(asked))
         }
     }

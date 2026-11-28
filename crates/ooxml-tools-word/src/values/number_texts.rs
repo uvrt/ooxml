@@ -26,6 +26,7 @@ use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// One text a check of numbers reads (`ooxml_edit.tools.NumberText`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +67,7 @@ struct Found {
 /// `internal` when a part is not XML.
 pub fn number_texts(
     doc: &WordDoc,
-    docx: &Docx,
+    docx: &Arc<Docx>,
     name: &str,
     range: Option<&[String]>,
     pages: Option<&[usize]>,
@@ -77,7 +78,7 @@ pub fn number_texts(
     let scope = crate::check::scope_of(range, &|a| ids.follow_address(a), docx, name)?;
     let found = read(doc, docx, scope.as_ref().map(|s| &s.paragraphs))?;
     let mut out = NumberTexts::default();
-    let laid = match lay_out(layout, doc.package(), cancel) {
+    let laid = match lay_out(layout, docx, cancel) {
         Some(Ok(laid)) => Some(laid),
         Some(Err(why)) => {
             if pages.is_some() {

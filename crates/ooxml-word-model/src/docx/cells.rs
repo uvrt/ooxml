@@ -43,7 +43,7 @@ impl TableFacts {
     #[must_use]
     pub fn read(formatting: &Formatting, table: &Element) -> TableFacts {
         let context = formatting.context();
-        let reader = Reader::new(&context.colours);
+        let reader = Reader::new(&context.colours, crate::view::View::Final);
         let mut fields = Fields::new(true, true);
         let blocks = reader.table_blocks(table, &At::Path(text(ROOT)), &mut fields);
         let mut out = TableFacts::default();

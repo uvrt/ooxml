@@ -14,12 +14,18 @@ use ooxml_tools_word::{
     reflow_after_edit, CallEditor, EditedFrom, EnginePages, LastCheck, LayoutLimit, Made, WordLayout, STALE,
 };
 use ooxml_word_edit::{Editor, RevisionPolicy, SetText};
+use ooxml_word_model::docx::Docx;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 fn editor(package: Package) -> Editor {
     Editor::open(package, StoreConfig::default(), Arc::new(Still), Arc::new(Unlimited)).unwrap()
+}
+
+/// The reading of `editor`'s latest version (the document's one chain of readings).
+fn head(editor: &Editor) -> Arc<Docx> {
+    editor.store().snapshot().doc().docx().unwrap()
 }
 
 /// One call's edit of `editor`: the fixture's first body paragraph's text set to `text`.
@@ -37,16 +43,17 @@ fn edit(editor: &Editor, text: &str) -> Made {
 /// The reflow `made` reports, laid out by `layout`.
 fn reflow(layout: &EnginePages, last: &LastCheck, made: &Made, limit: Option<LayoutLimit<'_>>) -> Option<Value> {
     let before = &made.before;
+    let reading = before.doc().docx().unwrap();
     let from = EditedFrom {
         version: before.seq().0,
-        package: before.doc().package(),
+        reading: &reading,
     };
     let after = made.last.doc();
     reflow_after_edit(
         layout,
         last,
         from,
-        after.package(),
+        &after.docx().unwrap(),
         after.ids().aliases(),
         (limit, &Never),
     )
@@ -57,7 +64,7 @@ fn an_edit_after_the_version_was_laid_out_reports_its_reflow() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    let laid = layout.laid(&read(&package), &Never).unwrap();
+    let laid = layout.laid(&head(&editor), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
     let pages = laid.page_count();
@@ -82,7 +89,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&read(&package), &Never).unwrap();
+    layout.laid(&head(&editor), &Never).unwrap();
     let theirs = edit(&editor, "Another writer's text");
     let made = edit(&editor, &"longer text ".repeat(400));
     let before = &made.before;
@@ -90,7 +97,7 @@ fn another_writer_s_commit_before_the_edit_is_in_the_version_before() {
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), None);
     // laid out after their commit, the reflow is measured from their version
     let layout = EnginePages::of(engine());
-    layout.laid(before.doc().package(), &Never).unwrap();
+    layout.laid(&before.doc().docx().unwrap(), &Never).unwrap();
     let found = reflow(&layout, &LastCheck::default(), &made, None).expect("measured");
     assert_eq!(found["changed"][0], json!(1), "{found}");
 }
@@ -102,7 +109,7 @@ fn an_engine_busy_laying_another_version_out_is_not_waited_for() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&read(&package), &Never).unwrap();
+    layout.laid(&head(&editor), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let busy = layout.engine().lock().unwrap();
     let spared = reflow(&layout, &LastCheck::default(), &made, None).expect("measured on a spare");
@@ -127,14 +134,14 @@ fn a_busy_engine_says_stale_past_twenty_pages_and_a_stop_on_the_spare() {
     let package = long(24);
     let long_one = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&read(&package), &Never).unwrap();
+    layout.laid(&head(&long_one), &Never).unwrap();
     let made = edit(&long_one, "Shorter");
     let busy = layout.engine().lock().unwrap();
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
     drop(busy);
     let (package, _) = versions();
     let short_one = editor(package.clone());
-    layout.laid(&read(&package), &Never).unwrap();
+    layout.laid(&head(&short_one), &Never).unwrap();
     let made = edit(&short_one, &"longer text ".repeat(400));
     let limit = LayoutLimit {
         cancel: &Past,
@@ -162,23 +169,25 @@ fn a_style_edit_reports_its_reflow_on_the_engine_and_on_a_spare_alike() {
     // engine's own measure is the spare's, which lays both out fresh.
     let (package, _) = versions();
     let after = restyled(&package);
-    let (before, after) = (read(&package), read(&after));
+    // the two versions in one chain of readings, as the document's editor reads them
+    let before = Arc::new(Docx::open(&read(&package), Arc::new(Unlimited)).unwrap());
+    let after = Arc::new(Docx::open_after(&read(&after), &before).unwrap());
     let measure = |layout: &EnginePages| {
         let from = EditedFrom {
             version: 0,
-            package: &before,
+            reading: &before,
         };
         let aliases = Default::default();
         reflow_after_edit(layout, &LastCheck::default(), from, &after, &aliases, (None, &Never))
     };
     let layout = EnginePages::of(engine());
-    let laid = layout.laid(&read(&package), &Never).unwrap();
+    let laid = layout.laid(&before, &Never).unwrap();
     let own = measure(&layout).expect("measured");
     assert_eq!(own["pages"][0], json!(laid.page_count()), "{own}");
     assert!(own["pages"][1].as_u64().unwrap() > laid.page_count() as u64, "{own}");
     assert_eq!(own["changed"][0], json!(1), "{own}");
     let spare = EnginePages::of(engine());
-    spare.laid(&read(&package), &Never).unwrap();
+    spare.laid(&before, &Never).unwrap();
     let _busy = spare.engine().lock().unwrap();
     assert_eq!(measure(&spare), Some(own));
 }
@@ -199,7 +208,7 @@ fn a_version_before_of_more_than_twenty_pages_is_stale() {
     let package = long(24);
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    assert!(layout.laid(&read(&package), &Never).unwrap().page_count() > 20);
+    assert!(layout.laid(&head(&editor), &Never).unwrap().page_count() > 20);
     let made = edit(&editor, "Shorter");
     assert_eq!(reflow(&layout, &LastCheck::default(), &made, None), Some(json!(STALE)));
 }
@@ -209,7 +218,7 @@ fn laying_the_version_made_out_past_the_limit_is_said() {
     let (package, _) = versions();
     let editor = editor(package.clone());
     let layout = EnginePages::of(engine());
-    layout.laid(&read(&package), &Never).unwrap();
+    layout.laid(&head(&editor), &Never).unwrap();
     let made = edit(&editor, &"longer text ".repeat(400));
     let limit = LayoutLimit {
         cancel: &Past,
@@ -244,7 +253,7 @@ fn edits_with_their_reflow_timed_alone_and_with_twenty_four_writers() {
     for measured in [false, true] {
         let editor = editor(package.clone());
         let layout = EnginePages::of(engine());
-        layout.laid(&read(&package), &Never).unwrap();
+        layout.laid(&head(&editor), &Never).unwrap();
         let calls: Vec<(Duration, bool)> = (0..20)
             .map(|i| {
                 timed_call(
@@ -298,7 +307,7 @@ fn a_reflow_on_a_spare_engine_timed_against_the_engine_s_own() {
     let writer = editor(package);
     edit(&writer, &"longer text ".repeat(1900));
     let made = edit(&writer, &"longer text ".repeat(1890));
-    let before = made.before.doc().package().clone();
+    let before = made.before.doc().docx().unwrap();
     for (name, busy) in [("own engine", false), ("spare engine", true)] {
         let mut times = Vec::new();
         for _ in 0..5 {

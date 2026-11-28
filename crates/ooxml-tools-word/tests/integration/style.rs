@@ -288,7 +288,7 @@ struct OnePage {
 impl FieldLayout for OnePage {
     fn lay_out(
         &self,
-        _package: &ooxml_word_model::WordPackage,
+        _package: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         _cancel: &dyn Cancel,
     ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Err(LayOutError::Unsupported("not needed".to_owned()))
@@ -296,13 +296,13 @@ impl FieldLayout for OnePage {
 
     fn reflow(
         &self,
-        before: &ooxml_word_model::WordPackage,
-        after: &ooxml_word_model::WordPackage,
+        before: &std::sync::Arc<ooxml_word_model::docx::Docx>,
+        after: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         _cancel: &dyn Cancel,
     ) -> Result<PageReflow, LayOutError> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         assert!(
-            before.part_names().len() < after.part_names().len(),
+            before.package.part_names().len() < after.package.part_names().len(),
             "the settings part is new"
         );
         Ok(PageReflow {
@@ -364,7 +364,7 @@ struct StoppedReflow;
 impl FieldLayout for StoppedReflow {
     fn lay_out(
         &self,
-        _package: &ooxml_word_model::WordPackage,
+        _package: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         _cancel: &dyn Cancel,
     ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Err(LayOutError::Unsupported("not needed".to_owned()))
@@ -372,8 +372,8 @@ impl FieldLayout for StoppedReflow {
 
     fn reflow(
         &self,
-        _before: &ooxml_word_model::WordPackage,
-        _after: &ooxml_word_model::WordPackage,
+        _before: &std::sync::Arc<ooxml_word_model::docx::Docx>,
+        _after: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         cancel: &dyn Cancel,
     ) -> Result<PageReflow, LayOutError> {
         assert!(cancel.is_cancelled(), "the call's limit is what stops it");

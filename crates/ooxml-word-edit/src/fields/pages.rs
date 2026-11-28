@@ -22,8 +22,10 @@
 //! model names it (`ooxml_word_model::docx::cells::story_model_path`).
 
 use crate::error::EditError;
+use crate::WordDoc;
 use ooxml_base::Cancel;
-use ooxml_word_model::WordPackage;
+use ooxml_word_model::docx::Docx;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Where a field is, or where a reference points: a body paragraph by its id (as the
@@ -158,28 +160,23 @@ pub struct PageReflow {
 /// The layout of a document's versions, for the field updates of one call, and the
 /// reflow an edit reports.
 pub trait FieldLayout: Send + Sync {
-    /// `package` (a version of the document the call edits) laid out, stopped where
-    /// `cancel` says so.
+    /// `version` (the reading of a version of the document the call edits) laid out,
+    /// stopped where `cancel` says so.
     ///
     /// # Errors
     /// [`LayOutError::Stopped`] where `cancel` stopped it; why it was not laid out (a
     /// version the layout does not lay out yet: the update is left to the host).
-    fn lay_out(&self, package: &WordPackage, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
+    fn lay_out(&self, version: &Arc<Docx>, cancel: &dyn Cancel) -> Result<Box<dyn LaidFields + '_>, LayOutError>;
 
-    /// Which pages of `after` differ from `before`'s (two versions of the document,
-    /// `after` made from `before`), ids as the versions' bytes name them; laying either out
+    /// Which pages of `after` differ from `before`'s (two versions' readings of the
+    /// document, `after` made from `before`), ids as the versions' bytes name them; laying either out
     /// stopped where `cancel` says so.
     ///
     /// # Errors
     /// [`LayOutError::Stopped`] where `cancel` stopped it; why the pages cannot be compared
     /// (a version the layout does not lay out, or a layout that does not compare versions:
     /// the default).
-    fn reflow(
-        &self,
-        before: &WordPackage,
-        after: &WordPackage,
-        cancel: &dyn Cancel,
-    ) -> Result<PageReflow, LayOutError> {
+    fn reflow(&self, before: &Arc<Docx>, after: &Arc<Docx>, cancel: &dyn Cancel) -> Result<PageReflow, LayOutError> {
         let _ = (before, after, cancel);
         Err(LayOutError::Unsupported(
             "this layout does not compare versions".to_owned(),
@@ -217,13 +214,15 @@ impl std::fmt::Debug for EditLayout<'_> {
 }
 
 impl<'l> EditLayout<'l> {
-    /// `package` laid out, as an edit says why not.
+    /// `version` laid out (its reading, the document's one chain), as an edit says why not.
     ///
     /// # Errors
     /// [`EditError::LayoutStopped`] where laying it out was stopped (nothing changed);
-    /// [`EditError::Unsupported`] where the layout does not lay it out.
-    pub fn lay_out(&self, package: &WordPackage) -> Result<Box<dyn LaidFields + 'l>, EditError> {
-        self.layout.lay_out(package, self.stop).map_err(|error| match error {
+    /// [`EditError::Unsupported`] where the layout does not lay it out; a story part that is
+    /// not XML.
+    pub fn lay_out(&self, version: &WordDoc) -> Result<Box<dyn LaidFields + 'l>, EditError> {
+        let reading = version.docx()?;
+        self.layout.lay_out(&reading, self.stop).map_err(|error| match error {
             LayOutError::Stopped => EditError::LayoutStopped(self.limit),
             LayOutError::Unsupported(why) => EditError::Unsupported(format!("the layout of this version: {why}")),
         })
@@ -235,9 +234,9 @@ impl<'l> EditLayout<'l> {
     ///
     /// # Errors
     /// [`EditError::LayoutStopped`] where laying either version out was stopped (nothing
-    /// changes).
-    pub fn reflow(&self, before: &WordPackage, after: &WordPackage) -> Result<Result<PageReflow, String>, EditError> {
-        match self.layout.reflow(before, after, self.stop) {
+    /// changes); a story part that is not XML.
+    pub fn reflow(&self, before: &WordDoc, after: &WordDoc) -> Result<Result<PageReflow, String>, EditError> {
+        match self.layout.reflow(&before.docx()?, &after.docx()?, self.stop) {
             Ok(found) => Ok(Ok(found)),
             Err(LayOutError::Stopped) => Err(EditError::LayoutStopped(self.limit)),
             Err(LayOutError::Unsupported(why)) => Ok(Err(why)),

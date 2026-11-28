@@ -157,7 +157,7 @@ pub fn save_document(
             kind = named;
         }
     }
-    let laid = crate::laid_reads::laid(&owned, version.package, cancel);
+    let laid = crate::laid_reads::laid(&owned, &version.docx()?, cancel);
     let counts = version
         .counts
         .or_else(|| laid.as_ref().and_then(|l| l.as_ref().ok()).and_then(|l| l.counts()));

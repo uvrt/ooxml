@@ -459,7 +459,7 @@ impl InsertCrossReference<'_> {
             let layout = self
                 .layout
                 .ok_or_else(|| EditError::Unsupported("a page cross-reference without the layout".to_owned()))?;
-            let laid = layout.lay_out(sink.doc().package())?;
+            let laid = layout.lay_out(sink.doc())?;
             let start = span.first().map(|f| f.id.clone()).unwrap_or_default();
             let at = if span.part == docx.main { Some(start) } else { None };
             match at.map(|a| laid.page_reference(" PAGEREF x ", FieldPlace::Body(&a))) {
