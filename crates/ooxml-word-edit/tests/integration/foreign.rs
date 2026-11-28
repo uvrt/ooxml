@@ -251,3 +251,25 @@ fn an_id_they_wrote_that_a_draw_here_gave_meanwhile_is_stamped_anew() {
     assert_eq!(texts.matches("New here.").count(), 2, "both paragraphs are there");
     assert!(paragraphs(head.doc()).contains(&drawn), "the block here keeps its id");
 }
+
+#[test]
+fn their_file_the_same_as_its_base_brings_nothing_and_hands_nothing_back() {
+    let (ours, targets) = opened();
+    let base = ours.store().snapshot();
+    let bytes: Arc<[u8]> = base.doc().package().save().unwrap().into();
+    // a step here that read the whole document (every match of a find)
+    let replace = ooxml_word_edit::ReplaceText {
+        pattern: Arc::new(ooxml_word_edit::find::Literal::new("Written", true, false, "omega").unwrap()),
+        across: false,
+        within: None,
+        count: None,
+        keep: ooxml_word_edit::Keep::First,
+        policy: RevisionPolicy::Untracked,
+    };
+    let _ = targets;
+    let done = ours.run(&Caller::named("agent"), &replace).unwrap();
+    assert!(done.changed);
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    assert!(arrived.previous.is_none() && arrived.handed_back.is_empty() && arrived.parts.is_empty());
+    assert_eq!(ours.store().snapshot().seq(), done.version.seq());
+}
