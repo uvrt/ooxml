@@ -755,15 +755,16 @@ impl Word {
         let layout = self.layout(WordHost::of(context).unwrap_or(&none))?;
         let layout_cancel = cancel.layout();
         let limit = layout_cancel.as_ref().map(limit);
+        let reading = start.doc().docx().ok()?;
         let from = ooxml_tools_word::EditedFrom {
             version: start.seq().0,
-            package: start.doc().package(),
+            reading: &reading,
         };
         ooxml_tools_word::reflow_after_edit(
             &*layout,
             &self.last_check,
             from,
-            head.doc().package(),
+            &head.doc().docx().ok()?,
             head.doc().ids().aliases(),
             (limit, cancel),
         )

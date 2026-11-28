@@ -81,7 +81,7 @@ pub(crate) fn joined_into(first: &Paragraph, table: &Table) -> Option<Table> {
 /// whose mark is deleted joined to the paragraph after it (a chain into the last), or into
 /// the table after it. One that cannot join the table (its first cell holds no paragraph)
 /// stays, unless nothing of it is drawn.
-pub(crate) fn join(blocks: Vec<Block>) -> Vec<Block> {
+pub(crate) fn join(view: View, blocks: Vec<Block>) -> Vec<Block> {
     let kinds: Vec<Joining> = blocks
         .iter()
         .map(|block| match block {
@@ -102,7 +102,7 @@ pub(crate) fn join(blocks: Vec<Block>) -> Vec<Block> {
     let mut slots: Vec<Option<Block>> = blocks.into_iter().map(Some).collect();
     let mut take = |k: usize| slots.get_mut(k).and_then(Option::take);
     let mut out: Vec<Block> = Vec::new();
-    for group in join_plan(View::Final, &kinds) {
+    for group in join_plan(view, &kinds) {
         let (ks, mut tail) = match group {
             Joined::Paragraph(mut ks) => {
                 let Some(Block::Paragraph(last)) = ks.pop().and_then(&mut take) else {

@@ -257,9 +257,14 @@ fn trial(
     ) else {
         return Ok(None);
     };
+    // the trial's reading, in the document's chain of readings (its blocks keyed as the
+    // version checked keys them)
+    let Ok(reading) = Docx::open_after(&package, docx) else {
+        return Err("the document does not open");
+    };
     let version = facts.version();
     let mut engine = ooxml_word_pages::lock_engine(trials.engine);
-    let then = match engine.trial(&package, version, trials.cancel) {
+    let then = match engine.trial(&std::sync::Arc::new(reading), version, trials.cancel) {
         Ok(Some(then)) => then,
         Ok(None) => return Err("not laid out by this engine"),
         Err(ooxml_word_pages::PagesError::Stopped) => return Err("stopped"),

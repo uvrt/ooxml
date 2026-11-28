@@ -6,6 +6,10 @@
 //! too: versions that find nothing kept wait for the one reading it and then read from it,
 //! instead of each reading the whole part at once.
 //!
+//! Also owns what the document's versions name their stories by ([`StoryTable`], one per
+//! document: a block's key is the same in every version, whoever reads it) and the block
+//! tier of its projections ([`crate::projection::Projections`]).
+//!
 //! Must not: keep anything but the latest reading of each part; hold a lock other than its
 //! own part's first-reading gate while reading.
 
@@ -15,8 +19,10 @@ use super::facts::PartFacts;
 use super::keeps::RowKeep;
 use super::kept_rows::RowsMemo;
 use super::texts::PartTexts;
+use crate::ids::{StoryIx, StoryTable};
+use crate::projection::Projections;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The latest reading of each part, by part name, and each part's first-reading gate.
 #[derive(Debug)]
@@ -86,6 +92,11 @@ pub struct Kept {
     /// Each block's facts its readers name, by the block element, the outermost table
     /// holding it and the parts they were made with, across the versions that share them.
     blocks: BlockFacts,
+    /// The document's stories, interned once: what its versions' blocks are keyed by.
+    stories: Mutex<StoryTable>,
+    /// Its blocks' projections, by the block element, the view and what the reading read
+    /// beside it, across the versions that share them.
+    projections: Projections,
 }
 
 impl Kept {
@@ -97,7 +108,9 @@ impl Kept {
             facts: Latest::default(),
             tables: TableMemo::new(Arc::clone(&budget)),
             rows: RowsMemo::new(Arc::clone(&budget)),
-            blocks: BlockFacts::new(budget),
+            blocks: BlockFacts::new(Arc::clone(&budget)),
+            stories: Mutex::new(StoryTable::new()),
+            projections: Projections::new(budget),
         }
     }
 
@@ -125,6 +138,21 @@ impl Kept {
     /// (`None`: no version has yet), kept as the latest.
     pub fn facts(&self, part: &str, read: impl FnOnce(Option<&PartFacts>) -> PartFacts) -> Arc<PartFacts> {
         self.facts.read_with(part, read)
+    }
+
+    /// The document's stories: what its versions' blocks are keyed by.
+    pub(crate) fn stories(&self) -> MutexGuard<'_, StoryTable> {
+        self.stories.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The index of the story `name`: `None` past the table's limit.
+    pub(crate) fn story(&self, name: &str) -> Option<StoryIx> {
+        self.stories().intern(name)
+    }
+
+    /// The projections kept across the versions.
+    pub(crate) fn projections(&self) -> &Projections {
+        &self.projections
     }
 
     /// The blocks' facts kept across the versions.

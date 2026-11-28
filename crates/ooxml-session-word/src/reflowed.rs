@@ -22,16 +22,17 @@ pub(crate) fn after_edit(
     stop: (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
     let before = &made.before;
+    let reading = before.doc().docx().ok()?;
     let from = EditedFrom {
         version: before.seq().0,
-        package: before.doc().package(),
+        reading: &reading,
     };
     let after = made.last.doc();
     reflow_after_edit(
         layout,
         &word.last_check,
         from,
-        after.package(),
+        &after.docx().ok()?,
         after.ids().aliases(),
         stop,
     )

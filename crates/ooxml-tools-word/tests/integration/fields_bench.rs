@@ -33,11 +33,11 @@ struct Timed {
 impl FieldLayout for Timed {
     fn lay_out(
         &self,
-        package: &ooxml_word_model::WordPackage,
+        version: &Arc<ooxml_word_model::docx::Docx>,
         cancel: &dyn Cancel,
     ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         let started = Instant::now();
-        let laid = self.inner.lay_out(package, cancel);
+        let laid = self.inner.lay_out(version, cancel);
         self.spent
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -96,7 +96,7 @@ fn best_after<A: ToolArgs>(
     for _ in 0..3 {
         let editor = editor(bytes);
         let opened = editor.store().snapshot().doc().clone();
-        let warm = layout.engine.lock().unwrap().lay_out(opened.package(), None);
+        let warm = layout.engine.lock().unwrap().lay_out(&opened.docx().unwrap(), None);
         assert!(matches!(warm, Ok(Ok(_))), "the opened version is laid out");
         let caller = Caller::anonymous();
         let call_editor = CallEditor::new(&editor);
@@ -158,7 +158,7 @@ fn field_tools_on_a_long_document() {
     let first = engine
         .lock()
         .unwrap()
-        .lay_out(probe.store().snapshot().doc().package(), None);
+        .lay_out(&probe.store().snapshot().doc().docx().unwrap(), None);
     let pages = first.unwrap().map(|v| v.page_count());
     println!(
         "{} body paragraphs; first layout {:.1} ms ({pages:?} pages)",

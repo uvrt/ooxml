@@ -5,7 +5,8 @@
 //! (`crate::labels`). A block's resolved formats are asked of the document's `crate::Model`,
 //! which memoises them across versions.
 //!
-//! Must not: read the package or memoise (`crate::open` does), or lay out.
+//! Must not: read the package or memoise (`crate::projection` and `crate::Model` do), or
+//! lay out.
 
 use crate::labels::{label_after, BlockItems, Item, Lists};
 use crate::model::{Block, Paragraph, Section};
@@ -43,6 +44,29 @@ pub struct Context {
     pub font_scheme: Option<Arc<FontScheme>>,
     /// The theme's colours and the settings' mapping.
     pub colours: Arc<ThemeColours>,
+}
+
+impl Context {
+    /// Whether `other` is this very context: each part's reading the same one (a version
+    /// whose formatting parts are unchanged resolves against the context it was read in).
+    #[must_use]
+    pub fn same(&self, other: &Context) -> bool {
+        let styles = match (&self.styles, &other.styles) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let fonts = match (&self.font_scheme, &other.font_scheme) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        styles
+            && fonts
+            && Arc::ptr_eq(&self.numbering, &other.numbering)
+            && Arc::ptr_eq(&self.settings, &other.settings)
+            && Arc::ptr_eq(&self.colours, &other.colours)
+    }
 }
 
 /// One version of a Word document, as layout reads it.

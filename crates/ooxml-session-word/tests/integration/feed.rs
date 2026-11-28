@@ -309,8 +309,8 @@ impl Client {
 /// Every page of the head of `d` as the engine writes it for the feed.
 fn expected(s: &Session, d: &DocId, layout: &EnginePages) -> Vec<String> {
     let head = s.snapshot(d).unwrap();
-    let package = head.word().unwrap().package().clone();
-    let laid = layout.laid(&package, &Never).unwrap();
+    let reading = head.word().unwrap().docx().unwrap();
+    let laid = layout.laid(&reading, &Never).unwrap();
     let mut engine = ooxml_word_pages::lock_engine(layout.engine());
     (0..laid.page_count())
         .map(|k| engine.feed_page(&laid, k).unwrap().0.svg())

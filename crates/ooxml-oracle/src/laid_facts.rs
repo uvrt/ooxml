@@ -76,16 +76,16 @@ fn facts(
 ) -> Result<Value, String> {
     let minimum = ooxml_tools_word::minimum_of(min_size.unwrap_or(&Value::Null))?;
     let engine = Mutex::new(crate::structure_tools::page_engine(fonts));
+    let doc =
+        ooxml_word_edit::WordDoc::open(package.package().clone(), Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+    let docx = doc.docx().map_err(|e| e.to_string())?;
     let version = {
         let mut held = engine.lock().unwrap_or_else(PoisonError::into_inner);
-        match held.lay_out(package, None).map_err(|e| e.to_string())? {
+        match held.lay_out(&docx, None).map_err(|e| e.to_string())? {
             Ok(version) => version,
             Err(fallback) => return Err(format!("falls back: {} at {}", fallback.reason, fallback.at)),
         }
     };
-    let doc =
-        ooxml_word_edit::WordDoc::open(package.package().clone(), Arc::new(Unlimited)).map_err(|e| e.to_string())?;
-    let docx = doc.docx().map_err(|e| e.to_string())?;
     let painted = Painted {
         engine: &engine,
         version: Arc::clone(&version),

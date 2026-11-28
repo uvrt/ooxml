@@ -116,7 +116,7 @@ impl LaidFields for LaidTwo {
 impl FieldLayout for TwoPages {
     fn lay_out(
         &self,
-        _: &ooxml_word_model::WordPackage,
+        _: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         _: &dyn Cancel,
     ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         Ok(Box::new(LaidTwo))
@@ -317,7 +317,7 @@ struct Stopping;
 impl FieldLayout for Stopping {
     fn lay_out(
         &self,
-        _: &ooxml_word_model::WordPackage,
+        _: &std::sync::Arc<ooxml_word_model::docx::Docx>,
         cancel: &dyn Cancel,
     ) -> Result<Box<dyn LaidFields + '_>, LayOutError> {
         assert!(cancel.is_cancelled(), "the call's limit is what stops it");

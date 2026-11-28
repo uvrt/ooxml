@@ -91,6 +91,11 @@ pub fn read(package: &ooxml_opc::Package) -> ooxml_word_model::WordPackage {
     ooxml_word_model::WordPackage::open(package.clone()).0
 }
 
+/// `package`'s reading as a document's first version (its own chain of readings).
+pub fn reading(package: &ooxml_opc::Package) -> Arc<ooxml_word_model::docx::Docx> {
+    Arc::new(ooxml_word_model::docx::Docx::open(&read(package), Arc::new(Unlimited)).unwrap())
+}
+
 /// `package` opened as a session's editor opens it: its readings the document's one chain.
 pub fn doc(package: &ooxml_opc::Package) -> ooxml_word_edit::WordDoc {
     ooxml_word_edit::WordDoc::open(package.clone(), Arc::new(Unlimited)).unwrap()

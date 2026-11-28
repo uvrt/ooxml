@@ -56,7 +56,8 @@ impl WordPackage {
     }
 
     /// [`WordPackage::open`], a part `before` stamped from the same content and given the
-    /// same values taking `before`'s tree (what a reader keeps of the part stays its own).
+    /// same values taking `before`'s tree (what a reader keeps of the part stays its own),
+    /// one stamped anew sharing every subtree it has alike with `before`'s.
     #[must_use]
     pub fn open_after(package: Package, before: Option<&WordPackage>) -> (WordPackage, IdPool) {
         let mut stamped = package.clone();
@@ -86,7 +87,12 @@ impl WordPackage {
             let Ok(stamp) = found.stamp(&mut draw);
             let values: Arc<[String]> = stamp.given.into();
             let kept = before.and_then(|b| b.kept(part, &package, &values));
-            let tree = kept.unwrap_or_else(|| tree.with_root(stamp.root));
+            // else stamped anew, sharing every subtree it has alike with `before`'s stamping
+            // of the part (a block stamped the same is the same element, read as it was)
+            let tree = kept.unwrap_or_else(|| {
+                let earlier = before.and_then(|b| b.package.tree(part).ok().flatten());
+                ooxml_xml::shared_with(earlier, tree.with_root(stamp.root))
+            });
             if let Ok(next) = stamped.with_unwritten(part, tree) {
                 stamped = next;
                 given.insert(part.clone(), values);

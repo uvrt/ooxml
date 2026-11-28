@@ -14,7 +14,7 @@
 use super::reflow::{reflow_json, LastCheck};
 use crate::pages::{LayoutLimit, WordLayout};
 use ooxml_base::Cancel;
-use ooxml_word_model::WordPackage;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_pages::summarised::Summarised;
 use ooxml_word_pages::{EngineSeed, LaidVersion, PageEngine, PagesError};
 use serde_json::Value;
@@ -32,8 +32,8 @@ pub const STALE: &str = "stale: call check";
 pub struct EditedFrom<'a> {
     /// Its number.
     pub version: u64,
-    /// Its package.
-    pub package: &'a WordPackage,
+    /// Its reading (the document's one chain of readings).
+    pub reading: &'a Arc<Docx>,
 }
 
 /// The reflow a changing call's checks report (docx-agent's `_base.checks`), measured from
@@ -53,7 +53,7 @@ pub fn reflow_after_edit(
     layout: &dyn WordLayout,
     last: &LastCheck,
     before: EditedFrom<'_>,
-    after: &WordPackage,
+    after: &Arc<Docx>,
     aliases: &BTreeMap<String, String>,
     (limit, cancel): (Option<LayoutLimit<'_>>, &dyn Cancel),
 ) -> Option<Value> {
@@ -66,9 +66,9 @@ pub fn reflow_after_edit(
         Err(TryLockError::WouldBlock) => {
             let count = match &seen {
                 Some(seen) => seen.pages.count(),
-                None => layout.seed().laid_last(before.package)?.page_count(),
+                None => layout.seed().laid_last(&before.reading.package)?.page_count(),
             };
-            return on_spare(layout.seed(), count, (before.package, after), &aliases, stop);
+            return on_spare(layout.seed(), count, (before.reading, after), &aliases, stop);
         }
     };
     let was = match seen.map(|s| s.pages) {
@@ -77,7 +77,7 @@ pub fn reflow_after_edit(
             engine: theirs,
         }) if Arc::ptr_eq(&theirs, layout.engine()) => Was::Here(version),
         Some(other) => Was::Elsewhere(other),
-        None => Was::Here(engine.laid_last(before.package)?),
+        None => Was::Here(engine.laid_last(&before.reading.package)?),
     };
     if was.count() > REFLOW_PAGES {
         return Some(Value::from(STALE));
@@ -105,7 +105,7 @@ pub fn reflow_after_edit(
 fn on_spare(
     seed: &EngineSeed,
     count: usize,
-    (before, after): (&WordPackage, &WordPackage),
+    (before, after): (&Arc<Docx>, &Arc<Docx>),
     aliases: &HashMap<String, String>,
     stop: Stop<'_>,
 ) -> Option<Value> {
@@ -133,10 +133,10 @@ struct Stop<'a> {
 }
 
 impl Stop<'_> {
-    /// `package` laid out by `engine`; else what the reflow says (`Some`: a stop, as
+    /// `version` laid out by `engine`; else what the reflow says (`Some`: a stop, as
     /// docx-agent's deadline says it) or `None` (the engine does not lay it out).
-    fn lay_out(self, engine: &mut PageEngine, package: &WordPackage) -> Result<Arc<LaidVersion>, Option<Value>> {
-        match engine.lay_out_until(package, self.limit.map_or(self.cancel, |l| l.cancel)) {
+    fn lay_out(self, engine: &mut PageEngine, version: &Arc<Docx>) -> Result<Arc<LaidVersion>, Option<Value>> {
+        match engine.lay_out_until(version, self.limit.map_or(self.cancel, |l| l.cancel)) {
             Ok(Ok(laid)) => Ok(laid),
             Err(PagesError::Stopped) => {
                 let within = self.limit.map_or_else(String::new, |l| {

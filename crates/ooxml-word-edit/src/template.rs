@@ -246,7 +246,7 @@ impl Command<WordDoc> for UpgradeReflowed<'_> {
             return Ok(Reflowed { upgraded, reflow: None });
         };
         tx.read_everything();
-        let reflow = layout.reflow(tx.base().doc().package(), tx.doc().package())?;
+        let reflow = layout.reflow(tx.base().doc(), tx.doc())?;
         Ok(Reflowed {
             upgraded,
             reflow: Some(reflow),

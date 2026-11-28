@@ -14,7 +14,6 @@ use ooxml_base::Cancel;
 use ooxml_word_layout::px::Px;
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{BlockKey, StoryIx, Sub};
-use ooxml_word_model::WordPackage;
 use ooxml_word_pages::layout_facts::points;
 use ooxml_word_pages::line_text::ItemPlace;
 use ooxml_word_pages::LaidVersion;
@@ -50,14 +49,13 @@ pub(super) struct Laid<'v> {
 }
 
 impl<'v> Laid<'v> {
-    /// `package` (read as `docx`) laid out by `layout`, stopped where `cancel` says so.
+    /// The version read as `docx` laid out by `layout`, stopped where `cancel` says so.
     pub(super) fn new(
         layout: &'v dyn WordLayout,
-        package: &WordPackage,
-        docx: &'v Docx,
+        docx: &'v Arc<Docx>,
         cancel: &dyn Cancel,
     ) -> Result<Laid<'v>, NotLaid> {
-        let version = layout.laid(package, cancel)?;
+        let version = layout.laid(docx, cancel)?;
         let names = &version.layout().document.names;
         let mut body: HashMap<BlockKey, Vec<Line>> = HashMap::new();
         // the blocks a paragraph's lines count for: itself, and the tables and rows it is in

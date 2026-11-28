@@ -21,14 +21,14 @@ use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// Whether the final view removes a cell.
-fn removed(cell: &Element) -> bool {
-    View::Final.removes_cell(cell)
+/// Whether `view` removes a cell.
+fn removed(view: View, cell: &Element) -> bool {
+    view.removes_cell(cell)
 }
 
-/// Whether a cell the final view removes widens the cell before it (its content stays).
-fn widens(cell: &Element) -> bool {
-    removed(cell) && content_kept(cell)
+/// Whether a cell `view` removes widens the cell before it (its content stays).
+fn widens(view: View, cell: &Element) -> bool {
+    removed(view, cell) && content_kept(cell)
 }
 
 /// `parent`'s `w:tr` or `w:tc` children, also those inside row- and cell-level content
@@ -165,7 +165,7 @@ fn moved_out(blocks: &[Block]) -> Vec<Block> {
 /// The grid columns only cells with a pending deletion (or gone, `gone`) cover, in every
 /// row covering them. Only the grid's `count` columns are answered, so only those are
 /// counted: a span past them stops there.
-fn vacated_columns(rows: &[&Element], count: usize, gone: &HashSet<*const Element>) -> HashSet<usize> {
+fn vacated_columns(view: View, rows: &[&Element], count: usize, gone: &HashSet<*const Element>) -> HashSet<usize> {
     let mut covered: std::collections::BTreeMap<i64, bool> = std::collections::BTreeMap::new();
     let end = i64::try_from(count).unwrap_or(i64::MAX);
     for row in rows {
@@ -180,9 +180,9 @@ fn vacated_columns(rows: &[&Element], count: usize, gone: &HashSet<*const Elemen
                 .filter(|s| *s != 0)
                 .unwrap_or(1)
                 .max(1);
-            let deleted =
-                (removed(cell) && !(kept_before && content_kept(cell))) || gone.contains(&std::ptr::from_ref(cell));
-            kept_before = kept_before || !removed(cell);
+            let deleted = (removed(view, cell) && !(kept_before && content_kept(cell)))
+                || gone.contains(&std::ptr::from_ref(cell));
+            kept_before = kept_before || !removed(view, cell);
             for c in column..column.saturating_add(span).min(end) {
                 let was = covered.get(&c).copied().unwrap_or(true);
                 covered.insert(c, was && deleted);
@@ -333,7 +333,10 @@ impl Reader<'_> {
         at: &At<'_>,
         fields: &mut Fields,
     ) -> Vec<Block> {
-        join(self.block_list(cell, Some((style, conditions)), at, fields))
+        join(
+            self.view(),
+            self.block_list(cell, Some((style, conditions)), at, fields),
+        )
     }
 
     fn row(&self, k: usize, plan: &Plan<'_>, shape: &Shape<'_>, fields: &mut Fields, built: &mut Built) {
@@ -365,7 +368,7 @@ impl Reader<'_> {
                 let mut props = accepted_cell_properties(self, cell);
                 headed(&mut props, shape.heads.get(&(plan.index, j)));
                 props_of.push(props);
-            } else if let Some(last) = props_of.last_mut().filter(|_| widens(cell)) {
+            } else if let Some(last) = props_of.last_mut().filter(|_| widens(self.view(), cell)) {
                 absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
             }
         }
@@ -419,17 +422,17 @@ impl Reader<'_> {
         built.cell_places.push(Arc::from(places));
     }
 
-    /// A `w:tbl`'s blocks in the final view: the table, or its parts with the blocks moved
+    /// A `w:tbl`'s blocks in the reader's view: the table, or its parts with the blocks moved
     /// out between them.
     pub(crate) fn table_blocks(&self, element: &Element, at: &At<'_>, fields: &mut Fields) -> Vec<Block> {
         let props_element = child(element, "tblPr");
         let tbl_pr = props_element.map(w::TblPr::new);
         let style = text(tbl_pr.and_then(w::TblPr::style).and_then(w::Val::val).unwrap_or(""));
         let look = table_look(tbl_pr.and_then(w::TblPr::look).map(w::TblLook::element));
-        let kept = |row: &Element| !View::Final.removes_row(row);
+        let kept = |row: &Element| !self.view().removes_row(row);
         let placed_rows = level_placed(element, "tr");
         let all_rows: Vec<&Element> = placed_rows.iter().map(|(_, r)| *r).collect();
-        let heads = merge_heads(&all_rows, &kept, &|cell| View::Final.merge(cell));
+        let heads = merge_heads(&all_rows, &kept, &|cell| self.view().merge(cell));
         let row_elements: Vec<(usize, &Element)> = all_rows
             .iter()
             .copied()
@@ -443,7 +446,10 @@ impl Reader<'_> {
         let mut plans = Vec::new();
         for (index, row) in &row_elements {
             let rel = placed_rows.get(*index).map(|(r, _)| r.clone()).unwrap_or_default();
-            let shown: Vec<&Element> = level_of(row, "tc").into_iter().filter(|c| !removed(c)).collect();
+            let shown: Vec<&Element> = level_of(row, "tc")
+                .into_iter()
+                .filter(|c| !removed(self.view(), c))
+                .collect();
             let CellEnds { groups, gone: lost } = cell_ends(&shown);
             gone.extend(
                 lost.iter()
@@ -474,7 +480,7 @@ impl Reader<'_> {
         }
         let grid_of = |start: usize, end: usize| -> Arc<[i64]> {
             let rows: Vec<&Element> = rows_only.get(start..end).unwrap_or_default().to_vec();
-            let vacated = vacated_columns(&rows, grid_nodes.len(), &gone);
+            let vacated = vacated_columns(self.view(), &rows, grid_nodes.len(), &gone);
             grid_nodes
                 .iter()
                 .enumerate()
