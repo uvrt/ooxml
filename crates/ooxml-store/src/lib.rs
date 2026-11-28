@@ -55,7 +55,7 @@ pub use model::{DocModel, First};
 pub use op_txn::{AttemptState, InOp, OpTxn};
 pub use predicate::ReadPredicate;
 pub use stats::StoreStats;
-pub use store::{Caller, CommitTiming, Committed, Listed, Store, StoreConfig};
+pub use store::{Caller, CommitTiming, Committed, HandedBack, Listed, Prepared, Received, Store, StoreConfig};
 pub use times::{Histogram, LockTimes};
 pub use txn::{Savepoint, Txn};
 pub use version::{Seq, Snapshot, Version};

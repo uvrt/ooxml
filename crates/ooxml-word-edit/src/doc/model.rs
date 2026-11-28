@@ -50,8 +50,8 @@ impl DocModel for WordDoc {
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
-            Change::Received { part, tree } => {
-                let (package, ids) = self.received(part, tree)?;
+            Change::Received { .. } | Change::Arrived { .. } => {
+                let (package, ids) = self.taken_in(change)?;
                 *self = self.succeed(package, ids);
                 return Ok(());
             }
@@ -140,6 +140,7 @@ impl DocModel for WordDoc {
             },
             Change::Put { part, .. }
             | Change::Received { part, .. }
+            | Change::Arrived { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Change::Restore {
                 parts: Arc::from([Arc::clone(part)]),
@@ -188,6 +189,12 @@ impl DocModel for WordDoc {
 
     fn written(change: &Change, into: &mut KeySet<Key>) {
         match change {
+            Change::Arrived { part, keys, .. } => {
+                into.insert(Key::StyleUse(PartName::normalize(part)));
+                for key in keys.iter() {
+                    into.insert(key.clone());
+                }
+            }
             Change::Splice { keys, .. } | Change::Head { keys, .. } => {
                 for key in keys.iter() {
                     into.insert(key.clone());
@@ -328,6 +335,25 @@ impl DocModel for WordDoc {
         }
         if change.part().is_none() || change.part() != past.part() {
             return Ok(change.clone());
+        }
+        // a change made before another editor's commit, moved past its patches in order
+        // (that commit is published first: its nodes keep their place first)
+        if let Change::Arrived {
+            patches: Some(theirs), ..
+        } = past
+        {
+            let mut moved = change.clone();
+            for earlier in theirs.iter() {
+                let splice = Change::Splice {
+                    part: Arc::from(change.part().unwrap_or_default()),
+                    patch: earlier.clone(),
+                    keys: Arc::from([]),
+                    draws: Arc::from([]),
+                    created: Arc::from([]),
+                };
+                moved = Self::rebase(&moved, &splice, first)?;
+            }
+            return Ok(moved);
         }
         Ok(match (change, past) {
             (

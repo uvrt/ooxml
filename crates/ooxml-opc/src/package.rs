@@ -62,7 +62,7 @@ impl PartVersion {
     /// An unwritten part is its tree: the same as the tree written in its place.
     pub fn same(&self, other: &PartVersion) -> bool {
         match (self, other) {
-            (PartVersion::Raw(a), PartVersion::Raw(b)) => a.index == b.index && Arc::ptr_eq(&a.tree, &b.tree),
+            (PartVersion::Raw(a), PartVersion::Raw(b)) => a.source.same(&b.source) && Arc::ptr_eq(&a.tree, &b.tree),
             (PartVersion::Tree(a), PartVersion::Tree(b)) => a.ptr_eq(b),
             (PartVersion::Bytes(a), PartVersion::Bytes(b)) => Arc::ptr_eq(a, b),
             (PartVersion::Unwritten(a), PartVersion::Unwritten(b)) => a.tree.ptr_eq(&b.tree),
@@ -107,7 +107,7 @@ impl Eq for PartIdentity {}
 impl std::hash::Hash for PartIdentity {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match &self.0 {
-            PartVersion::Raw(raw) => (0u8, raw.index, Arc::as_ptr(&raw.tree) as usize).hash(state),
+            PartVersion::Raw(raw) => (0u8, raw.source.index, Arc::as_ptr(&raw.tree) as usize).hash(state),
             // an unwritten part is keyed as its tree ([`PartVersion::same`])
             PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. }) => {
                 (1u8, 0usize, Arc::as_ptr(tree.root()) as usize).hash(state);
@@ -120,8 +120,34 @@ impl std::hash::Hash for PartIdentity {
 /// An untouched part: its entry, and its tree once something read it.
 #[derive(Debug, Clone)]
 pub struct RawPart {
-    index: usize,
+    source: Source,
     tree: Arc<OnceLock<Result<Tree, OpcError>>>,
+}
+
+/// An archive entry a part came from: the package's own archive, or the archive of another
+/// writer's version of it a part was taken from as that writer wrote it
+/// ([`Package::with_part_as_in`], a co-authoring refresh), so that it saves byte for byte.
+#[derive(Debug, Clone)]
+struct Source {
+    archive: Arc<Archive>,
+    index: usize,
+}
+
+impl Source {
+    fn same(&self, other: &Source) -> bool {
+        self.index == other.index && Arc::ptr_eq(&self.archive, &other.archive)
+    }
+
+    fn entry(&self) -> Result<&Entry, OpcError> {
+        self.archive
+            .entries()
+            .get(self.index)
+            .ok_or_else(|| OpcError::NoPart(format!("entry {}", self.index)))
+    }
+
+    fn inflate(&self) -> Result<Vec<u8>, OpcError> {
+        Ok(self.archive.read_entry(self.entry()?)?)
+    }
 }
 
 /// A part's slot: where it goes in the archive, the entry it came from, its content.
@@ -129,7 +155,7 @@ pub struct RawPart {
 struct Slot {
     order: u64,
     /// The source entry, for its name as stored and its metadata on save.
-    entry: Option<usize>,
+    entry: Option<Source>,
     content: PartVersion,
 }
 
@@ -149,13 +175,17 @@ impl Package {
         let mut slots = PartMap::default();
         for (index, entry) in archive.entries().iter().enumerate() {
             let name = slot_name(entry);
-            let raw = PartVersion::Raw(RawPart {
+            let source = Source {
+                archive: Arc::clone(&archive),
                 index,
+            };
+            let raw = PartVersion::Raw(RawPart {
+                source: source.clone(),
                 tree: Arc::new(OnceLock::new()),
             });
             let slot = Slot {
                 order: index as u64,
-                entry: Some(index),
+                entry: Some(source),
                 content: raw,
             };
             let (next, replaced) = slots.insert(&name, slot);
@@ -241,12 +271,12 @@ impl Package {
                 }
             }
             (PartVersion::Raw(a), PartVersion::Raw(b)) => {
-                if let (Ok(x), Ok(y)) = (self.entry(a.index), other.entry(b.index)) {
+                if let (Ok(x), Ok(y)) = (a.source.entry(), b.source.entry()) {
                     let (m, n) = (x.meta(), y.meta());
                     return m.crc32 == n.crc32
                         && m.size == n.size
                         && m.method == n.method
-                        && self.archive.stored_data(x) == other.archive.stored_data(y);
+                        && a.source.archive.stored_data(x) == b.source.archive.stored_data(y);
                 }
             }
             _ => {}
@@ -257,7 +287,7 @@ impl Package {
     /// The bytes a save writes of `content`, one of this package's parts.
     fn saved_bytes(&self, content: &PartVersion) -> Result<Arc<[u8]>, OpcError> {
         Ok(match content.saved() {
-            PartVersion::Raw(raw) => self.inflate(raw.index)?.into(),
+            PartVersion::Raw(raw) => raw.source.inflate()?.into(),
             PartVersion::Tree(tree) => tree.write().into(),
             PartVersion::Bytes(bytes) => Arc::clone(bytes),
             PartVersion::Unwritten(unwritten) => unwritten.tree.write().into(),
@@ -279,7 +309,7 @@ impl Package {
     pub fn read(&self, name: &str) -> Result<Option<Arc<[u8]>>, OpcError> {
         Ok(match self.part(name) {
             None => None,
-            Some(PartVersion::Raw(raw)) => Some(self.inflate(raw.index)?.into()),
+            Some(PartVersion::Raw(raw)) => Some(raw.source.inflate()?.into()),
             Some(PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. })) => Some(tree.write().into()),
             Some(PartVersion::Bytes(bytes)) => Some(Arc::clone(bytes)),
         })
@@ -301,7 +331,7 @@ impl Package {
     /// entry's uncompressed size) or as put; `None` for a tree, or no such part.
     pub fn size(&self, name: &str) -> Option<u64> {
         match self.part(name)? {
-            PartVersion::Raw(raw) => self.entry(raw.index).ok().map(|e| e.meta().size),
+            PartVersion::Raw(raw) => raw.source.entry().ok().map(|e| e.meta().size),
             PartVersion::Bytes(bytes) => u64::try_from(bytes.len()).ok(),
             PartVersion::Tree(_) | PartVersion::Unwritten(_) => None,
         }
@@ -343,7 +373,8 @@ impl Package {
             PartVersion::Raw(raw) => raw
                 .tree
                 .get_or_init(|| {
-                    self.inflate(raw.index)
+                    raw.source
+                        .inflate()
                         .and_then(|b| parse(&b, &self.limits.xml).map_err(xml))
                 })
                 .clone(),
@@ -448,6 +479,38 @@ impl Package {
         next
     }
 
+    /// A version whose part `name` is the raw entry `from` holds it as: `from` is another
+    /// writer's version of this document, opened from its own bytes (a co-authoring
+    /// refresh), so the part saves byte for byte as that writer wrote it. It is read as
+    /// `tree` where given: the entry's content, shared with this version's tree where the
+    /// two agree ([`ooxml_xml::shared_with`]); else parsed from the entry when first read.
+    /// The part keeps its place here, or goes at the end when it is new.
+    ///
+    /// # Errors
+    /// [`OpcError::NoPart`] when `from` has no part `name`, or has it other than as an
+    /// untouched entry.
+    pub fn with_part_as_in(&self, name: &str, from: &Package, tree: Option<Tree>) -> Result<Package, OpcError> {
+        let key = normalize(name);
+        let (source, entry) = match from.slots.get(&key) {
+            Some(Slot {
+                content: PartVersion::Raw(raw),
+                entry,
+                ..
+            }) => (raw.source.clone(), entry.clone()),
+            _ => return Err(OpcError::NoPart(key)),
+        };
+        let content = PartVersion::Raw(RawPart {
+            source,
+            tree: Arc::new(tree.map_or_else(OnceLock::new, |t| OnceLock::from(Ok(t)))),
+        });
+        let mut next = self.put(&key, content);
+        if let Some(slot) = next.slots.get(&key) {
+            let slot = Slot { entry, ..slot.clone() };
+            next.slots = next.slots.insert(&key, slot).0;
+        }
+        Ok(next)
+    }
+
     /// A version whose part `name` is as it is in `from`, an earlier or later version of
     /// this package (opened from the same archive): its content, its place and its entry,
     /// or no part where `from` has none. What undo puts back, exactly.
@@ -493,17 +556,6 @@ impl Package {
         Ok(next)
     }
 
-    fn entry(&self, index: usize) -> Result<&Entry, OpcError> {
-        self.archive
-            .entries()
-            .get(index)
-            .ok_or_else(|| OpcError::NoPart(format!("entry {index}")))
-    }
-
-    fn inflate(&self, index: usize) -> Result<Vec<u8>, OpcError> {
-        Ok(self.archive.read_entry(self.entry(index)?)?)
-    }
-
     /// The package's bytes. Untouched entries are copied raw (an unchanged package saves
     /// byte for byte as it was read when its entries lie end to end from the start, as
     /// writers lay them out: bytes between or before entries are not kept), and so is a
@@ -515,8 +567,8 @@ impl Package {
         slots.sort_unstable_by_key(|(_, s)| s.order);
         let mut w = Writer::new();
         for (name, slot) in slots {
-            match (slot.content.saved(), slot.entry) {
-                (PartVersion::Raw(raw), _) => w.copy(&self.archive, self.entry(raw.index)?)?,
+            match (slot.content.saved(), slot.entry.as_ref()) {
+                (PartVersion::Raw(raw), _) => w.copy(&raw.source.archive, raw.source.entry()?)?,
                 (PartVersion::Tree(tree) | PartVersion::Unwritten(Unwritten { tree, .. }), entry) => {
                     self.write_part(&mut w, name, entry, &tree.write())?;
                 }
@@ -530,12 +582,12 @@ impl Package {
     /// the bytes read and that entry's header may be copied (co-authoring request 1: an
     /// entry keeps its MS-FSSHTTPD chunk unless its content changed; ooxml-edit's
     /// `OpcPackage.write`, the same rule); else written anew.
-    fn write_part(&self, w: &mut Writer, name: &str, entry: Option<usize>, data: &[u8]) -> Result<(), OpcError> {
-        if let Some(index) = entry {
-            let read = self.entry(index)?;
+    fn write_part(&self, w: &mut Writer, name: &str, entry: Option<&Source>, data: &[u8]) -> Result<(), OpcError> {
+        if let Some(source) = entry {
+            let read = source.entry()?;
             let same_size = usize::try_from(read.meta().size).is_ok_and(|size| size == data.len());
-            if same_size && self.archive.header_copyable(read) && self.inflate(index)? == data {
-                w.copy(&self.archive, read)?;
+            if same_size && source.archive.header_copyable(read) && source.inflate()? == data {
+                w.copy(&source.archive, read)?;
                 return Ok(());
             }
         }
@@ -544,10 +596,10 @@ impl Package {
     }
 
     /// The header a touched part is written with: its source entry's, or a new part's.
-    fn new_entry(&self, name: &str, entry: Option<usize>) -> Result<NewEntry, OpcError> {
+    fn new_entry(&self, name: &str, entry: Option<&Source>) -> Result<NewEntry, OpcError> {
         Ok(match entry {
-            Some(index) => {
-                let meta = self.entry(index)?.meta();
+            Some(source) => {
+                let meta = source.entry()?.meta();
                 NewEntry {
                     name: meta.name.clone(),
                     method: meta.method,

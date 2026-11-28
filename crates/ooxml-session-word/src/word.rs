@@ -25,7 +25,7 @@ use ooxml_store::{Caller, Snapshot, Store};
 use ooxml_tools::{CallEnv, Outcome, Tool, ToolError, ToolResult};
 use ooxml_tools_word::{LayoutLimit, Made, MadeBy, RowsWritten, WordLayout};
 use ooxml_word_edit::validate::Delta;
-use ooxml_word_edit::{Change, EarlierIds, Editor, IdsChange, WordDoc};
+use ooxml_word_edit::{Change, EarlierIds, Editor, WordDoc};
 use ooxml_word_model::ids::LoadedState;
 use ooxml_word_pages::layout_facts::sizes::Minimum;
 use ooxml_xml::Tree;
@@ -189,33 +189,7 @@ impl Holds<WordDoc> for WordStore {
     }
 
     fn ledger(doc: &WordDoc, trees: &[&Tree]) -> Option<Change> {
-        let roots: Vec<&ooxml_xml::Element> = trees.iter().map(|t| &**t.root()).collect();
-        let mut values: Vec<u32> = ooxml_word_model::ids::used_long_hex(&roots)
-            .into_iter()
-            .filter(|v| !doc.ids().contains(*v))
-            .collect();
-        values.sort_unstable();
-        // a drawing the parts bring is one the document had (a copy keeps no number it had),
-        // and raises the highest number given (never given again)
-        let mut drawings: Vec<u64> = ooxml_word_model::ids::drawing_numbers(&roots)
-            .into_iter()
-            .filter(|n| !doc.ids().had_drawing(*n))
-            .collect();
-        drawings.sort_unstable();
-        let highest = drawings
-            .last()
-            .copied()
-            .filter(|n| *n > doc.ids().highest_drawing())
-            .unwrap_or(0);
-        let adds = !values.is_empty() || !drawings.is_empty();
-        adds.then(|| {
-            Change::Ids(IdsChange {
-                values,
-                highest_drawing: highest,
-                drawings,
-                ..IdsChange::default()
-            })
-        })
+        ooxml_word_edit::ledger_of(doc, trees)
     }
 
     fn noted(
