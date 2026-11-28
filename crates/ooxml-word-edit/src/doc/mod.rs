@@ -557,7 +557,15 @@ impl WordDoc {
                 }
                 let as_theirs = matches!((here, on), (Some(here), Some(on)) if here.same(on));
                 let package = if as_theirs {
-                    written.with_part_as_in(part, from, Some(tree.clone()))?
+                    let theirs = from.tree(part)?;
+                    if theirs.as_ref().is_some_and(|t| t.root().head() == tree.root().head()) {
+                        written.with_part_as_in(part, from, Some(tree.clone()))?
+                    } else {
+                        // read with what ours declares in memory beyond theirs, saved as theirs
+                        written
+                            .with_part_as_in(part, from, None)?
+                            .with_unwritten(part, tree.clone())?
+                    }
                 } else {
                     written.with_tree(part, tree.clone())?
                 };
@@ -575,6 +583,95 @@ impl WordDoc {
             }
         };
         self.stamped_in(package, part, before, &tree)
+    }
+
+    /// The package with `part`'s root declaring what Word 2010's ids need
+    /// ([`super::Change::Declare`], [`ooxml_word_model::stamp::ensured_head`] on the root
+    /// here), repeats below cleaned away where it declares one anew; `None` when the root
+    /// declares them already (or there is no such part).
+    pub(crate) fn declared(
+        &self,
+        part: &str,
+        drawings: bool,
+        extra: &[(Arc<str>, Arc<str>)],
+    ) -> Result<Option<Package>, ModelError> {
+        let Some(tree) = self.package.tree(part)? else {
+            return Ok(None);
+        };
+        let extra: Vec<(&str, &str)> = extra.iter().map(|(p, u)| (&**p, &**u)).collect();
+        let root = tree.root();
+        let Some((head, declared)) = ooxml_word_model::stamp::ensured_head(root, drawings, &extra) else {
+            return Ok(None);
+        };
+        let mut new = Arc::new(ooxml_xml::Element::from_head(Arc::new(head), root.children().clone()));
+        if declared {
+            // lxml declares them with a cleanup of the whole part: declarations below that
+            // repeat one in scope go
+            new = ooxml_word_model::stamp::namespaces::cleaned(&new);
+        }
+        Ok(Some(self.package.with_tree(part, tree.with_root(new))?))
+    }
+
+    /// The package after a change of a root's head ([`super::Change::Declare`],
+    /// [`super::Change::RootHead`]): the package as it is where it changes nothing here.
+    pub(crate) fn headed(&self, change: &super::Change) -> Result<Package, ModelError> {
+        let same = || self.package.package().clone();
+        Ok(match change {
+            super::Change::Declare { part, drawings, extra } => {
+                self.declared(part, *drawings, extra)?.unwrap_or_else(same)
+            }
+            super::Change::RootHead { part, head } => self.root_merged(part, head)?,
+            _ => same(),
+        })
+    }
+
+    /// The package with `part`'s root head merged with `theirs` ([`super::Change::RootHead`]).
+    pub(crate) fn root_merged(&self, part: &str, theirs: &ooxml_xml::Head) -> Result<Package, ModelError> {
+        let tree = self
+            .package
+            .tree(part)?
+            .ok_or_else(|| ModelError::NoPart(part.to_owned()))?;
+        let root = tree.root();
+        let ours = root.head();
+        let mut namespaces = ours.namespaces.to_vec();
+        for declared in theirs.namespaces.iter() {
+            if !namespaces.iter().any(|d| d.prefix == declared.prefix) {
+                namespaces.push(declared.clone());
+            }
+        }
+        let ignorable = |head: &ooxml_xml::Head| -> Vec<String> {
+            head.attributes
+                .iter()
+                .find(|a| a.name.is(Some(ooxml_word_model::ids::MC), "Ignorable"))
+                .map(|a| a.value.split_whitespace().map(str::to_owned).collect())
+                .unwrap_or_default()
+        };
+        let mut listed = ignorable(ours);
+        for prefix in ignorable(theirs) {
+            if !listed.contains(&prefix) {
+                listed.push(prefix);
+            }
+        }
+        let mut attributes = ours.attributes.to_vec();
+        for attribute in theirs.attributes.iter() {
+            match attributes.iter_mut().find(|a| a.name == attribute.name) {
+                Some(a) => a.value = attribute.value.clone(),
+                None => attributes.push(attribute.clone()),
+            }
+        }
+        if let Some(a) = attributes
+            .iter_mut()
+            .find(|a| a.name.is(Some(ooxml_word_model::ids::MC), "Ignorable"))
+        {
+            a.value = Arc::from(listed.join(" "));
+        }
+        let head = ooxml_xml::Head {
+            name: ours.name.clone(),
+            namespaces: namespaces.into(),
+            attributes: attributes.into(),
+        };
+        let new = ooxml_xml::Element::from_head(Arc::new(head), root.children().clone());
+        Ok(self.package.with_tree(part, tree.with_root(Arc::new(new)))?)
     }
 
     /// `package`, which holds `tree` as `part`, with the part stamped where it is a story

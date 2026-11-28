@@ -13,7 +13,7 @@ use crate::interleave::Paused;
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Seq, Snapshot, StoreError};
-use ooxml_word_edit::{EditError, Editor, InsertParagraph, Key, RevisionPolicy, SetText, WordDoc};
+use ooxml_word_edit::{EditError, Editor, InsertParagraph, Key, RevisionPolicy, SetText, Tracking, WordDoc};
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
@@ -250,6 +250,13 @@ fn an_id_they_wrote_that_a_draw_here_gave_meanwhile_is_stamped_anew() {
     let texts = text_of(&docx.body().unwrap().tree.root().clone());
     assert_eq!(texts.matches("New here.").count(), 2, "both paragraphs are there");
     assert!(paragraphs(head.doc()).contains(&drawn), "the block here keeps its id");
+    // their block, stamped anew, is not written under the id ours holds
+    let step = ours.store().steps().last().cloned().unwrap();
+    assert!(
+        !step.writes.contains(&Key::block(MAIN, drawn.as_str())),
+        "{:?}",
+        step.writes
+    );
 }
 
 #[test]
@@ -272,4 +279,119 @@ fn their_file_the_same_as_its_base_brings_nothing_and_hands_nothing_back() {
     let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
     assert!(arrived.previous.is_none() && arrived.handed_back.is_empty() && arrived.parts.is_empty());
     assert_eq!(ours.store().snapshot().seq(), done.version.seq());
+}
+
+fn tracked(target: &str, text: &str, author: &str) -> SetText {
+    SetText {
+        target: ooxml_word_model::address::Address::from(target.to_owned()),
+        text: text.to_owned(),
+        policy: RevisionPolicy::Tracked(Tracking {
+            author: author.to_owned(),
+            date: "2026-11-28T10:00:00Z".to_owned(),
+        }),
+    }
+}
+
+/// The authors the people part lists.
+fn people(doc: &WordDoc) -> Vec<String> {
+    let package = doc.package();
+    let Some(name) = package.part_names().into_iter().find(|n| n.contains("people")) else {
+        return Vec::new();
+    };
+    let tree = package.tree(&name).unwrap().unwrap();
+    let w15 = "http://schemas.microsoft.com/office/word/2012/wordml";
+    let mut out: Vec<String> = tree
+        .root()
+        .child_elements()
+        .filter_map(|e| e.attribute(Some(w15), "author").map(str::to_owned))
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn their_change_of_the_first_tracked_edits_block_hands_back_that_edit_alone() {
+    let (ours, targets) = opened();
+    let base = ours.store().snapshot();
+    // the first tracked edit declares the root's namespaces and lists its author; the second
+    // lists another: neither ties the other (both only merges there)
+    let first = ours
+        .run(&Caller::named("a"), &tracked(&targets[0], "Mine, tracked.", "Ann"))
+        .unwrap();
+    ours.run(&Caller::named("b"), &tracked(&targets[1], "Bo's, tracked.", "Bo"))
+        .unwrap();
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &set_text(&targets[0], "Theirs."))
+            .unwrap();
+    });
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    let back: Vec<Seq> = arrived.handed_back.iter().map(|h| h.step.step).collect();
+    assert_eq!(back, vec![first.version.seq()], "only the edit of their block");
+    let head = ours.store().snapshot();
+    assert!(
+        text_of(&paragraph(head.doc(), &targets[1])).contains("tracked"),
+        "Bo's edit stays"
+    );
+    // (Ann stays listed: a person's tidy lands before the undo's text there, where Ann's
+    // revisions are still in use; a person listed and unused is harmless)
+    assert!(people(head.doc()).contains(&"Bo".to_owned()));
+}
+
+#[test]
+fn their_root_declaring_more_is_merged_and_the_part_stays_patched() {
+    let (ours, targets) = opened();
+    let base = ours.store().snapshot();
+    ours.run(&Caller::named("a"), &set_text(&targets[2], "Kept here."))
+        .unwrap();
+    // theirs: one paragraph set, and their root declaring a namespace more (ignorable)
+    let edited = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &set_text(&targets[0], "Theirs."))
+            .unwrap();
+    });
+    let package = open(&edited);
+    let xml = String::from_utf8(package.read(MAIN).unwrap().unwrap().to_vec()).unwrap();
+    let declared = xml.replacen("<w:document ", "<w:document xmlns:w16x=\"urn:example:w16x\" ", 1);
+    let declared = match declared.find("mc:Ignorable=\"") {
+        Some(at) => {
+            let at = at + "mc:Ignorable=\"".len();
+            format!("{}w16x {}", &declared[..at], &declared[at..])
+        }
+        None => declared,
+    };
+    let bytes: Arc<[u8]> = package
+        .with_bytes(MAIN, declared.into_bytes().into())
+        .save()
+        .unwrap()
+        .into();
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    assert!(arrived.handed_back.is_empty(), "{:?}", arrived.handed_back.len());
+    let head = ours.store().snapshot();
+    let tree = head.doc().package().tree(MAIN).unwrap().unwrap();
+    assert!(
+        tree.root().namespaces().iter().any(|d| &*d.uri == "urn:example:w16x"),
+        "their declaration merged"
+    );
+    assert!(text_of(&paragraph(head.doc(), &targets[2])).contains("Kept here."));
+    assert!(text_of(&paragraph(head.doc(), &targets[0])).contains("Theirs."));
+}
+
+#[test]
+fn people_both_sides_list_come_together_by_author() {
+    let (ours, targets) = opened();
+    // a person listed before the base
+    ours.run(&Caller::named("a"), &tracked(&targets[3], "Before.", "Ann"))
+        .unwrap();
+    let base = ours.store().snapshot();
+    ours.run(&Caller::named("b"), &tracked(&targets[1], "Bo's.", "Bo"))
+        .unwrap();
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &tracked(&targets[0], "Ada's.", "Ada"))
+            .unwrap();
+    });
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    assert!(arrived.handed_back.is_empty());
+    assert_eq!(people(ours.store().snapshot().doc()), ["Ada", "Ann", "Bo"]);
 }

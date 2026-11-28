@@ -705,30 +705,16 @@ impl<'t, 's> EditSink<'t, 's> {
     /// # Errors
     /// When the part is not XML.
     pub fn ensure_w14(&mut self, part: &str, drawings: bool, extra: &[(&str, &str)]) -> Result<()> {
-        let Some(tree) = self.tx.doc().tree(part)? else {
+        if self.tx.doc().tree(part)?.is_none() {
             return Ok(());
-        };
-        // what the root declares decides what is written (nothing, when it declares them)
-        self.tx.read(Key::Root(ooxml_opc::PartName::from(part)));
-        let root = tree.root();
-        let Some((head, declared)) = ensured_head(root, drawings, extra) else {
-            return Ok(());
-        };
-        let head = Arc::new(head);
-        if declared {
-            // lxml declares them with a cleanup of the whole part: declarations below that
-            // repeat one in scope go (the part rewritten only when one does)
-            let new = Arc::new(Element::from_head(Arc::clone(&head), root.children().clone()));
-            let cleaned = ooxml_word_model::stamp::namespaces::cleaned(&new);
-            if !Arc::ptr_eq(&cleaned, &new) {
-                return self.put(part, tree.with_root(cleaned));
-            }
         }
-        let patch = HeadPatch::new(NodePath::root(), Arc::clone(root.head()), head);
-        self.write(Change::Head {
+        // decided where the change lands (phase 3 CF2c): what the root lacks there is added,
+        // nothing where it declares them (an exact undo may have taken a declaration away
+        // since this version), so no read of the root
+        self.write(Change::Declare {
             part: Arc::from(part),
-            patch,
-            keys: vec![Key::Root(ooxml_opc::PartName::from(part))].into(),
+            drawings,
+            extra: extra.iter().map(|(p, u)| (Arc::from(*p), Arc::from(*u))).collect(),
         })
     }
 

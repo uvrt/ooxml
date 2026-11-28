@@ -115,8 +115,14 @@ impl<D: DocModel> Store<D> {
         for step in steps.iter().filter(|s| !s.foreign) {
             // as the history finds a step entangled with a later one (`History::plan_undo`)
             let entangled = taken.iter().any(|t| {
-                let mut with = t.writes.intersection(&step.reads);
-                with.extend(&t.writes.intersection(&step.writes).without_where(D::derived));
+                let mut with = t.writes.without(&t.merges).intersection(&step.reads);
+                let both = t.merges.intersection(&step.merges);
+                with.extend(
+                    &t.writes
+                        .intersection(&step.writes)
+                        .without_where(D::derived)
+                        .without(&both),
+                );
                 !with.without_where(D::kept).is_empty()
             });
             if entangled || touches(step) {

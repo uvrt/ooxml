@@ -22,7 +22,7 @@ use crate::{EditError, Editor};
 use ooxml_opc::{Package, PartName};
 use ooxml_store::{Caller, HandedBack, KeySet, Prepared, Seq, Snapshot, StoreError, Txn};
 use ooxml_word_model::ids::{BlockKey, PartIds, StoryDelta, StoryIx};
-use ooxml_xml::{Patch, Tree};
+use ooxml_xml::{Element, Patch, Tree};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -43,6 +43,12 @@ struct ArrivedPart {
     /// Those a step here can have touched: all but the blocks only theirs has (a step here
     /// that names one drew the same id, which is stamped anew where it lands).
     touched: BTreeSet<Key>,
+    /// The blocks only theirs has: kept out of what it writes where the part here holds
+    /// their id already (stamped anew where it lands, so the key would name ours).
+    came: BTreeSet<Key>,
+    /// Their root's head where it differs from the base's (merged where it lands:
+    /// [`Change::RootHead`]).
+    root: Option<Arc<ooxml_xml::Head>>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +60,9 @@ enum How {
     Whole,
     /// Gone from theirs.
     Removed,
+    /// The people part, theirs listing these authors more than the base's (each listed
+    /// where it lands, [`Change::People`]): a union by author.
+    People(Vec<Arc<str>>),
 }
 
 /// A part whose patches could not be moved past what changed in it since the base: take it
@@ -91,12 +100,17 @@ impl Arrival {
         for name in from.changed_parts(base.package()) {
             let name = PartName::normalize(&name);
             if !from.has_part(&name) {
-                let keys = BTreeSet::from([Key::Part(name.clone())]);
+                parts.push(ArrivedPart::whole(name, How::Removed));
+                continue;
+            }
+            if let Some(authors) = added_people(base, &docx.main, &from, &name)? {
                 parts.push(ArrivedPart {
+                    keys: BTreeSet::from([Key::People]),
+                    touched: BTreeSet::new(),
+                    came: BTreeSet::new(),
+                    root: None,
                     name,
-                    how: How::Removed,
-                    touched: keys.clone(),
-                    keys,
+                    how: How::People(authors),
                 });
                 continue;
             }
@@ -106,12 +120,7 @@ impl Arrival {
                 (Some(story), Some(theirs)) => patched(&story.story, &name, &story.tree, &story.ids, &theirs),
                 _ => None,
             };
-            parts.push(planned.unwrap_or_else(|| ArrivedPart {
-                keys: BTreeSet::from([Key::Part(name.clone())]),
-                touched: BTreeSet::from([Key::Part(name.clone())]),
-                name,
-                how: How::Whole,
-            }));
+            parts.push(planned.unwrap_or_else(|| ArrivedPart::whole(name, How::Whole)));
         }
         Ok(Arrival { from, parts })
     }
@@ -148,21 +157,26 @@ impl Arrival {
         out
     }
 
-    /// Whether a step that read `reads` and wrote `writes` touched what it changes: a block
-    /// it changes, the whole of a part it changes, or anything of a part it takes whole.
+    /// Whether a step that read `reads` and wrote `writes` (`merges` of them only as merges,
+    /// made where its change landed) touched what it changes: a block it changes, the whole
+    /// of a part it changes, or anything of a part it takes whole. A key written only as a
+    /// merge (a person listed, a declaration made) touches a part it merges too.
     #[must_use]
-    pub fn touches(&self, reads: &KeySet<Key>, writes: &KeySet<Key>) -> bool {
+    pub fn touches(&self, reads: &KeySet<Key>, writes: &KeySet<Key>, merges: &KeySet<Key>) -> bool {
         // (a part whose content is theirs as it was, saved otherwise, touches nothing)
         if self.parts.iter().all(|part| part.touched.is_empty()) {
             return false;
         }
-        let (Some(reads), Some(writes)) = (reads.keys(), writes.keys()) else {
+        let (Some(reads), Some(all)) = (reads.keys(), writes.keys()) else {
             return true;
         };
+        let unmerged = writes.without(merges);
+        let writes = unmerged.keys().unwrap_or(all);
         self.parts.iter().any(|part| {
             let mine = |key: &Key| part_of(key) == Some(&part.name);
             match part.how {
-                How::Whole | How::Removed => reads.iter().chain(writes).any(mine),
+                How::Whole | How::Removed => reads.iter().chain(all).any(mine),
+                How::People(_) => writes.iter().any(mine),
                 How::Patched(_) => {
                     // one of its blocks read or written, the part (or its root) written whole,
                     // or what its paragraphs show of their styles read (derived: a writer of
@@ -184,6 +198,7 @@ impl Arrival {
             arrived.how = How::Whole;
             arrived.keys.insert(Key::Part(arrived.name.clone()));
             arrived.touched.insert(Key::Part(arrived.name.clone()));
+            arrived.root = None;
         }
     }
 
@@ -196,12 +211,31 @@ impl Arrival {
     pub fn prepare(&self, tx: &mut Txn<'_, WordDoc>, base: &WordDoc) -> Result<(), ArrivalError> {
         let mut trees = Vec::new();
         for part in &self.parts {
-            for key in &part.keys {
+            let keys = part.written_on(tx.doc())?;
+            for key in &keys {
                 tx.read(key.clone());
             }
             let name: Arc<str> = Arc::clone(part.name.as_arc());
-            let keys: Arc<[Key]> = part.keys.iter().cloned().collect();
+            let keys: Arc<[Key]> = keys.into_iter().collect();
+            let on = base.package().part(&name).cloned();
+            let here = tx.doc().package().part(&name);
+            let same = matches!((&on, here), (Some(on), Some(here)) if on.same(here));
             let change = match &part.how {
+                // the part here as at the base: theirs whole, saved as they wrote it
+                How::People(_) if same => Change::Arrived {
+                    part: name,
+                    patches: None,
+                    keys,
+                    from: self.from.clone(),
+                    on: None,
+                },
+                How::People(authors) => {
+                    let mut sink = crate::sink::EditSink::new(tx, crate::policy::RevisionPolicy::Untracked);
+                    for author in authors {
+                        sink.people(Some(author), None)?;
+                    }
+                    continue;
+                }
                 How::Removed if !tx.doc().package().has_part(&name) => continue,
                 How::Removed => Change::Remove { part: name },
                 How::Whole => Change::Arrived {
@@ -212,21 +246,33 @@ impl Arrival {
                     on: None,
                 },
                 How::Patched(patches) => {
-                    let on = base.package().part(&name).cloned();
-                    let here = tx.doc().package().part(&name);
-                    let same = matches!((&on, here), (Some(on), Some(here)) if on.same(here));
                     let placed = if same {
                         patches.clone()
                     } else {
                         placed_past(patches, &base.tree(&name)?, &tx.doc().tree(&name)?)
                             .ok_or_else(|| Unplaced(name.to_string()))?
                     };
-                    Change::Arrived {
-                        part: name,
-                        patches: Some(placed.into()),
-                        keys,
-                        from: self.from.clone(),
-                        on: on.filter(|_| same),
+                    if let Some(head) = &part.root {
+                        // their root's head merged where it lands, after their children
+                        tx.write(Change::Arrived {
+                            part: Arc::clone(&name),
+                            patches: Some(placed.into()),
+                            keys: Arc::clone(&keys),
+                            from: self.from.clone(),
+                            on: None,
+                        })?;
+                        Change::RootHead {
+                            part: name,
+                            head: Arc::clone(head),
+                        }
+                    } else {
+                        Change::Arrived {
+                            part: name,
+                            patches: Some(placed.into()),
+                            keys,
+                            from: self.from.clone(),
+                            on: on.filter(|_| same),
+                        }
                     }
                 }
             };
@@ -288,7 +334,7 @@ impl Editor {
             &Caller::foreign(editor),
             base,
             &Setup::default(),
-            |step| arrival.borrow().touches(&step.reads, &step.writes),
+            |step| arrival.borrow().touches(&step.reads, &step.writes, &step.merges),
             |tx, on| {
                 let prepared = arrival.borrow().prepare(tx, on.doc());
                 match prepared {
@@ -346,6 +392,88 @@ pub fn ledger_of(doc: &WordDoc, trees: &[&Tree]) -> Option<Change> {
     })
 }
 
+impl ArrivedPart {
+    /// `name` taken whole (or removed): it writes and touches the part.
+    fn whole(name: PartName, how: How) -> ArrivedPart {
+        let keys = BTreeSet::from([Key::Part(name.clone())]);
+        ArrivedPart {
+            touched: keys.clone(),
+            keys,
+            came: BTreeSet::new(),
+            root: None,
+            name,
+            how,
+        }
+    }
+
+    /// The keys it writes where it lands on `doc`: its keys but a block only theirs has
+    /// whose id the part there holds already (stamped anew where it lands).
+    fn written_on(&self, doc: &WordDoc) -> Result<Vec<Key>, EditError> {
+        if self.came.is_empty() {
+            return Ok(self.keys.iter().cloned().collect());
+        }
+        let docx = doc.docx()?;
+        let story = docx
+            .parts
+            .iter()
+            .find(|story| story.part.as_str() == self.name.as_str());
+        Ok(self
+            .keys
+            .iter()
+            .filter(|key| match key {
+                Key::Block { id, .. } if self.came.contains(key) => {
+                    story.is_none_or(|story| story.ids.get(id.as_ref()).is_none())
+                }
+                _ => true,
+            })
+            .cloned()
+            .collect())
+    }
+}
+
+/// The authors `from`'s people part lists beyond `base`'s, where `name` is the base's people
+/// part and theirs only adds people (every person the base lists kept as it is); `None`
+/// otherwise (the part is taken as any other).
+fn added_people(
+    base: &WordDoc,
+    main: &str,
+    from: &Package,
+    name: &PartName,
+) -> Result<Option<Vec<Arc<str>>>, EditError> {
+    if crate::people::people_part(base.package(), main)?.as_deref() != Some(name.as_str()) {
+        return Ok(None);
+    }
+    let (Some(ours), Some(theirs)) = (base.package().tree(name)?, from.tree(name)?) else {
+        return Ok(None);
+    };
+    let people = |root: &ooxml_xml::Element| -> Vec<(Option<String>, Arc<ooxml_xml::Element>)> {
+        root.child_elements()
+            .map(|e| {
+                (
+                    e.attribute(Some(crate::names::W15), "author").map(str::to_owned),
+                    Arc::clone(e),
+                )
+            })
+            .collect()
+    };
+    if ours.root().head() != theirs.root().head() {
+        return Ok(None);
+    }
+    let (ours, theirs) = (people(ours.root()), people(theirs.root()));
+    let kept = ours
+        .iter()
+        .all(|(author, element)| author.is_some() && theirs.iter().any(|(a, e)| a == author && e == element));
+    if !kept {
+        return Ok(None);
+    }
+    let added: Vec<Arc<str>> = theirs
+        .iter()
+        .filter(|(author, _)| !ours.iter().any(|(a, _)| a == author))
+        .filter_map(|(author, _)| author.as_deref().map(Arc::from))
+        .collect();
+    Ok(Some(added))
+}
+
 /// The part a key is of.
 fn part_of(key: &Key) -> Option<&PartName> {
     match key {
@@ -362,7 +490,24 @@ fn patched(story: &str, name: &PartName, tree: &Tree, ids: &PartIds, theirs: &Tr
     let StoryDelta::Blocks(delta) = ids.delta(tree.root(), &new, theirs.root(), StoryIx::BODY) else {
         return None;
     };
-    let patches = ooxml_xml::diff(tree, theirs);
+    // their root's head (declarations, attributes) merged where it lands; the children
+    // patched as the base's root holds them
+    let (root, children) = if theirs.root().head() == tree.root().head() {
+        (None, theirs.clone())
+    } else if theirs.root().name() == tree.root().name() {
+        let base_head = Arc::clone(tree.root().head());
+        let adjusted = Element::from_head(Arc::clone(&base_head), theirs.root().children().clone());
+        // (a head of theirs with nothing ours lacks -- ours declaring in memory what theirs
+        // leaves out, say -- merges to ours: nothing to merge)
+        let more = !head_within(theirs.root().head(), &base_head);
+        (
+            more.then(|| Arc::clone(theirs.root().head())),
+            theirs.with_root(Arc::new(adjusted)),
+        )
+    } else {
+        return None;
+    };
+    let patches = ooxml_xml::diff(tree, &children);
     if patches.iter().any(|p| p.parent().0.is_empty()) {
         return None;
     }
@@ -413,12 +558,38 @@ fn patched(story: &str, name: &PartName, tree: &Tree, ids: &PartIds, theirs: &Tr
         keys.insert(Key::Part(name.clone()));
         touched.insert(Key::Part(name.clone()));
     }
+    if root.is_some() {
+        keys.insert(Key::Root(name.clone()));
+        touched.insert(Key::Root(name.clone()));
+    }
+    let came = keys.difference(&touched).cloned().collect();
     Some(ArrivedPart {
         name: name.clone(),
         how: How::Patched(patches),
         keys,
         touched,
+        came,
+        root,
     })
+}
+
+/// Whether `theirs` declares and sets nothing `ours` lacks: each namespace declared there,
+/// each attribute the same, `mc:Ignorable` listing no prefix ours does not.
+fn head_within(theirs: &ooxml_xml::Head, ours: &ooxml_xml::Head) -> bool {
+    let ignorable = |head: &ooxml_xml::Head| -> Vec<String> {
+        head.attributes
+            .iter()
+            .find(|a| a.name.is(Some(ooxml_word_model::ids::MC), "Ignorable"))
+            .map(|a| a.value.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    let listed = ignorable(ours);
+    theirs.namespaces.iter().all(|d| ours.namespaces.contains(d))
+        && theirs
+            .attributes
+            .iter()
+            .all(|a| a.name.is(Some(ooxml_word_model::ids::MC), "Ignorable") || ours.attributes.contains(a))
+        && ignorable(theirs).iter().all(|p| listed.contains(p))
 }
 
 /// `patches`, made on `base`, moved past what changed from `base` to `head` (one part's
@@ -430,7 +601,15 @@ fn placed_past(patches: &[Patch], base: &Option<Tree>, head: &Option<Tree>) -> O
     };
     let mut placed = patches.to_vec();
     let last = placed.len().saturating_sub(1);
-    for mut past in ooxml_xml::diff(base, head) {
+    // a root's head changed since (a declaration made here) moves no child: what changed
+    // below it is what the patches move past
+    let head = if head.root().head() == base.root().head() || head.root().name() != base.root().name() {
+        head.clone()
+    } else {
+        let children = Element::from_head(Arc::clone(base.root().head()), head.root().children().clone());
+        head.with_root(Arc::new(children))
+    };
+    for mut past in ooxml_xml::diff(base, &head) {
         for (i, patch) in placed.iter_mut().enumerate() {
             let moved = patch.rebase(&past).ok()?;
             if i < last {

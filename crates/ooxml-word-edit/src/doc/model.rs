@@ -49,6 +49,7 @@ impl DocModel for WordDoc {
                 (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone())
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
+            Change::RootHead { .. } | Change::Declare { .. } => (self.headed(change)?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
             Change::Arrived {
                 part,
@@ -155,19 +156,21 @@ impl DocModel for WordDoc {
                 parts: Arc::clone(parts),
                 from: self.package.package().clone(),
             },
-            Change::People { .. } => {
-                let main = self
-                    .docx()
-                    .map_err(|e| ModelError::Unreadable(e.to_string()))?
-                    .main
-                    .clone();
-                Change::Restore {
-                    parts: crate::people::parts_written(&self.package, &main)?.into(),
-                    from: self.package.package().clone(),
-                }
-            }
-            // ids given are never given again: nothing to take back
-            Change::Ids(_) | Change::Draw { .. } | Change::Number => Change::Ids(IdsChange::default()),
+            // the person listed is dropped again where nothing of theirs is left, one dropped
+            // listed again: where the inverse lands, as the change was (no part restored
+            // whole, so two steps listing people are not entangled by it)
+            Change::People { add, tidy, keys } => Change::People {
+                add: tidy.clone(),
+                tidy: add.clone(),
+                keys: Arc::clone(keys),
+            },
+            // ids given are never given again, a declaration made stays: nothing to take back
+            // (another editor's head merged: their step, never taken back)
+            Change::Ids(_)
+            | Change::Draw { .. }
+            | Change::Number
+            | Change::Declare { .. }
+            | Change::RootHead { .. } => Change::Ids(IdsChange::default()),
             // a count for the reply: undoing the step writes no spaces
             Change::Spaced(_) => Change::Spaced(0),
         })
@@ -194,6 +197,9 @@ impl DocModel for WordDoc {
 
     fn written(change: &Change, into: &mut KeySet<Key>) {
         match change {
+            Change::Declare { part, .. } | Change::RootHead { part, .. } => {
+                into.insert(Key::Root(PartName::normalize(part)));
+            }
             Change::Arrived { part, keys, .. } => {
                 into.insert(Key::StyleUse(PartName::normalize(part)));
                 for key in keys.iter() {
@@ -329,6 +335,10 @@ impl DocModel for WordDoc {
             Change::Draw { seed, .. } => {
                 into.insert(Key::Seq(Arc::clone(seed)));
             }
+            // declarations added where the change lands, the root's own kept
+            Change::Declare { part, .. } => {
+                into.insert(Key::Root(PartName::normalize(part)));
+            }
             _ => {}
         }
     }
@@ -346,24 +356,13 @@ impl DocModel for WordDoc {
         if change.part().is_none() || change.part() != past.part() {
             return Ok(change.clone());
         }
-        // a change made before another editor's commit, moved past its patches in order
-        // (that commit is published first: its nodes keep their place first)
-        if let Change::Arrived {
-            patches: Some(theirs), ..
-        } = past
-        {
-            let mut moved = change.clone();
-            for earlier in theirs.iter() {
-                let splice = Change::Splice {
-                    part: Arc::from(change.part().unwrap_or_default()),
-                    patch: earlier.clone(),
-                    keys: Arc::from([]),
-                    draws: Arc::from([]),
-                    created: Arc::from([]),
-                };
-                moved = Self::rebase(&moved, &splice, first)?;
-            }
-            return Ok(moved);
+        // a declaration changes a root's head where it lands, never a child's place
+        let head_only = |c: &Change| matches!(c, Change::Declare { .. } | Change::RootHead { .. });
+        if head_only(change) || head_only(past) {
+            return Ok(change.clone());
+        }
+        if let Some(moved) = arrived_rebase(change, past, first) {
+            return moved;
         }
         Ok(match (change, past) {
             (
@@ -416,4 +415,79 @@ impl DocModel for WordDoc {
             _ => return Err(ModelError::Patch(PatchError::Conflict(Vec::new()))),
         })
     }
+}
+
+/// `change` moved past `past` where another editor's arrival is one of them
+/// ([`Change::Arrived`]); `None` where neither is.
+fn arrived_rebase(change: &Change, past: &Change, first: First) -> Option<Result<Change, ModelError>> {
+    // another editor's patches, a sequence made on the version `past` was made on, moved
+    // past a splice of the same part: each past it as it stands where that patch was
+    // made (carried past the ones before); the part then no longer theirs as written
+    if let (
+        Change::Arrived {
+            part,
+            patches: Some(theirs),
+            keys,
+            from,
+            ..
+        },
+        Change::Splice { patch: other, .. },
+    ) = (change, past)
+    {
+        let mut other = other.clone();
+        let mut placed = theirs.to_vec();
+        for patch in &mut placed {
+            let moved = match first {
+                First::Past => match patch.rebase(&other) {
+                    Ok(p) => p,
+                    Err(e) => return Some(Err(e.into())),
+                },
+                First::Change => match patch.rebase_first(&other) {
+                    Ok(p) => p,
+                    Err(e) => return Some(Err(e.into())),
+                },
+            };
+            other = match first {
+                First::Past => match other.rebase_first(patch) {
+                    Ok(p) => p,
+                    Err(e) => return Some(Err(e.into())),
+                },
+                First::Change => match other.rebase(patch) {
+                    Ok(p) => p,
+                    Err(e) => return Some(Err(e.into())),
+                },
+            };
+            *patch = moved;
+        }
+        return Some(Ok(Change::Arrived {
+            part: Arc::clone(part),
+            patches: Some(placed.into()),
+            keys: Arc::clone(keys),
+            from: from.clone(),
+            on: None,
+        }));
+    }
+    // a change made before another editor's commit, moved past its patches in order
+    // (that commit is published first: its nodes keep their place first)
+    if let Change::Arrived {
+        patches: Some(theirs), ..
+    } = past
+    {
+        let mut moved = change.clone();
+        for earlier in theirs.iter() {
+            let splice = Change::Splice {
+                part: Arc::from(change.part().unwrap_or_default()),
+                patch: earlier.clone(),
+                keys: Arc::from([]),
+                draws: Arc::from([]),
+                created: Arc::from([]),
+            };
+            moved = match WordDoc::rebase(&moved, &splice, first) {
+                Ok(moved) => moved,
+                Err(error) => return Some(Err(error)),
+            };
+        }
+        return Some(Ok(moved));
+    }
+    None
 }

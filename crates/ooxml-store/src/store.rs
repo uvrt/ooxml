@@ -193,7 +193,27 @@ struct Body<D: DocModel> {
     changes: Arc<[D::Change]>,
     reads: KeySet<D::Key>,
     writes: KeySet<D::Key>,
+    /// The keys it wrote only as merges ([`DocModel::merged`]).
+    merges: KeySet<D::Key>,
     caller: Caller,
+}
+
+impl<D: DocModel> Body<D> {
+    fn new(
+        changes: Arc<[D::Change]>,
+        reads: KeySet<D::Key>,
+        writes: KeySet<D::Key>,
+        merges: KeySet<D::Key>,
+        caller: &Caller,
+    ) -> Self {
+        Body {
+            changes,
+            reads,
+            writes,
+            merges,
+            caller: caller.clone(),
+        }
+    }
 }
 
 /// A store's history as [`Store::listed`] reads it, in one go.
@@ -757,12 +777,8 @@ impl<D: DocModel> Store<D> {
                     self.onto((&parts, &changes), &depends, &head, &since)?
                 }
             };
-            let body = Body {
-                changes,
-                reads,
-                writes: resolved_writes(&doc, parts.writes, &parts.created),
-                caller: caller.clone(),
-            };
+            let writes = resolved_writes(&doc, parts.writes, &parts.created);
+            let body = Body::new(changes, reads, writes, parts.merges, caller);
             let (version, writes, garbage) = self.publish(&mut state, Arc::clone(&head), doc, body, at);
             let held = self.clock.monotonic().saturating_sub(entered);
             queue.leave(&mut state);
@@ -857,6 +873,7 @@ impl<D: DocModel> Store<D> {
             changes: changes.clone(),
             reads: body.reads,
             writes: body.writes,
+            merges: body.merges,
             caller: body.caller.name,
             foreign: body.caller.foreign,
         };

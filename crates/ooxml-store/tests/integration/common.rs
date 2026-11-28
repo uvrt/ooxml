@@ -27,6 +27,9 @@ pub enum Change {
     Set(u32, Option<i64>),
     /// Replace every cell.
     All(Map),
+    /// Add to a cell, where the change is applied: a merge (two writers of it do not
+    /// conflict, and a step written only so is not entangled by it).
+    Add(u32, i64),
 }
 
 /// The cell no change may write.
@@ -64,6 +67,10 @@ impl DocModel for Cells {
                 Arc::make_mut(&mut self.0).remove(cell);
             }
             Change::All(cells) => self.0 = cells.clone(),
+            Change::Add(cell, value) => {
+                let now = self.get(*cell);
+                Arc::make_mut(&mut self.0).insert(*cell, now.wrapping_add(*value));
+            }
         }
         Ok(())
     }
@@ -72,6 +79,7 @@ impl DocModel for Cells {
         Ok(match change {
             Change::Set(cell, _) => Change::Set(*cell, self.0.get(cell).copied()),
             Change::All(_) => Change::All(self.0.clone()),
+            Change::Add(cell, value) => Change::Add(*cell, value.wrapping_neg()),
         })
     }
 
@@ -86,6 +94,13 @@ impl DocModel for Cells {
         match change {
             Change::Set(cell, _) => into.insert(*cell),
             Change::All(_) => into.insert_everything(),
+            Change::Add(cell, _) => into.insert(*cell),
+        }
+    }
+
+    fn merged(change: &Change, into: &mut KeySet<u32>) {
+        if let Change::Add(cell, _) = change {
+            into.insert(*cell);
         }
     }
 }

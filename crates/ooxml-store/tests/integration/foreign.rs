@@ -187,3 +187,54 @@ fn another_editors_commit_keeps_plain_redo() {
     put(&store, "a", &[(3, 3)]);
     assert!(matches!(store.redo(), Err(StoreError::NothingToRedo)));
 }
+
+/// Add `value` to `cell` as one step by `who`: a merge where it lands.
+struct Adding(u32, i64);
+
+impl ooxml_store::Command<Cells> for Adding {
+    type Out = ();
+    type Error = Fail;
+
+    fn validate(&self, _doc: &Cells) -> Result<(), Fail> {
+        Ok(())
+    }
+
+    fn prepare(&self, tx: &mut Txn<'_, Cells>) -> Result<(), Fail> {
+        tx.write(Change::Add(self.0, self.1))?;
+        Ok(())
+    }
+}
+
+#[test]
+fn steps_writing_a_key_only_as_merges_are_not_entangled_by_it() {
+    let store = fresh();
+    let first = store.run(&Caller::named("a"), &Adding(1, 5)).unwrap().version.seq();
+    store.run(&Caller::named("b"), &Adding(1, 7)).unwrap();
+    // the first taken back past the second: each only added to the cell
+    store.undo_step(first, &KeySet::new()).unwrap();
+    assert_eq!(store.snapshot().doc().get(1), 7);
+    // a plain write of it after a merge is entangled, as before
+    let merged = store.run(&Caller::named("a"), &Adding(2, 1)).unwrap().version.seq();
+    put(&store, "b", &[(2, 9)]);
+    assert!(matches!(
+        store.undo_step(merged, &KeySet::new()),
+        Err(StoreError::Entangled { .. })
+    ));
+}
+
+#[test]
+fn another_editors_commit_hands_back_only_what_touches_it_past_merges() {
+    let store = fresh();
+    let base = store.snapshot().seq();
+    // both add to cell 9 (a shared merge, as people listed), then each writes its own cell
+    let one = store.run(&Caller::named("a"), &Adding(9, 1)).unwrap().version.seq();
+    put(&store, "a", &[(1, 1)]);
+    store.run(&Caller::named("b"), &Adding(9, 1)).unwrap();
+    let two = put(&store, "b", &[(2, 2)]);
+    let received = receive(&store, base, &[(2, 20)]).unwrap();
+    let back: Vec<Seq> = received.handed_back.iter().map(|h| h.step.step).collect();
+    assert_eq!(back, vec![two], "the adds to the shared cell tie no step to another");
+    let _ = one;
+    let head = store.snapshot();
+    assert_eq!((head.doc().get(1), head.doc().get(2), head.doc().get(9)), (1, 20, 2));
+}

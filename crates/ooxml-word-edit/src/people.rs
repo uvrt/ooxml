@@ -26,7 +26,7 @@ const REL_PEOPLE: &str = "http://schemas.microsoft.com/office/2011/relationships
 const PEOPLE_TYPE: &str = "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml";
 
 /// The people part the main part relates to, when the package has it.
-fn people_part(package: &Package, main: &str) -> Result<Option<String>, ModelError> {
+pub(crate) fn people_part(package: &Package, main: &str) -> Result<Option<String>, ModelError> {
     Ok(package
         .relationships(main)?
         .targets_of_type(REL_PEOPLE)

@@ -21,6 +21,9 @@ pub(crate) struct Step<D: DocModel> {
     pub(crate) changes: ChangeSet<D>,
     pub(crate) reads: KeySet<D::Key>,
     pub(crate) writes: KeySet<D::Key>,
+    /// The keys it wrote only as merges, made where the change is applied
+    /// ([`DocModel::merged`]): two steps writing one only so are not entangled by it.
+    pub(crate) merges: KeySet<D::Key>,
     pub(crate) caller: Option<Arc<str>>,
     /// Another editor's commit ([`crate::Caller::foreign`]): no undo takes it back.
     pub(crate) foreign: bool,
@@ -60,6 +63,8 @@ pub struct StepInfo<K: Ord> {
     pub reads: KeySet<K>,
     /// What it wrote.
     pub writes: KeySet<K>,
+    /// What it wrote only as merges ([`crate::DocModel::merged`]).
+    pub merges: KeySet<K>,
 }
 
 /// What an undo or redo did.
@@ -274,9 +279,11 @@ impl<D: DocModel> History<D> {
         // (which put its keys back): only the later steps here can depend on it.
         let mut overlap = step.writes.intersection(shared);
         for later in self.undo.iter().skip(index + 1) {
-            let mut with = step.writes.intersection(&later.reads);
-            // a derived key two steps write is recomputed where the undo lands: no tie
-            with.extend(&step.writes.intersection(&later.writes).without_where(D::derived));
+            // what it wrote only as merges is an append, its undo one too: a later reader of it
+            // is not tied to it; a derived key two steps write is recomputed where the undo
+            // lands, and so is one both wrote only as merges: no tie either
+            let mut with = step.writes.without(&step.merges).intersection(&later.reads);
+            with.extend(&tied_writes::<D>(step, &later.writes, &later.merges));
             let with = without_kept::<D>(with);
             if later.foreign && !with.is_empty() {
                 // another editor's change is in the way: no undo takes it back
@@ -489,7 +496,22 @@ fn info<D: DocModel>(step: &Step<D>) -> StepInfo<D::Key> {
         foreign: step.foreign,
         reads: step.reads.clone(),
         writes: step.writes.clone(),
+        merges: step.merges.clone(),
     }
+}
+
+/// The keys of `step`'s that a later step writing `writes` (`merges` of them only as merges)
+/// is tied to: neither derived nor written by both only as merges.
+pub(crate) fn tied_writes<D: DocModel>(
+    step: &Step<D>,
+    writes: &KeySet<D::Key>,
+    merges: &KeySet<D::Key>,
+) -> KeySet<D::Key> {
+    let both = step.merges.intersection(merges);
+    step.writes
+        .intersection(writes)
+        .without_where(D::derived)
+        .without(&both)
 }
 
 /// `keys` without the ones no undo is entangled on ([`DocModel::kept`]).

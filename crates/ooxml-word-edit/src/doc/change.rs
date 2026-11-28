@@ -92,6 +92,29 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
+    /// The namespaces Word 2010's ids need declared on a part's root and listed in
+    /// `mc:Ignorable` (docx-agent's `ensure_w14`: `w14`, `wp14` with `drawings`, each of
+    /// `extra`), decided where the change is applied: only what the root lacks there and the
+    /// tree uses is added (and repeats below then cleaned away). An append: two writers of it
+    /// do not conflict, and no undo takes a declaration back.
+    Declare {
+        /// The part.
+        part: Arc<str>,
+        /// Whether `wp14` is wanted too.
+        drawings: bool,
+        /// Further namespaces wanted, by prefix and URI.
+        extra: Arc<[(Arc<str>, Arc<str>)]>,
+    },
+    /// A part's root head as another editor's version has it, merged where the change lands
+    /// (a co-authoring refresh): their namespace declarations added where the root there
+    /// lacks them, their attributes by name (theirs over ours), `mc:Ignorable` the union of
+    /// both lists. Never a child's place.
+    RootHead {
+        /// The part.
+        part: Arc<str>,
+        /// Their root's head.
+        head: Arc<ooxml_xml::Head>,
+    },
     /// A part as another editor's version of the document has it (a co-authoring refresh,
     /// [`crate::Arrival`]): `patches`, the changes from the version that editor's save was
     /// made from, applied in place (the blocks they do not touch keep their ids and what is
@@ -242,6 +265,8 @@ impl Change {
             | Change::Head { part, .. }
             | Change::Put { part, .. }
             | Change::Arrived { part, .. }
+            | Change::Declare { part, .. }
+            | Change::RootHead { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. }
