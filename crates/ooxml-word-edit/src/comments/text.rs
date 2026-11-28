@@ -75,6 +75,8 @@ impl Command<WordDoc> for EditCommentText {
                     work.remove(paragraph);
                 }
             }
+            // (a property of the version no key names: decided on the snapshot, which the
+            // whole-document read above keeps the head -- any commit since conflicts)
             if sink.doc().para_id_written(&comment.part, &comment.last_para) {
                 kept_text = None;
             }

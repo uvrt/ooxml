@@ -474,6 +474,10 @@ impl FormatDoc for Word {
         &self.stored
     }
 
+    fn changes(&self, ask: &ooxml_session::FeedAsk<'_>) -> Option<Result<ooxml_session::FeedAnswer, ToolError>> {
+        Some(crate::feed::hosted(self, ask))
+    }
+
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
         if let (true, Some(version)) = (checked, at.snapshot::<WordDoc>()) {
             let delta = self.validation(version)?;

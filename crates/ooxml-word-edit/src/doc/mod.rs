@@ -258,14 +258,6 @@ impl WordDoc {
         }
     }
 
-    /// Whether `part`'s ids given at open have been written in the version the transaction
-    /// working on this version began on (every part has, but one read with ids given at
-    /// open and not written since).
-    fn begun_written(&self, part: &str) -> bool {
-        let base = self.begun.as_ref().unwrap_or(&self.package);
-        !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_)))
-    }
-
     /// Whether the document is a strict Open XML document (found at open): only its layout
     /// reads it; every tool but `render` refuses it, and no change applies to it.
     #[must_use]
@@ -436,7 +428,19 @@ impl WordDoc {
         let mut added = IdsChange::default();
         for draw in draws {
             let value = match &draw.from {
-                DrawFrom::Renewed { part, .. } if !self.begun_written(part) => continue,
+                DrawFrom::Renewed { part, para_id, .. } if !self.para_id_written(part, para_id) => {
+                    // kept: the value the element it replaces holds here (as the
+                    // transaction's earlier splices left it), not the one it was prepared
+                    // with -- a value drawn on a version where the part was written
+                    let kept = match patch.removed().get(draw.node as usize) {
+                        Some(ooxml_xml::Node::Element(old)) => attribute_below(old, &draw.at, &draw.attribute),
+                        _ => None,
+                    };
+                    match kept {
+                        Some(kept) => kept.to_owned(),
+                        None => continue,
+                    }
+                }
                 DrawFrom::Renewed { seed, .. } => {
                     let (values, change) = ids.draw(seed, 1, &self.shared.sequences);
                     ids.apply(&change);
@@ -507,27 +511,13 @@ impl WordDoc {
         Ok(package)
     }
 
-    /// Whether the id of the block at `path` of `part` (in this version) has been written.
-    /// A textId renews against the version last written: an id given at open and never
-    /// written has been seen by no reader of the file, so it stays fresh for every write of
-    /// the transaction that began with its part unwritten (a text edit keeps it whole, the
-    /// second edit of the block in that transaction too); the next transaction renews it.
-    #[must_use]
-    pub fn id_written(&self, part: &str, path: &[u32]) -> bool {
-        let base = self.begun.as_ref().unwrap_or(&self.package);
-        if !matches!(base.part(part), Some(ooxml_opc::PartVersion::Unwritten(_))) {
-            return true;
-        }
-        let tree = self.package.tree(part).ok().flatten();
-        let now = tree.as_ref().and_then(|t| {
-            ooxml_word_model::docx::at_path(t.root(), path)
-                .and_then(|e| e.attribute(Some(crate::names::W14), "paraId"))
-                .map(str::to_owned)
-        });
-        now.is_none_or(|now| self.para_id_written(part, &now))
-    }
-
-    /// [`WordDoc::id_written`] of the block of `part` whose paraId is `para_id`.
+    /// Whether the id of the block of `part` whose paraId is `para_id` has been written (in
+    /// this version). A textId renews against the version last written: an id given at open
+    /// and never written has been seen by no reader of the file, so it stays fresh for every
+    /// write of the transaction that began with its part unwritten (a text edit keeps it
+    /// whole, the second edit of the block in that transaction too); the next transaction
+    /// renews it. It is a property of the version, which no key names: an edit decides by it
+    /// where its change is applied ([`DrawFrom::Renewed`]), or reads the whole document.
     #[must_use]
     pub fn para_id_written(&self, part: &str, para_id: &str) -> bool {
         let base = self.begun.as_ref().unwrap_or(&self.package);

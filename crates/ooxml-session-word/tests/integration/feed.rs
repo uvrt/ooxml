@@ -586,3 +586,71 @@ fn a_small_budget_is_held_and_a_page_let_go_is_written_again() {
     let mut fresh = Client::default();
     caught_up(&s, &d, &mut fresh, &layout, "a new client");
 }
+
+#[test]
+fn the_host_feed_answers_in_the_wire_shape_and_a_deck_has_none() {
+    use ooxml_session::{FeedError, MemoryBudget};
+    use ooxml_session_word::SessionPages;
+    let pages = SessionPages {
+        setup: ooxml_tools_word::PageSetup::new(
+            crate::common::test_fonts(),
+            ooxml_word_pages::EngineOptions::default(),
+        ),
+        memory: MemoryBudget::new(1 << 30),
+        raster: None,
+    };
+    let s = Session::new(
+        SessionConfig::default(),
+        context(),
+        ooxml_session_word::formats(Some(pages)),
+    );
+    let doc = plain(30, 30);
+    let d = s.open(doc.package(), DocKind::Docx, "d.docx").unwrap();
+    let ctx = CallContext::default();
+    let first = s.feed(&d, None, true, &ctx).unwrap().changes;
+    assert_eq!(first["full"], json!(true));
+    let token = first["token"].as_str().unwrap().to_owned();
+    assert_eq!(token, format!("{}-{}", s.nonce(), first["version"]));
+    let list = first["pages"]["list"].as_array().unwrap();
+    let changed = first["pages"]["changed"].as_array().unwrap();
+    assert!(list.len() > 1 && changed.len() == list.len());
+    assert!(list[0]["width"].as_str().unwrap().ends_with("pt") && list[0]["width_px"].is_i64());
+    let group = changed[0]["groups"].as_object().unwrap().values().next().unwrap();
+    assert!(group["dy"].is_i64() && group["svg"].is_string());
+    // one paragraph rewritten: its page, its group
+    let Block::Para(p) = &doc.blocks[12] else { panic!() };
+    let edited = call(
+        &s,
+        "word_set_text",
+        json!({"doc": d.to_string(), "target": format!("p:{:08X}", p.0), "text": format!("{}x", text(p))}),
+        &ctx,
+    );
+    assert!(edited.get("error").is_none(), "{edited}");
+    let next = s.feed(&d, Some(&token), true, &ctx).unwrap().changes;
+    assert_eq!(next["full"], json!(false));
+    assert!(next["pages"].get("list").is_none());
+    let changed = next["pages"]["changed"].as_array().unwrap();
+    assert_eq!(changed.len(), 1, "{next:?}");
+    assert_eq!(changed[0]["groups"].as_object().unwrap().len(), 1);
+    assert_eq!(changed[0]["moved"], json!({}));
+    assert_eq!(changed[0]["removed"], json!([]));
+    assert_eq!(next["blocks"]["changed"], json!([format!("p:{:08X}", p.0)]));
+    // without pages: no layout, no pages
+    let parts = s.feed(&d, Some(&token), false, &ctx).unwrap().changes;
+    assert!(parts.get("pages").is_none());
+    assert_eq!(parts["parts"], json!(["word/document.xml"]));
+    // a deck's format keeps no feed
+    let deck = s.open(doc.package(), DocKind::Pptx, "deck.pptx").unwrap();
+    assert!(matches!(
+        s.feed(&deck, None, true, &ctx),
+        Err(FeedError::NoFeed(DocKind::Pptx))
+    ));
+    // a session laying out no pages of its own answers without pages, refuses with them
+    let bare = Session::new(SessionConfig::default(), context(), ooxml_session_word::formats(None));
+    let b = bare.open(doc.package(), DocKind::Docx, "d.docx").unwrap();
+    assert!(bare.feed(&b, None, false, &ctx).is_ok());
+    let Err(FeedError::Format(refused)) = bare.feed(&b, None, true, &ctx) else {
+        panic!("pages without an engine")
+    };
+    assert_eq!(refused.to_json()["code"], json!("refused"));
+}
