@@ -125,7 +125,7 @@ impl WordDrawings {
 
     /// The part a drawing sits in (`Frames.owner`): its story's, a note's notes part, else
     /// the main document part.
-    fn owner(&self, part: Option<&str>, path: &str) -> Option<String> {
+    pub(crate) fn owner(&self, part: Option<&str>, path: &str) -> Option<String> {
         if let Some(part) = part {
             return Some(part.to_owned());
         }

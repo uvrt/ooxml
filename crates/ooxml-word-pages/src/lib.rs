@@ -42,6 +42,7 @@ mod digests;
 mod disk;
 mod drawing_said;
 pub mod drawings;
+mod drawn_parts;
 mod engine;
 mod error;
 mod fonts;

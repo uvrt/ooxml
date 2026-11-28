@@ -169,7 +169,7 @@ pub type LineDigest = (
 /// What a page paints, digested ([`PageEngine::page_digests`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PageDigests {
-    /// Its frame, rules, pictures and drawings.
+    /// Everything it draws besides its lines ([`crate::digests`]).
     pub rest: ooxml_base::Digest,
     /// Each line: its paragraph's path, its story (a header's or footer's: its kind and
     /// part), its paint.
@@ -228,6 +228,9 @@ pub struct PageEngine {
     painted: Memo<(u64, usize), Painted>,
     /// The metafiles its versions' pages drew, by their parts' content.
     pictures: Arc<crate::pictures::PictureMemo>,
+    /// The content digests of the parts beside the text its versions' pages read, by the
+    /// parts' content ([`crate::drawn_parts`]).
+    part_digests: crate::drawn_parts::PartDigests,
     /// The serial the next version laid out takes.
     serial: u64,
     limits: Limits,
@@ -304,6 +307,7 @@ impl PageEngine {
             glyph_size: options.glyph_size,
             painted: Memo::new(Arc::clone(&budgets.paint)),
             pictures: Arc::new(crate::pictures::PictureMemo::new(Arc::clone(&budgets.paint))),
+            part_digests: crate::drawn_parts::PartDigests::new(Arc::clone(&budgets.paint)),
             serial: 0,
             budgets,
             limits: options.limits,

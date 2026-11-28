@@ -430,9 +430,8 @@ fn doc_step(before: &WordDoc, now: &WordDoc) -> DocStep {
 impl Feed {
     /// The pages' records advanced to `head` from `previous` (written afresh where there is
     /// none): laid out by the host's engine within the call's limit; the pages the engine's
-    /// comparison says differ, those drawing a block the change touched and those past the
-    /// last before written again -- the engine's lock taken per page -- and kept in the
-    /// cache.
+    /// comparison says differ and those past the last before written again -- the
+    /// engine's lock taken per page -- and kept in the cache.
     fn pages_advanced(
         &self,
         ask: &Ask<'_>,
@@ -451,7 +450,7 @@ impl Feed {
         let seq = head.seq().0;
         let count = laid.page_count();
         let to_write: BTreeSet<usize> = match previous {
-            Some(p) => changed_pages(layout, p, &laid, head),
+            Some(p) => changed_pages(layout, p, &laid),
             None => (0..count).collect(),
         };
         let mut written = BTreeMap::new();
@@ -594,16 +593,9 @@ fn page_change(
 }
 
 /// The pages of `laid` to write again after `previous`: those the engine's comparison says
-/// differ (every page where it cannot compare), those whose groups `previous` wrote draw a
-/// block the change from `previous`'s version touched or the top-level block holding it (a
-/// text box's text, a drawing's paint: what a page's comparison does not digest; a page that
-/// draws it anew is one the comparison lists), and those past the last before.
-fn changed_pages(
-    layout: &dyn WordLayout,
-    previous: &PagesAt,
-    laid: &Arc<LaidVersion>,
-    head: &Snapshot<WordDoc>,
-) -> BTreeSet<usize> {
+/// differ (every page where it cannot compare) -- its digests take in everything a page's
+/// feed writing draws but paths -- and those past the last before.
+fn changed_pages(layout: &dyn WordLayout, previous: &PagesAt, laid: &Arc<LaidVersion>) -> BTreeSet<usize> {
     let count = laid.page_count();
     if Arc::ptr_eq(&previous.laid, laid) {
         return BTreeSet::new();
@@ -614,54 +606,7 @@ fn changed_pages(
     };
     let mut out: BTreeSet<usize> = reflow.changed.iter().map(|p| p - 1).collect();
     out.extend(previous.records.pages.len()..count);
-    let touched = touched_blocks(previous.at.doc(), head.doc());
-    if !touched.is_empty() {
-        for (page, record) in previous.records.pages.iter().enumerate().take(count) {
-            if record.groups.iter().any(|g| touched.contains(group_block(&g.id))) {
-                out.insert(page);
-            }
-        }
-    }
     out
-}
-
-/// The block a body group of the feed's is drawn for, by id: a paragraph's (`p:<id>`), a
-/// drawing's paragraph's (`d:<id>/<run>.<index>`), a table row's table's (`<table
-/// id>/<row id>/under`).
-fn group_block(id: &str) -> &str {
-    let id = id.strip_prefix("d:").unwrap_or(id);
-    id.split('/').next().unwrap_or(id)
-}
-
-/// The body's blocks (by id) the change from `before` to `now` changed or brought, and the
-/// top-level blocks holding them.
-fn touched_blocks(before: &WordDoc, now: &WordDoc) -> HashSet<String> {
-    let delta = now.delta_from(before);
-    let Ok(docx) = now.docx() else {
-        return HashSet::new();
-    };
-    let Some(body) = docx.parts.iter().find(|p| p.part == docx.main) else {
-        return HashSet::new();
-    };
-    let mut out = HashSet::new();
-    for story in delta.stories.iter().filter(|s| s.story == StoryIx::BODY) {
-        let StoryDelta::Blocks(blocks) = &story.delta else {
-            continue;
-        };
-        for key in blocks.changed.iter().chain(blocks.came.iter().map(|(k, _)| k)) {
-            out.extend(body.ids.id_of_key(*key).map(|id| id.to_string()));
-            out.extend(top_block(body, *key));
-        }
-    }
-    out
-}
-
-/// The id of the body's top-level block holding the block `key` names.
-fn top_block(body: &ooxml_word_model::docx::StoryPart, key: ooxml_word_model::ids::BlockKey) -> Option<String> {
-    let place = body.ids.place_of(key)?;
-    let depth = body.ids.container().len() + 1;
-    let top = body.ids.key_at(StoryIx::BODY, place.get(..depth)?)?;
-    body.ids.id_of_key(top).map(|id| id.to_string())
 }
 
 #[cfg(test)]

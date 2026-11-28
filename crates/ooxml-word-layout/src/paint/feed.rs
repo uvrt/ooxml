@@ -214,6 +214,20 @@ pub fn feed_page(paint: &PagePaint, cx: &SvgContext<'_>) -> FeedPage {
     }
 }
 
+/// The ids of the groups the feed writes the page `paint` as, in drawing order (each
+/// one's block, row or drawing by its durable id, [`feed_page`]'s): what the feed draws
+/// of the page beyond the groups' content -- which item goes in which group, and their
+/// order -- without writing them. A comparison of two versions' pages digests it.
+#[must_use]
+pub fn group_ids(paint: &PagePaint, names: &VersionNames) -> Vec<String> {
+    let mut ids = Ids::default();
+    gathered(paint)
+        .list
+        .iter()
+        .map(|group| ids.unique(group_id(&group.of, paint, names)))
+        .collect()
+}
+
 /// The page's items gathered into groups, in the order the page's SVG draws them.
 fn gathered(paint: &PagePaint) -> Groups<'_> {
     let mut slots: Vec<(usize, &DrawingSlot)> = paint.drawings.iter().enumerate().collect();

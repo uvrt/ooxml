@@ -339,7 +339,14 @@ fn opened(doc: &Doc) -> (Session, DocId, Arc<EnginePages>) {
     (s, d, layout())
 }
 
-fn replay(seed: u64, steps: usize) {
+/// How a replay's steps go: each a forward edit, or every `n`th an undo.
+#[derive(Clone, Copy, Debug)]
+enum Steps {
+    Forward,
+    UndoEvery(usize),
+}
+
+fn replay(seed: u64, steps: usize, how: Steps) {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut doc = Doc::new(&mut rng);
     let (s, d, layout) = opened(&doc);
@@ -347,8 +354,8 @@ fn replay(seed: u64, steps: usize) {
     let first = caught_up(&s, &d, &mut client, &layout, &format!("seed {seed}, first"));
     assert!(first.full);
     for step in 0..steps {
-        let at = format!("seed {seed} step {step}");
-        if step % 5 == 4 {
+        let at = format!("seed {seed} step {step} ({how:?})");
+        if matches!(how, Steps::UndoEvery(n) if step % n == n - 1) {
             let undone = call(&s, "undo", json!({"doc": d.to_string()}), &CallContext::default());
             assert!(undone.get("error").is_none(), "{undone}");
         } else {
@@ -363,7 +370,19 @@ fn replay(seed: u64, steps: usize) {
 #[test]
 fn a_client_that_applies_the_feed_rebuilds_every_page() {
     for seed in 1..=3 {
-        replay(seed, 10);
+        replay(seed, 10, Steps::UndoEvery(5));
+    }
+}
+
+/// Every step a forward edit. Seed 5's step 8 lengthens a paragraph before a text box's
+/// anchor that runs on to the next page: the anchor then breaks fewer lines beside the
+/// box, and the next page draws the same text in the same places as its lines 3 to 7
+/// (they were 6 to 10). The comparison's digest left out a line's number in its paragraph
+/// (`data-docx-line`), so the feed did not send that page (lane fix-feed-compare).
+#[test]
+fn a_client_that_applies_the_feed_rebuilds_every_page_forward_only() {
+    for seed in 4..=6 {
+        replay(seed, 10, Steps::Forward);
     }
 }
 
@@ -371,7 +390,8 @@ fn a_client_that_applies_the_feed_rebuilds_every_page() {
 #[ignore = "many seeds: run by hand (cargo test -- --ignored)"]
 fn a_client_that_applies_the_feed_rebuilds_every_page_many_seeds() {
     for seed in 1..=30 {
-        replay(seed, 16);
+        replay(seed, 16, Steps::Forward);
+        replay(seed, 16, Steps::UndoEvery(5));
     }
 }
 

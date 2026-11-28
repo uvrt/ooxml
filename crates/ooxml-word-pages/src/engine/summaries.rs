@@ -12,25 +12,34 @@
 //! versions' whole summaries would.
 
 use super::{PageDigests, PageEngine, KEY};
-use crate::digests::Lines;
+use crate::digests::{DigestOf, Lines};
 use crate::summary::{canon, first_pages, page_change, page_summary, reflow_of};
 use crate::summary::{Counts, PageSummary, Reflow, Summary};
 use crate::version::{LaidVersion, VersionPages};
+use ooxml_word_layout::paint::PagePaint;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 impl PageEngine {
     /// What page `page` of `version` paints, digested: what besides its lines (its frame,
-    /// rules, pictures and drawings), and each line by its paragraph's path and story --
+    /// rules, pictures, drawings and text boxes, its feed groups, the parts beside the text
+    /// it reads), and each line by its paragraph's path and story --
     /// what tells two versions' pages apart without a reader reading them.
     pub fn page_digests(&mut self, version: &LaidVersion, page: usize) -> Option<PageDigests> {
         let paint = self.painted_page(version, page, false)?;
-        Some(crate::digests::digests(
-            &paint,
-            &version.layout.document.names,
-            KEY,
-            Lines::Page,
-        ))
+        Some(self.digested(version, &paint, Lines::Page))
+    }
+
+    /// `paint`, a page of `version`, digested with the lines `which` says and the parts
+    /// beside the text it reads.
+    fn digested(&self, version: &LaidVersion, paint: &PagePaint, which: Lines) -> PageDigests {
+        let parts = crate::drawn_parts::parts_read(paint, version, &self.part_digests, KEY);
+        let of = DigestOf {
+            names: &version.layout.document.names,
+            faces: &*version.names,
+            parts: &parts,
+        };
+        crate::digests::digests(paint, &of, KEY, which)
     }
 
     /// `version`'s pages compared as the layouts themselves are (docx-agent's
@@ -40,7 +49,7 @@ impl PageEngine {
         let mut pages = Vec::with_capacity(version.layout.page_count());
         for page in 0..version.layout.page_count() {
             let paint = self.painted_page(version, page, false)?;
-            let digests = crate::digests::digests(&paint, &version.layout.document.names, KEY, Lines::WithTextBoxes);
+            let digests = self.digested(version, &paint, Lines::WithTextBoxes);
             pages.push(Arc::new(page_summary(digests, version)));
         }
         let known = pages.len();

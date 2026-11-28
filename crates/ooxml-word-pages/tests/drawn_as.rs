@@ -5,14 +5,18 @@
 //! (`LaidPage::drawn_as`: a page copied after a join, moved only in its flow's places) is
 //! painted exactly as a fresh engine's layout of the version paints that page, its summary
 //! (path-free: lines by their blocks' ids), taken as digested before, is the fresh layout's,
-//! and the changes feed writes it (no paths) as it wrote the page it kept the identity of.
-//! Fixed seeds here; `many_seeds` (ignored) runs more.
+//! and the changes feed writes it (no paths) as it wrote the page it kept the identity of;
+//! and every page the engine's comparison of the two versions calls unchanged, kept or laid
+//! out again, is written alike by the feed and by the page's SVG (paths aside) -- what the
+//! comparison's digests leave out of a page is never drawn (lane fix-feed-compare: a line's
+//! number in its paragraph was). Fixed seeds here; `many_seeds` (ignored) runs more.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
 use ooxml_word_pages::{DiskFonts, EngineBudgets, EngineOptions, FontSetup, PageEngine};
 use ooxml_zip::{Method, NewEntry, Writer};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 struct Unlimited;
@@ -237,8 +241,30 @@ impl Doc {
     }
 }
 
-/// Runs `steps` edits from `seed`; the pages kept drawn as one before, checked.
-fn run_seed(seed: u64, steps: usize) -> usize {
+/// `svg` without the paths its items are written under (an edit before a page moves them).
+fn path_free(svg: &str) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    while let Some(at) = rest.find(" data-docx-path=\"") {
+        out.push_str(&rest[..at]);
+        let value = &rest[at + " data-docx-path=\"".len()..];
+        rest = &value[value.find('"').unwrap() + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What a seed checked: the pages kept drawn as one before, and the pages the comparison
+/// called unchanged.
+#[derive(Default)]
+struct Checked {
+    kept: usize,
+    unchanged: usize,
+}
+
+/// Runs `steps` edits from `seed`; the pages kept drawn as one before, and those compared
+/// unchanged, checked.
+fn run_seed(seed: u64, steps: usize) -> Checked {
     let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let mut doc = Doc::new(&mut rng);
     let mut lazy = engine();
@@ -249,8 +275,14 @@ fn run_seed(seed: u64, steps: usize) -> usize {
             .map(|k| engine.feed_page(v, k).unwrap().0.svg())
             .collect()
     };
+    let svg = |engine: &mut PageEngine, v: &ooxml_word_pages::LaidVersion| -> Vec<String> {
+        (0..v.page_count())
+            .map(|k| path_free(&engine.page_svg(v, k).unwrap().0))
+            .collect()
+    };
     let mut old_feed = feed(&mut lazy, &before);
-    let mut kept = 0;
+    let mut old_svg = svg(&mut lazy, &before);
+    let mut checked = Checked::default();
     for step in 0..steps {
         while !doc.edit(&mut rng) {}
         let bytes = doc.package();
@@ -272,7 +304,7 @@ fn run_seed(seed: u64, steps: usize) -> usize {
                 })
             });
             let Some(j) = was else { continue };
-            kept += 1;
+            checked.kept += 1;
             let at = format!("seed {seed} step {step}: page {k} drawn as page {j} before, {doc:?}");
             assert_eq!(summary.pages[k], from_scratch.pages[k], "{at}");
             assert_eq!(old.pages[j], from_scratch.pages[k], "{at}");
@@ -283,29 +315,60 @@ fn run_seed(seed: u64, steps: usize) -> usize {
             assert_eq!(written, fresh.feed_page(&alone, k).unwrap().0.svg(), "{at}");
             assert_eq!(old_feed[j], written, "{at}");
         }
-        old_feed = feed(&mut lazy, &version);
+        // each page the comparison calls unchanged is written as it was
+        let new_feed = feed(&mut lazy, &version);
+        let new_svg = svg(&mut lazy, &version);
+        let compared = lazy.compare(&version, &before, &HashMap::new()).unwrap();
+        for k in 0..version.page_count().min(before.page_count()) {
+            if compared.changed.contains(&(k + 1)) {
+                continue;
+            }
+            checked.unchanged += 1;
+            let at = format!("seed {seed} step {step}: page {k} compared unchanged, {doc:?}");
+            assert_eq!(old_feed[k], new_feed[k], "{at}");
+            assert_eq!(old_svg[k], new_svg[k], "{at}");
+        }
+        old_feed = new_feed;
+        old_svg = new_svg;
         before = version;
         old = summary;
     }
-    kept
+    checked
 }
 
-#[test]
-fn a_page_drawn_as_one_before_draws_what_a_fresh_layout_draws() {
-    let kept: usize = (1..=3).map(|seed| run_seed(seed, 8)).sum();
-    println!("{kept} pages kept their drawing identity");
+/// The seeds' checks summed, each kind of page exercised.
+fn run_seeds(seeds: std::ops::RangeInclusive<u64>, steps: usize) {
+    let (mut kept, mut unchanged) = (0, 0);
+    for seed in seeds {
+        let checked = run_seed(seed, steps);
+        kept += checked.kept;
+        unchanged += checked.unchanged;
+    }
+    println!("{kept} pages kept their drawing identity, {unchanged} compared unchanged");
     assert!(
         kept > 0,
         "no page kept its drawing identity: the property was not exercised"
     );
+    assert!(unchanged > kept, "few pages compared unchanged: {unchanged}");
+}
+
+#[test]
+fn a_page_drawn_as_one_before_draws_what_a_fresh_layout_draws() {
+    run_seeds(1..=3, 8);
+}
+
+/// Seed 33's step 2 lays a page out again whose lines draw what they drew before, each in
+/// its place, but are other lines of their paragraph (`data-docx-line`): the comparison
+/// must not call it unchanged (lane fix-feed-compare; seed 51's step 9 is another).
+#[test]
+fn a_page_whose_lines_are_others_of_their_paragraph_is_not_compared_unchanged() {
+    run_seed(33, 3);
 }
 
 #[test]
 #[ignore = "many seeds: run by hand (cargo test -- --ignored)"]
 fn many_seeds() {
-    let kept: usize = (1..=40).map(|seed| run_seed(seed, 14)).sum();
-    println!("{kept} pages kept their drawing identity");
-    assert!(kept > 0);
+    run_seeds(1..=40, 14);
 }
 
 #[test]
@@ -330,3 +393,4 @@ fn an_insert_before_an_early_paragraph_digests_only_the_pages_it_changed() {
         found.changed.len()
     );
 }
+
