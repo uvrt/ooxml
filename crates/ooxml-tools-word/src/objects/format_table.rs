@@ -253,7 +253,7 @@ fn part_formats(
             let row = accepted.row(given(args.row, "row")?, "row", retry)?;
             let column = given(args.column, "column")?;
             let column = if accepted.table.active() {
-                let grid = accepted.grid_column(column, "column", retry)?;
+                let grid = accepted.row_grid_column(row, column, "column", retry)?;
                 accepted.at(row, grid, retry)?
             } else {
                 usize::try_from(column).unwrap_or(usize::MAX)

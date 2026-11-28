@@ -953,4 +953,46 @@ stream = "docx/tests/test_tracked_reshape_r55"
 case = "test_tracked_reshape_r55::test_deleting_the_first_cell_of_a_pending_merge_is_refused_with_its_id?step0-column 0?#1"
 tool = "word_edit_table"
 fields = ["result.data.columns"]
-cause = "Lane fix-final-grid (ooxml-word-model view grid, #459): the grid now spans the widest row (4 cells on a w:tblGrid of 3), so columns is 4 where the recording said 3; both differ from Word's Accept All of this table (measured: 2), which moves the cells left of each deleted one before it rebuilds the grid -- follow-up lane fix-grid-moved-left"
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463): columns matches Word's Accept All (2); the recording (docx-agent) said 3. Word drops the deleted cells that keep nothing and moves the cells after them left before it rebuilds the grid (Word 16.106, fix-moved-left/word-moved.json#R55-gone)"
+
+# view-follows-word-2026-11-28 (lane fix-grid-moved-left, #463): Word's Accept All merges a deleted cell that keeps
+# something into the cell beside it and drops one that keeps nothing, moving the cells after it left, before it rebuilds the grid.
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_the_order_of_the_edits_does_not_matter?rectangle over the deleted column?#1"
+tool = "word_edit_table"
+fields = ["result.data.markdown"]
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463): a deleted cell that keeps something is merged into the cell before it in its row (Word 16.106, fix-moved-left/word-moved.json#Stagger), here the pending merge's continuation, so Orchard spans 1; the old Markdown reader gave the deleted cell's columns to the last cell in its line (Orchard colspan 2, five columns in a row of four). Word's Accept All of this document writes [Orchard][continuation s2][signed off] (fix-moved-left/word-check.json#r55-orchard)"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_the_order_of_the_edits_does_not_matter?rectangle over the deleted column?#2"
+tool = "word_edit_table"
+fields = ["result.data.markdown"]
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463): a deleted cell that keeps something is merged into the cell before it in its row (Word 16.106, fix-moved-left/word-moved.json#Stagger), here the pending merge's continuation, so Orchard spans 1; the old Markdown reader gave the deleted cell's columns to the last cell in its line (Orchard colspan 2, five columns in a row of four). Word's Accept All of this document writes [Orchard][continuation s2][signed off] (fix-moved-left/word-check.json#r55-orchard)"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_a_cell_never_carries_two_deletion_records_and_the_file_validates?merge-set_cells-delete_column2?#1"
+tool = "word_edit_table"
+fields = ["result.data.markdown"]
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463): a deleted cell that keeps something is merged into the cell before it in its row (Word 16.106, fix-moved-left/word-moved.json#Stagger), here the pending merge's continuation, so Orchard spans 1; the old Markdown reader gave the deleted cell's columns to the last cell in its line (Orchard colspan 2, five columns in a row of four). Word's Accept All of this document writes [Orchard][continuation s2][signed off] (fix-moved-left/word-check.json#r55-orchard)"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_a_cell_never_carries_two_deletion_records_and_the_file_validates?merge-delete_column-delete_column?#1"
+tool = "word_edit_table"
+fields = ["result.app", "result.app.changed_parts[0].doc", "result.app.changed_parts[0].part", "result.app.touched[0].blocks[0]", "result.app.touched[0].blocks[1]", "result.app.touched[0].doc", "result.app.touched[0].heading", "result.app.touched[0].level", "result.app.touched[0].part", "result.changed[0]", "result.checks.reflow", "result.checks.validate.baseline", "result.created", "result.data.columns", "result.data.columns_deleted_pending[0]", "result.data.columns_deleted_pending[1]", "result.data.id", "result.data.markdown", "result.data.rows", "result.doc", "result.error.code", "result.error.details.not_supported", "result.error.field", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.version", "result.warnings[0]", "result.warnings[1]"]
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463; ruling moved-column-refused): in row 1 Ines keeps nothing and goes, and draft (its text kept) merges into Harbour, so Word's Accept All writes [Harbour s2][awaits] above [Area][Phase][Remark] (fix-moved-left/word-check.json#r55-refused): col 1 as accepted is Harbour's second half in row 1 and Phase elsewhere, no one grid column, and delete_column 1 is refused as not supported naming row 1 where the recording deleted grid column 2"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_tables_r54"
+case = "test_tracked_tables_r54::test_every_tracked_table_change_is_listed_under_its_author?merge rectangle-word_edit_table-arguments6?#1"
+tool = "word_edit_table"
+fields = ["result.data.markdown"]
+cause = "Lane fix-grid-moved-left (ooxml-word-model view grid, #463): a deleted cell that keeps something is merged into the cell before it in its row (Word 16.106, fix-moved-left/word-moved.json#Stagger), here the pending merge's continuation, so Orchard spans 1; the old Markdown reader gave the deleted cell's columns to the last cell in its line (Orchard colspan 2, five columns in a row of four). Word's Accept All of this document writes [Orchard][continuation s2][signed off] (fix-moved-left/word-check.json#r55-orchard)"

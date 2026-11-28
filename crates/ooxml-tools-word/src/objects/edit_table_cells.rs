@@ -31,6 +31,11 @@ pub(super) fn cells_change(
     if args.action == TableAction::Merge {
         let first = args.first.as_ref().ok_or_else(|| needed("first", "", retry.clone()))?;
         let last = args.last.as_ref().ok_or_else(|| needed("last", "", retry.clone()))?;
+        let span = |a: i64, b: i64| {
+            let index = |n: i64| usize::try_from(n.max(0)).unwrap_or(usize::MAX);
+            index(a.min(b))..index(a.max(b)).saturating_add(1)
+        };
+        accepted.whole_columns(span(first.col, last.col), "last.col", retry)?;
         let (r1, c1) = accepted.place(first.row, first.col, "first", retry)?;
         let (r2, c2) = accepted.place(last.row, last.col, "last", retry)?;
         if !tracked {

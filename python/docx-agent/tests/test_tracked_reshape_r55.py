@@ -282,13 +282,33 @@ def SC(row, col, text):
     [M(1, 0, 1, 1), SC(1, 0, "Haven"), DC(1)],
     [M(1, 1, 2, 2), SC(1, 1, "Bo"), DC(2)],
     [DC(1), M(1, 0, 1, 1), SC(1, 0, "Haven")],
-    [M(1, 0, 1, 2), DC(1), DC(1)],
     [S(1, 0, rows=2, columns=1), DC(2), M(1, 1, 2, 1)],
 ], ids=lambda steps: "-".join(s["action"] for s in steps))
 def test_a_cell_never_carries_two_deletion_records_and_the_file_validates(box, steps):
     """A merge, a cell's text and a column deletion in any order: one w:cellDel per cell at
     most (the schema allows one), and nothing for validation to find."""
     document = _made(box, steps)
+    for row in word_docs.rows_of(_tables(document)[-1]):
+        for cell in row.iter(_W + "tc"):
+            assert len(cell.findall(f"{_W}tcPr/{_W}cellDel")) <= 1
+    assert _check(box, document)["validate"]["problems"] == []
+
+
+def test_a_column_no_one_grid_column_as_accepted_is_refused(box):
+    """After a merge and a column deletion, row 1 as accepted is [Harbour over two columns]
+    [awaits figures]: Word's Accept All drops the deleted cell that keeps nothing and merges
+    the one that keeps its text into Harbour (Word 16.106, lane fix-grid-moved-left), so
+    column 1 is Harbour's second half there and Phase in the other rows.  Deleting it is
+    refused as not supported, naming row 1, and the document stays valid."""
+    session, _ = _opened(box)
+    for step in (M(1, 0, 1, 2), DC(1)):
+        ok(box, session, "word_edit_table", doc="d1", table=_last_table(_document(session)), **step)
+    refused = call(box, session, "word_edit_table", doc="d1", table=_last_table(_document(session)), **DC(1))
+    assert not refused.ok
+    error = refused.to_json()["error"]
+    assert error["details"]["not_supported"] == "a column position whose cells pending cell changes move"
+    assert "in row(s) 1 " in error["message"] and "edit the cells by row" in error["message"]
+    document = _document(session)
     for row in word_docs.rows_of(_tables(document)[-1]):
         for cell in row.iter(_W + "tc"):
             assert len(cell.findall(f"{_W}tcPr/{_W}cellDel")) <= 1

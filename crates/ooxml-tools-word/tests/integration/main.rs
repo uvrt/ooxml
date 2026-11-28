@@ -20,6 +20,7 @@ mod follow;
 mod held_targets;
 mod keeps;
 mod markdown_like;
+mod moved_cells;
 mod no_head;
 mod objects;
 mod reads;

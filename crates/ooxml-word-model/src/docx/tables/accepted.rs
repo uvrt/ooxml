@@ -1,22 +1,24 @@
 //! Owns: a table as accepting its tracked changes leaves it, as docx-agent's tools count its
 //! positions (`tools/objects.py`, `_Accepted`; `edit/tables.py`, `accepted_columns` and
 //! `cells_lost_on_accept`; `edit/provenance.py`, `accepted_rows`): the document rows kept
-//! (a row whose deletion is pending is not counted), the grid columns kept (Word's Accept
-//! All rebuilds the grid, [`ViewGrid`]: a deleted cell whose content is kept widens the cell
-//! before it, a grid column only removed cells cover goes, grid columns no cell divides are
-//! one), the positions a cell taken into the one before it covers, the
-//! cells Accept All removes with their text; a position given as accepted mapped to the
-//! document's row and grid column, refused past the table (with its shape as accepted) or in
-//! a cell Accept All removes, and what it stepped over or into said once as a note. The one
-//! wording of these, for the tools and the edit core.
+//! (a row whose deletion is pending is not counted), the columns as accepted (Word's Accept
+//! All rebuilds the grid, [`ViewGrid`]: a deleted cell merged into the cell beside it, or
+//! gone with the cells after it moved left; grid columns no cell divides are one), the
+//! positions a cell merged or taken into another covers, the cells Accept All removes with
+//! their text; a position given as accepted mapped to the document's row and grid column --
+//! row by row where the cells of a column as accepted are not at one grid column
+//! ([`Accepted::to_row_grid`]), a whole column refused there as not supported
+//! ([`Accepted::whole_columns`]) -- refused past the table (with its shape as accepted) or
+//! in a cell Accept All removes, and what it stepped over or into said once as a note. The
+//! one wording of these, for the tools and the edit core.
 //!
 //! Must not: change a table.
 
 use super::labels::labelled;
-use super::{placed_cells, TableGrid};
+use super::{grid_widths, placed_cells, TableGrid};
 use crate::address::AddressError;
 use crate::ids::W;
-use crate::view::{cell_ends, content_kept, CellEnds, View, ViewGrid};
+use crate::view::{cell_ends, View, ViewGrid};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
@@ -76,6 +78,9 @@ pub(super) struct Layout {
     pub(super) joined: Vec<Range<usize>>,
     pub(super) grid_columns: usize,
     pub(super) columns: usize,
+    pub(super) deleted: Vec<usize>,
+    pub(super) moved: Vec<Vec<usize>>,
+    pub(super) view: Option<ViewGrid>,
 }
 
 /// A position refused: the error, and the argument it is about.
@@ -113,9 +118,9 @@ pub struct Accepted {
     /// Whether a cell's last paragraph mark is a pending deletion Accept All takes away (the
     /// next cell taken in, or the cell removed with its text).
     pub cell_ends: bool,
-    /// The grid's column count as accepted, before columns go or are joined: `w:tblGrid`'s
-    /// to the widest row, and one for each column of the view past it
-    /// ([`ViewGrid::grid_columns`], [`ViewGrid::past_grid`]).
+    /// The grid's column count as accepted where nothing is pending: `w:tblGrid`'s to the
+    /// widest row, and one for each column of the view past it (positions count otherwise
+    /// where the columns as accepted are not these).
     pub columns: usize,
     /// The document's row count.
     pub total_rows: usize,
@@ -130,6 +135,30 @@ pub struct Accepted {
     joined: Vec<Range<usize>>,
     /// `w:tblGrid`'s columns before the widest row's end: those a column not kept is one of.
     grid_columns: usize,
+    /// The grid columns accepting deletes: only cells it removes (or takes into another)
+    /// cover them, in every row.
+    deleted_columns: Vec<usize>,
+    /// Per column as accepted, the document rows whose cell there is not at its own grid
+    /// columns (cells before it removed and the cells after them moved left, or merged
+    /// across it): such a column is no one grid column.
+    moved: Vec<Vec<usize>>,
+    /// The table's grid as accepted, row by row (`None` for a table with nothing pending).
+    view: Option<ViewGrid>,
+}
+
+/// The form refused where a column position of a table as accepted is no one grid column
+/// (`details.not_supported`).
+pub const MOVED_COLUMN: &str = "a column position whose cells pending cell changes move";
+
+/// The grid column the first row's cell over column `column` of `grid` begins at (a column
+/// of the view at no grid line), or the last grid line before it.
+fn first_cell_at(grid: &ViewGrid, column: usize) -> usize {
+    grid.rows()
+        .iter()
+        .flatten()
+        .find_map(|r| r.at(column).map(|c| c.source.start))
+        .or_else(|| (0..column).rev().find_map(|k| grid.source_line(k)))
+        .unwrap_or(0)
 }
 
 /// Python's `" ".join(text.split())`, shortened to `limit` characters with an ellipsis
@@ -193,14 +222,17 @@ impl TableGrid<'_> {
             joined,
             grid_columns,
             columns,
+            deleted,
+            moved,
+            view,
         } = self.accepted_layout();
         let row_texts = (0..self.rows.len())
             .filter(|r| !rows.contains(r))
             .map(|r| (r, self.first_cell_text(r)))
             .collect();
-        let headers = (0..grid_columns)
-            .filter(|c| !kept.contains(c) && !joined.iter().any(|j| j.contains(c)))
-            .map(|c| (c, self.cell_all_text(0, c).unwrap_or_default()))
+        let headers = deleted
+            .iter()
+            .map(|&c| (c, self.cell_all_text(0, c).unwrap_or_default()))
             .collect();
         // a run is one cell's columns, so one position of it answers for all
         let mut merged = ColumnRuns::default();
@@ -226,6 +258,9 @@ impl TableGrid<'_> {
             merged,
             joined,
             grid_columns,
+            deleted_columns: deleted,
+            moved,
+            view,
         }
     }
 
@@ -245,51 +280,71 @@ impl TableGrid<'_> {
             let ends = cell_ends(&elements);
             // a row whose deletion is pending goes whole: its cells' ends take nothing in
             out.cell_ends |= !deleted_row && ends.any();
-            let CellEnds { groups, gone } = ends;
-            // each cell taken into the one before it, to that cell's first grid column
-            let mut taken: Vec<(*const Element, usize)> = Vec::new();
-            for group in &groups {
-                let Some(start) = group.first().and_then(|n| shown.get(*n)).map(|c| c.1) else {
-                    continue;
-                };
-                taken.extend(
-                    group
-                        .iter()
-                        .skip(1)
-                        .filter_map(|n| shown.get(*n).map(|c| (Arc::as_ptr(&c.0), start))),
-                );
-            }
-            let removed: Vec<*const Element> = gone
-                .iter()
-                .filter_map(|n| shown.get(*n).map(|c| Arc::as_ptr(&c.0)))
-                .filter(|p| !taken.iter().any(|(t, _)| t == p))
-                .collect();
-            let mut before: Option<usize> = None;
-            for (cell, start, span) in &cells {
-                let me = Arc::as_ptr(cell);
-                let deleted = View::Final.removes_cell(cell);
-                let into = taken.iter().find(|(t, _)| *t == me).map(|(_, s)| *s);
-                let widens = match before {
-                    Some(first) if deleted && content_kept(cell) => Some(first),
-                    _ => None,
-                };
-                if let Some(first) = widens.or(into) {
-                    out.given.insert(r, *start..start.saturating_add(*span), first);
-                } else if removed.contains(&me) {
-                    if !deleted_row {
-                        out.lost.insert((r, *start));
+            if !deleted_row {
+                for n in ends.lost() {
+                    if let Some(cell) = shown.get(n) {
+                        out.lost.insert((r, cell.1));
                     }
-                } else if !deleted {
-                    before = Some(*start);
                 }
             }
         }
         let rows: Vec<&Element> = self.rows.iter().map(|r| &**r).collect();
-        let grid = ViewGrid::of(View::Final, &rows, columns);
-        out.grid_columns = grid.grid_columns();
-        out.columns = grid.grid_columns() + grid.past_grid();
-        out.kept = grid.starts();
-        out.joined = grid.columns().iter().filter(|c| c.len() > 1).cloned().collect();
+        let grid = ViewGrid::of(View::Final, &rows, &grid_widths(&self.table));
+        // a cell merged into one beside it, or taken in, answers as that cell
+        for (r, row) in grid.rows().iter().enumerate() {
+            let (Some(row), Some(cells)) = (row, self.rows.get(r).map(|e| placed_cells(e))) else {
+                continue;
+            };
+            for cell in &row.cells {
+                for part in cell.parts.iter().filter(|p| **p != cell.cell) {
+                    if let Some((_, start, span)) = cells.get(*part) {
+                        out.given
+                            .insert(r, *start..start.saturating_add(*span), cell.source.start);
+                    }
+                }
+            }
+        }
+        let reach = grid.reach();
+        out.grid_columns = columns.min(reach);
+        out.columns = out.grid_columns + reach.saturating_sub(columns);
+        let width = grid.width();
+        out.kept = (0..width)
+            .map(|k| {
+                grid.source_column(k)
+                    .map(|c| c.start)
+                    .or_else(|| grid.source_line(k))
+                    .unwrap_or_else(|| first_cell_at(&grid, k))
+            })
+            .collect();
+        out.joined = (0..width)
+            .filter_map(|k| grid.source_column(k))
+            .filter(|c| c.len() > 1)
+            .collect();
+        out.moved = (0..width).map(|k| grid.moved_rows(k)).collect();
+        // a grid column only cells accepting removes with nothing kept cover, in every row
+        // (one merged into a cell beside it, or taken in, is that cell's)
+        let covered: Vec<Vec<Range<usize>>> = grid
+            .rows()
+            .iter()
+            .enumerate()
+            .filter_map(|(r, row)| {
+                let row = row.as_ref()?;
+                let cells = self.rows.get(r).map(|e| placed_cells(e)).unwrap_or_default();
+                let mut out: Vec<Range<usize>> = vec![row.source_before.clone(), row.source_after.clone()];
+                for cell in &row.cells {
+                    out.extend(
+                        cell.parts
+                            .iter()
+                            .filter_map(|p| cells.get(*p).map(|(_, s, n)| *s..s.saturating_add(*n))),
+                    );
+                }
+                Some(out)
+            })
+            .collect();
+        out.deleted = (0..out.grid_columns)
+            .filter(|c| covered.iter().all(|row| !row.iter().any(|r| r.contains(c))))
+            .collect();
+        out.view = Some(grid);
         out
     }
 
@@ -369,13 +424,64 @@ impl Accepted {
             merged: ColumnRuns::default(),
             joined: Vec::new(),
             grid_columns: columns,
+            deleted_columns: Vec::new(),
+            moved: Vec::new(),
+            view: None,
         }
     }
 
     /// Whether the columns or cells count otherwise as accepted.
     #[must_use]
     pub fn active(&self) -> bool {
-        self.kept.len() != self.columns || !self.given.is_empty() || !self.lost.is_empty()
+        self.kept.len() != self.columns || !self.given.is_empty() || !self.lost.is_empty() || self.any_moved()
+    }
+
+    /// Whether a column as accepted is no one grid column: a row's cell there moved (cells
+    /// before it removed) or merged across it.
+    #[must_use]
+    pub fn any_moved(&self) -> bool {
+        self.moved.iter().any(|rows| !rows.is_empty())
+    }
+
+    /// Refused where column positions `columns` as accepted are not each one grid column in
+    /// every row: Word's Accept All removes cells and moves the cells after them left before
+    /// it rebuilds the grid, so such a column is a different grid column in different rows
+    /// (`field` the argument).
+    ///
+    /// # Errors
+    /// `not_supported` at `field`, naming the rows (as accepted) where it differs.
+    pub fn whole_columns(&self, columns: Range<usize>, field: &str) -> Result<(), Misplaced> {
+        let mut rows: Vec<usize> = columns
+            .clone()
+            .filter_map(|c| self.moved.get(c))
+            .flatten()
+            .map(|r| self.from_row(*r))
+            .collect();
+        if rows.is_empty() {
+            return Ok(());
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        let which = if columns.len() == 1 {
+            format!("col {}", columns.start)
+        } else {
+            format!("cols {} to {}", columns.start, columns.end - 1)
+        };
+        let message = format!(
+            "{field}: {which} of {} as accepted is not one grid column in every row: in row(s) {} pending cell \
+             changes remove cells, and Word's Accept All moves the cells after them left before it rebuilds the grid. \
+             Accept or reject the pending cell changes first, or edit the cells by row",
+            self.table,
+            joined(&rows)
+        );
+        Err(Misplaced {
+            error: AddressError {
+                code: "not_supported",
+                message,
+                options: Vec::new(),
+            },
+            field: field.to_owned(),
+        })
     }
 
     /// Whether the rows count otherwise as accepted.
@@ -438,9 +544,7 @@ impl Accepted {
     /// The grid columns before `end` accepting deletes (not kept, not joined to a column
     /// before them).
     fn deleted_columns(&self, end: usize) -> Vec<usize> {
-        (0..end.min(self.grid_columns))
-            .filter(|c| !self.kept.contains(c) && !self.joined.iter().any(|j| j.contains(c)))
-            .collect()
+        self.deleted_columns.iter().copied().filter(|c| *c < end).collect()
     }
 
     /// The runs of grid columns before `end` that are one column as accepted, said: `grid
@@ -507,11 +611,11 @@ impl Accepted {
     /// `not_found` at `field`, the positions the options.
     pub fn to_grid(&self, column: i64, field: &str, notes: &mut Vec<String>) -> Result<usize, Misplaced> {
         let Some(grid) = usize::try_from(column).ok().and_then(|c| self.kept.get(c).copied()) else {
-            return Err(Misplaced {
-                error: AddressError::not_found(format!("{field} {column}: {}", self.shape()), positions(self.width())),
-                field: field.to_owned(),
-            });
+            return Err(self.past_columns(column, field));
         };
+        if let Ok(at) = usize::try_from(column) {
+            self.whole_columns(at..at + 1, field)?;
+        }
         if usize::try_from(column).ok() != Some(grid) {
             let gone = self.deleted_columns(grid);
             let head = if gone.is_empty() {
@@ -531,6 +635,52 @@ impl Accepted {
             };
             if !notes.iter().any(|n| n.starts_with(&head)) {
                 notes.push(format!("{head}; col {column} is grid column {grid}"));
+            }
+        }
+        Ok(grid)
+    }
+
+    fn past_columns(&self, column: i64, field: &str) -> Misplaced {
+        Misplaced {
+            error: AddressError::not_found(format!("{field} {column}: {}", self.shape()), positions(self.width())),
+            field: field.to_owned(),
+        }
+    }
+
+    /// The grid column of position `column` in document row `row`: the cell there as
+    /// accepted (a column moved in some rows is that row's own cell), refused past the
+    /// last; what it stepped over said once in `notes`.
+    ///
+    /// # Errors
+    /// `not_found` at `field`, the positions the options.
+    pub fn to_row_grid(
+        &self,
+        row: usize,
+        column: i64,
+        field: &str,
+        notes: &mut Vec<String>,
+    ) -> Result<usize, Misplaced> {
+        let at = usize::try_from(column).ok().filter(|c| *c < self.width());
+        let moved = at.and_then(|c| self.moved.get(c)).is_some_and(|rows| !rows.is_empty());
+        let (Some(at), true) = (at, moved) else {
+            return self.to_grid(column, field, notes);
+        };
+        let laid = self.view.as_ref().and_then(|v| v.row(row));
+        let Some(cell) = laid.and_then(|r| r.at(at)) else {
+            return Err(self.past_columns(column, field));
+        };
+        let view = self.view.as_ref().and_then(|v| Some((v, v.row(row)?)));
+        let mapped = view.and_then(|(v, r)| v.row_source(r, at)).flatten();
+        let grid = mapped.unwrap_or(cell.source.start);
+        if !cell.in_place && usize::try_from(column).ok() != Some(grid) {
+            let note = format!(
+                "col positions count row {} of {} as accepted: pending cell changes remove cells before it, and the \
+                 cells after them move left; col {column} is grid column {grid} in that row",
+                self.from_row(row),
+                self.table
+            );
+            if !notes.contains(&note) {
+                notes.push(note);
             }
         }
         Ok(grid)
@@ -606,7 +756,7 @@ impl Accepted {
         if !self.active() {
             return Ok((row, as_index(column)));
         }
-        let grid = self.to_grid(column, &format!("{field}.col"), notes)?;
+        let grid = self.to_row_grid(row, column, &format!("{field}.col"), notes)?;
         Ok((row, self.at(row, grid, notes)?))
     }
 
@@ -651,8 +801,13 @@ impl Accepted {
             return Ok((row, column));
         }
         let grid_column = match column {
-            Axis::At(at) => self.to_grid(at, "cells[].col", notes)?,
-            Axis::Label(label) => grid.column_labelled_among(&self.kept, 0, label).map_err(unplaced)?,
+            Axis::At(at) => self.to_row_grid(row, at, "cells[].col", notes)?,
+            Axis::Label(label) => {
+                let found = grid.column_labelled_among(&self.kept, 0, label).map_err(unplaced)?;
+                let at = self.from_grid(found);
+                self.whole_columns(at..at + 1, "cells[].col")?;
+                found
+            }
         };
         Ok((row, self.at(row, grid_column, notes)?))
     }

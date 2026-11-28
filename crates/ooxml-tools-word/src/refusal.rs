@@ -21,6 +21,13 @@ pub(crate) fn address_refused(error: AddressError, call: TryCall) -> ToolError {
         "refused" => Refusal::Refused,
         "ambiguous" => Refusal::Ambiguous,
         "unit" => return ToolError::failure(Failure::Unit, error.message).with_way_out(WayOut::call(call)),
+        // a column as accepted that is no one grid column (Word's Accept All moves cells)
+        "not_supported" => {
+            return ToolError::refusal(Refusal::Refused, error.message, WayOut::call(call)).with_detail(
+                ooxml_tools::NOT_SUPPORTED,
+                serde_json::Value::from(ooxml_word_model::docx::tables::MOVED_COLUMN),
+            )
+        }
         _ => Refusal::InvalidArguments,
     };
     let way_out = match WayOut::names(error.options) {

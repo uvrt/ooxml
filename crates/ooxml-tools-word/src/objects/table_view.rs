@@ -198,10 +198,46 @@ impl AcceptedView {
             .map_err(|m| Self::refusal(m, call))
     }
 
+    /// Refused where a column as accepted is no one grid column in every row (Word's Accept
+    /// All moves the cells after removed ones left): a call writing whole columns or rows
+    /// of the table by position (`field` the argument).
+    pub(crate) fn whole_table(&self, field: &str, call: &TryCall) -> Result<(), ToolError> {
+        self.table
+            .whole_columns(0..self.table.width(), field)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// Refused where columns `columns` as accepted are not each one grid column in every
+    /// row (a merge's rectangle).
+    pub(crate) fn whole_columns(
+        &self,
+        columns: std::ops::Range<usize>,
+        field: &str,
+        call: &TryCall,
+    ) -> Result<(), ToolError> {
+        self.table
+            .whole_columns(columns, field)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
     /// The grid column of position `column` (`to_grid`).
     pub(crate) fn grid_column(&mut self, column: i64, field: &str, call: &TryCall) -> Result<usize, ToolError> {
         self.table
             .to_grid(column, field, &mut self.notes)
+            .map_err(|m| Self::refusal(m, call))
+    }
+
+    /// The grid column of position `column` in document row `row`: that row's cell there
+    /// as accepted (`to_row_grid`).
+    pub(crate) fn row_grid_column(
+        &mut self,
+        row: usize,
+        column: i64,
+        field: &str,
+        call: &TryCall,
+    ) -> Result<usize, ToolError> {
+        self.table
+            .to_row_grid(row, column, field, &mut self.notes)
             .map_err(|m| Self::refusal(m, call))
     }
 

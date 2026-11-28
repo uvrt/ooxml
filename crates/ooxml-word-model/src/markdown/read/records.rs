@@ -208,6 +208,8 @@ pub struct CellRecord {
     pub records: Vec<Record>,
     /// The `w:tc`'s place in its part.
     pub path: Box<[u32]>,
+    /// Its place among its row's cells (row-level wrappers seen through).
+    pub cell: usize,
 }
 
 /// A table as read.

@@ -1,6 +1,6 @@
 //! Owns: a table's cells in the final view (Accept All; measured, docx2svg's ROADMAP
 //! "Revisions -- measured" R.3, round 54 R110): whether a deleted cell's content stays (it
-//! widens the cell before it), and a row's cell ends -- a cell whose last paragraph mark is
+//! is merged into a cell beside it, [`super::ViewGrid`]), and a row's cell ends -- a cell whose last paragraph mark is
 //! removed takes the next cell in; the last cell of such a chain, its end removed with no
 //! cell after it, goes with its text.
 //!
@@ -27,27 +27,36 @@ const SHOWN: [&str; 10] = [
 
 /// Whether a deleted cell keeps anything in the final view (docx-agent's `_content_kept`):
 /// content outside deletions and moves away, or a paragraph mark of its own the final view
-/// keeps. Such a cell widens the cell before it.
+/// keeps ([`content_kept_in`]).
 #[must_use]
 pub fn content_kept(cell: &Element) -> bool {
-    fn shown(node: &Element, gone: bool) -> bool {
+    content_kept_in(View::Final, cell)
+}
+
+/// Whether a cell `view` removes keeps anything in it: content outside the revisions the
+/// view drops, or a paragraph mark of its own the view keeps. Word's Accept All and Reject
+/// All merge such a cell into a cell of its row (its text not kept); one that keeps nothing
+/// goes, and the cells after it move left (Word 16.106, lane fix-moved-left; [`super::ViewGrid`]).
+#[must_use]
+pub fn content_kept_in(view: View, cell: &Element) -> bool {
+    fn shown(view: View, node: &Element, gone: bool) -> bool {
         node.child_elements().any(|e| {
-            let gone = gone || Revision::of(e).is_some_and(|r| !View::Final.keeps(r));
+            let gone = gone || Revision::of(e).is_some_and(|r| !view.keeps(r));
             let visible = Ns::W.holds(e.name().namespace())
                 && SHOWN.contains(&e.name().local())
                 && !(e.name().local() == "t" && crate::docx::text::leading_text(e).is_empty());
-            (visible && !gone) || shown(e, gone)
+            (visible && !gone) || shown(view, e, gone)
         })
     }
-    fn marks(node: &Element) -> bool {
+    fn marks(view: View, node: &Element) -> bool {
         node.child_elements().any(|e| {
             if Ns::W.named(e, "tc") {
                 return false;
             }
-            (Ns::W.named(e, "p") && !View::Final.removes_mark(e)) || marks(e)
+            (Ns::W.named(e, "p") && !view.removes_mark(e)) || marks(view, e)
         })
     }
-    shown(cell, false) || marks(cell)
+    shown(view, cell, false) || marks(view, cell)
 }
 
 /// Whether the last block of a cell (or of a control's content) is a paragraph whose mark
@@ -146,4 +155,11 @@ pub fn row_ends(row: &Element) -> CellEnds {
 /// it to widen then. A row of no cells at all is left as it is.
 pub(super) fn no_cell_left(row: &Element) -> bool {
     !crate::docx::tables::cells_at(row, &[]).is_empty() && row_ends(row).groups.is_empty()
+}
+
+/// Whether `view` removes every one of a row's cells (a row of no cells at all is left as
+/// it is).
+pub(super) fn every_cell_removed(view: View, row: &Element) -> bool {
+    let cells = crate::docx::tables::cells_at(row, &[]);
+    !cells.is_empty() && cells.iter().all(|c| view.removes_cell(&c.element))
 }

@@ -1,10 +1,10 @@
 //! Owns: a `w:tbl` in the final view (Accept All; measured, docx2svg's ROADMAP "Tables --
 //! measured" stage 7f and "Revisions -- measured" R.3): deleted rows and cells left out, the
-//! grid as Word rebuilds it from the cells left ([`ViewGrid`]: the columns only removed cells
-//! covered gone, those no cell edge divides one, spans counted in its columns), a deleted
-//! cell whose content is kept
-//! absorbed by the cell before it, a cell whose last mark is deleted taking the next cell
-//! in, content moved out of the table before its row; and where each cell is in its table,
+//! grid as Word rebuilds it from the cells left ([`ViewGrid`]: a removed cell merged into
+//! the cell beside it or gone with the cells after it moving left, columns between the
+//! cells' edges, spans and `w:gridBefore`/`w:gridAfter` counted in them, a vertical merge
+//! the view breaks gone), a removed cell merged into another's properties absorbed by it,
+//! a cell whose last mark is deleted taking the next cell in, content moved out of the table before its row; and where each cell is in its table,
 //! for the table style's regions ([`cell_conditions`], measured round 58).
 //!
 //! Must not: resolve a table's properties (`crate::resolve::table`).
@@ -16,22 +16,16 @@ use crate::docx::tables::{merge_heads, VMerge};
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
 use crate::value::{text, Key, Props, Text, Value};
-use crate::view::{cell_ends, content_kept, CellEnds, View, ViewGrid};
+use crate::view::{cell_ends, CellEnds, View, ViewGrid};
 use crate::w;
 use crate::xmlread::{attr, attr_on, child, elements, local};
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
 use std::sync::Arc;
 
 /// Whether `view` removes a cell.
 fn removed(view: View, cell: &Element) -> bool {
     view.removes_cell(cell)
-}
-
-/// Whether a cell `view` removes widens the cell before it (its content stays).
-fn widens(view: View, cell: &Element) -> bool {
-    removed(view, cell) && content_kept(cell)
 }
 
 /// `parent`'s `w:tr` or `w:tc` children, also those inside row- and cell-level content
@@ -273,9 +267,6 @@ struct Built {
     cell_properties: Vec<Arc<[Props]>>,
     conditions: Vec<Arc<[Arc<[Text]>]>>,
     cell_places: Vec<Arc<[(u32, u32)]>>,
-    /// Each row's cells' source grid columns (a cell's own, and those of the deleted cells
-    /// whose content it takes), and where its `w:gridAfter` begins and ends.
-    columns: Vec<Columns>,
     moved: Vec<(usize, Vec<Block>)>,
 }
 
@@ -288,6 +279,8 @@ struct Shape<'t> {
     headers: usize,
     /// The cells continuing a merge that Accept All starts again or leaves alone.
     heads: &'t HashMap<(usize, usize), VMerge>,
+    /// The table's grid in the view, its rows those read.
+    grid: &'t ViewGrid,
 }
 
 /// One row's plan: its cells shown, and their groups.
@@ -315,39 +308,37 @@ impl Reader<'_> {
         )
     }
 
-    /// A row's cells kept, by their place among its cells, with their properties (a deleted
-    /// cell whose content stays absorbed by the cell before it); each one's source grid
-    /// columns, and its `w:gridAfter`'s, into `built`.
+    /// A row's cells kept, by their place among its cells, with their properties (a removed
+    /// cell merged into one beside it absorbed by that cell: [`ViewGrid`]).
     fn cells_kept<'a>(
         &self,
+        k: usize,
         plan: &Plan<'_>,
         shape: &Shape<'_>,
         all: &[&'a Element],
         kept: &HashSet<*const Element>,
-        built: &mut Built,
     ) -> (Vec<(usize, &'a Element)>, Vec<Props>) {
         let mut cells: Vec<(usize, &Element)> = Vec::new();
         let mut props_of: Vec<Props> = Vec::new();
-        let spec = crate::docx::tables::RowSpec::of(plan.row);
-        let mut column = spec.before;
-        let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
+        let laid = shape.grid.row(k);
         for (j, cell) in all.iter().enumerate() {
-            let columns = column..column.saturating_add(self.view().span(cell));
-            column = columns.end;
-            if kept.contains(&std::ptr::from_ref(*cell)) {
-                cells.push((j, cell));
-                let mut props = accepted_cell_properties(self, cell);
-                headed(&mut props, shape.heads.get(&(plan.index, j)));
-                props_of.push(props);
-                ranges.push(vec![columns]);
-            } else if let Some(last) = props_of.last_mut().filter(|_| widens(self.view(), cell)) {
-                absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
-                if let Some(parts) = ranges.last_mut() {
-                    parts.push(columns);
+            if !kept.contains(&std::ptr::from_ref(*cell)) {
+                continue;
+            }
+            cells.push((j, cell));
+            let mut props = accepted_cell_properties(self, cell);
+            headed(&mut props, shape.heads.get(&(plan.index, j)));
+            let merged = laid.and_then(|r| r.cells.iter().find(|c| c.cell == j));
+            for part in merged.map(|c| c.parts.as_slice()).unwrap_or_default() {
+                let Some(other) = all.get(*part).filter(|_| *part != j) else {
+                    continue;
+                };
+                if removed(self.view(), other) {
+                    absorb(&mut props, &table_properties(child(other, "tcPr"), self.colours()));
                 }
             }
+            props_of.push(props);
         }
-        built.columns.push((ranges, column..column.saturating_add(spec.after)));
         (cells, props_of)
     }
 
@@ -372,7 +363,7 @@ impl Reader<'_> {
                 .collect();
             shape.at.cell((count(plan.index), count(j)), &rel)
         };
-        let (cells, props_of) = self.cells_kept(plan, shape, &all, &kept, built);
+        let (cells, props_of) = self.cells_kept(k, plan, shape, &all, &kept);
         let row_conditions: Vec<Arc<[Text]>> = (0..cells.len())
             .map(|n| {
                 Arc::from(cell_conditions(
@@ -461,6 +452,11 @@ impl Reader<'_> {
         }
         let rows_only: Vec<&Element> = row_elements.iter().map(|(_, r)| *r).collect();
         let headers = leading_header_rows(&rows_only);
+        let grid_of = |start: usize, end: usize| -> ViewGrid {
+            let rows: Vec<&Element> = rows_only.get(start..end).unwrap_or_default().to_vec();
+            ViewGrid::of(self.view(), &rows, &grid_nodes)
+        };
+        let whole = grid_of(0, plans.len());
         let mut built = Built::default();
         let shape = Shape {
             style: &style,
@@ -469,15 +465,11 @@ impl Reader<'_> {
             rows: row_elements.len(),
             headers,
             heads: &heads,
+            grid: &whole,
         };
         for (k, plan) in plans.iter().enumerate() {
             self.row(k, plan, &shape, fields, &mut built);
         }
-        let grid_of = |start: usize, end: usize| -> ViewGrid {
-            let rows: Vec<&Element> = rows_only.get(start..end).unwrap_or_default().to_vec();
-            ViewGrid::of(self.view(), &rows, grid_nodes.len())
-        };
-        let whole = grid_of(0, plans.len());
         let (key, unkeyed) = at.name();
         let table = Table {
             style_id: (!style.is_empty()).then(|| style.clone()),
@@ -485,7 +477,7 @@ impl Reader<'_> {
             key,
             unkeyed_cells: unkeyed.clone(),
             unkeyed,
-            grid: Arc::from(whole.widths(&grid_nodes)),
+            grid: Arc::from(whole.widths()),
             properties: table_properties(props_element, self.colours()),
             row_properties: Arc::from(std::mem::take(&mut built.row_properties)),
             cell_properties: Arc::from(std::mem::take(&mut built.cell_properties)),
@@ -494,16 +486,10 @@ impl Reader<'_> {
             cell_places: Arc::from(std::mem::take(&mut built.cell_places)),
             joined: false,
         };
-        let columns = std::mem::take(&mut built.columns);
-        split(
-            table,
-            built.moved,
-            &|start, end| {
-                let grid = grid_of(start, end);
-                (Arc::from(grid.widths(&grid_nodes)), grid)
-            },
-            &columns,
-        )
+        split(table, built.moved, &|start, end| {
+            let grid = grid_of(start, end);
+            (Arc::from(grid.widths()), grid)
+        })
     }
 }
 
@@ -513,12 +499,9 @@ fn count(k: usize) -> u32 {
 }
 
 /// `table` with each cell's span and each row's `w:gridBefore` and `w:gridAfter` counted in
-/// `grid`'s columns, where they differ from the source grid's; `columns` each row's cells'
-/// source columns and its `w:gridAfter`'s, from `table`'s first row.
-fn regridded(table: Table, grid: &ViewGrid, columns: &[Columns]) -> Table {
-    if grid.is_source() {
-        return table;
-    }
+/// `grid`'s columns, where they differ from the source grid's, and a vertical merge the view
+/// breaks gone (`grid` the view's grid of `table`'s rows, row by row).
+fn regridded(table: Table, grid: &ViewGrid) -> Table {
     let count = |span: usize| Value::Int(i64::try_from(span).unwrap_or(i64::MAX));
     let set = |props: &mut Props, name: &'static str, value: Value, none: bool| {
         if none {
@@ -527,39 +510,53 @@ fn regridded(table: Table, grid: &ViewGrid, columns: &[Columns]) -> Table {
             props.insert(Key::Borrowed(name), value);
         }
     };
+    let source = grid.is_source();
     let cell_properties = table
         .cell_properties
         .iter()
-        .zip(columns)
-        .map(|(row, (ranges, _))| {
+        .enumerate()
+        .map(|(k, row)| {
+            let laid = grid.row(k);
             let cells: Vec<Props> = row
                 .iter()
-                .zip(ranges)
-                .map(|(props, parts)| {
+                .enumerate()
+                .map(|(n, props)| {
                     let mut props = props.clone();
-                    let span = grid.span_of(parts);
-                    set(&mut props, "gridSpan", count(span), span == 1);
+                    let placed = laid.and_then(|r| r.cells.get(n));
+                    if let (false, Some(placed)) = (source, placed) {
+                        let span = placed.columns.len();
+                        set(&mut props, "gridSpan", count(span), span == 1);
+                    }
+                    let continues = matches!(props.get("vMerge").and_then(Value::str), Some("continue"));
+                    if continues && grid.merge_broken(k, n) {
+                        props.remove("vMerge");
+                    }
                     props
                 })
                 .collect();
             Arc::from(cells)
         })
         .collect();
-    let row_properties = table
-        .row_properties
-        .iter()
-        .zip(columns)
-        .map(|(props, (ranges, after))| {
-            let mut props = props.clone();
-            let first = ranges.first().and_then(|p| p.first()).map_or(after.start, |r| r.start);
-            for (name, range) in [("gridBefore", 0..first), ("gridAfter", after.clone())] {
-                if props.contains_key(name) {
-                    set(&mut props, name, count(grid.span(&range)), false);
+    let row_properties = if source {
+        table.row_properties.clone()
+    } else {
+        table
+            .row_properties
+            .iter()
+            .enumerate()
+            .map(|(k, props)| {
+                let mut props = props.clone();
+                if let Some(laid) = grid.row(k) {
+                    for (name, span) in [("gridBefore", laid.before), ("gridAfter", laid.after)] {
+                        if props.contains_key(name) {
+                            set(&mut props, name, count(span), false);
+                        }
+                    }
                 }
-            }
-            props
-        })
-        .collect();
+                props
+            })
+            .collect()
+    };
     Table {
         cell_properties,
         row_properties,
@@ -567,7 +564,7 @@ fn regridded(table: Table, grid: &ViewGrid, columns: &[Columns]) -> Table {
     }
 }
 
-fn part_of(table: &Table, start: usize, end: usize, grid: (Arc<[i64]>, ViewGrid), columns: &[Columns]) -> Table {
+fn part_of(table: &Table, start: usize, end: usize, grid: (Arc<[i64]>, ViewGrid)) -> Table {
     fn slice<T: Clone>(items: &[T], start: usize, end: usize) -> Arc<[T]> {
         Arc::from(items.get(start..end).unwrap_or_default().to_vec())
     }
@@ -581,47 +578,31 @@ fn part_of(table: &Table, start: usize, end: usize, grid: (Arc<[i64]>, ViewGrid)
         joined: true,
         ..table.clone()
     };
-    regridded(part, &grid.1, columns.get(start..end).unwrap_or_default())
+    regridded(part, &grid.1)
 }
-
-/// A row's cells' source grid columns, each cell's in parts (its own, and those of the deleted
-/// cells whose content it takes), and its `w:gridAfter`'s.
-type Columns = (Vec<Vec<Range<usize>>>, Range<usize>);
 
 /// A part's grid: its widths and its columns.
 type PartGrid<'g> = &'g dyn Fn(usize, usize) -> (Arc<[i64]>, ViewGrid);
 
-fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: PartGrid<'_>, columns: &[Columns]) -> Vec<Block> {
+fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: PartGrid<'_>) -> Vec<Block> {
     if moved.is_empty() {
         return if table.rows.is_empty() {
             Vec::new()
         } else {
             let (_, grid) = grid_of(0, table.rows.len());
-            vec![Block::Table(Arc::new(regridded(table, &grid, columns)))]
+            vec![Block::Table(Arc::new(regridded(table, &grid)))]
         };
     }
     let mut out = Vec::new();
     let mut start = 0;
     for (row, blocks) in moved {
         if row > start {
-            out.push(Block::Table(Arc::new(part_of(
-                &table,
-                start,
-                row,
-                grid_of(start, row),
-                columns,
-            ))));
+            out.push(Block::Table(Arc::new(part_of(&table, start, row, grid_of(start, row)))));
         }
         out.extend(blocks);
         start = row;
     }
     let end = table.rows.len();
-    out.push(Block::Table(Arc::new(part_of(
-        &table,
-        start,
-        end,
-        grid_of(start, end),
-        columns,
-    ))));
+    out.push(Block::Table(Arc::new(part_of(&table, start, end, grid_of(start, end)))));
     out
 }
