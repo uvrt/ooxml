@@ -9,7 +9,9 @@
 use super::fields::Fields;
 use super::join::{following_properties, join};
 use super::{At, Reader, Steps};
+use crate::docx::tables::{table_blocks, CellReader};
 use crate::model::Block;
+use crate::theme::ThemeColours;
 use crate::value::Text;
 use crate::view::View;
 use crate::xmlread::local;
@@ -75,6 +77,17 @@ impl Reader<'_> {
         }
     }
 
+    /// A `w:tbl`'s blocks in the reader's view (`crate::docx::tables`): the table, or its
+    /// parts with the blocks moved out between them.
+    pub(crate) fn table_blocks(&self, node: &Element, here: &At<'_>, fields: &mut Fields) -> Vec<Block> {
+        let mut cells = Cells {
+            reader: self,
+            at: here,
+            fields,
+        };
+        table_blocks(node, here.name(), &mut cells)
+    }
+
     /// One top-level body element read on its own, with the fields open at it.
     pub(crate) fn body_element(&self, node: &Element, here: &At<'_>, fields: &mut Fields) -> BodyElement {
         let start = fields.cached.len();
@@ -101,6 +114,39 @@ impl Reader<'_> {
         let out = self.story(parent, &At::Path(crate::value::text(path)), fields);
         (fields.cross_references, fields.styleref) = outer;
         out
+    }
+}
+
+/// A table's cells read by a [`Reader`], at their places below the table read `at`, with
+/// the fields open there.
+struct Cells<'r, 'c, 'k, 'f> {
+    reader: &'r Reader<'c>,
+    at: &'r At<'k>,
+    fields: &'f mut Fields,
+}
+
+impl CellReader for Cells<'_, '_, '_, '_> {
+    fn view(&self) -> View {
+        self.reader.view()
+    }
+
+    fn colours(&self) -> &ThemeColours {
+        self.reader.colours()
+    }
+
+    fn cell_blocks(
+        &mut self,
+        cell: &Element,
+        place: (u32, u32),
+        rel: &[usize],
+        style: &Text,
+        conditions: &Arc<[Text]>,
+    ) -> Vec<Block> {
+        let at = self.at.cell(place, rel);
+        let blocks = self
+            .reader
+            .block_list(cell, Some((style, conditions)), &at, self.fields);
+        join(self.reader.view(), blocks)
     }
 }
 
