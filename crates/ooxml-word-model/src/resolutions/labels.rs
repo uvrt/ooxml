@@ -80,7 +80,7 @@ impl Model {
         let items = paragraphs
             .into_iter()
             .map(|p| {
-                let item = item_of(&self.resolver.paragraph_props(cx, p));
+                let item = item_of(cx, p);
                 (item, item.and_then(|i| item_lists(&cx.numbering, i, top)))
             })
             .collect();
@@ -166,7 +166,7 @@ impl Model {
 
 impl Model {
     fn label_of(&mut self, cx: &Context, counters: &mut Counters, p: &Paragraph) -> Option<String> {
-        let item = item_of(&self.resolver.paragraph_props(cx, p))?;
+        let item = item_of(cx, p)?;
         counters.item(&cx.numbering, item.num_id, item.ilvl)
     }
 
