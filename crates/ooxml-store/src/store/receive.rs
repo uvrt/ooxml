@@ -17,14 +17,16 @@ use crate::txn::Ids;
 use crate::{Caller, Committed, DocModel, Error, KeySet, Seq, Snapshot, StepInfo, StoreError, Txn};
 
 /// A step of this store's taken back because another editor's commit changed what it
-/// touched: the step as it was, and the version its undo made.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HandedBack<K: Ord> {
+/// touched (or because it was entangled with one that did): the step as it was, and the
+/// undo that took it back (redo it by hand with [`Store::redo_step`] of `step.step`).
+#[derive(Debug)]
+pub struct HandedBack<D: DocModel> {
     /// The step taken back.
-    pub step: StepInfo<K>,
-    /// The version the undo that took it back made (redo it by this, [`Store::redo_step`]
-    /// names it by `step.step`).
-    pub undo: Seq,
+    pub step: StepInfo<D::Key>,
+    /// The head the undo was made on.
+    pub previous: Snapshot<D>,
+    /// The version the undo made.
+    pub version: Snapshot<D>,
 }
 
 /// What a preparation of another editor's commit made ([`Store::receive`]).
@@ -43,7 +45,7 @@ pub struct Received<D: DocModel> {
     /// The commit: its version, the head it was published after, the keys it wrote.
     pub committed: Committed<D, ()>,
     /// This store's steps taken back first, newest first, as they were taken back.
-    pub handed_back: Vec<HandedBack<D::Key>>,
+    pub handed_back: Vec<HandedBack<D>>,
 }
 
 impl<D: DocModel> Store<D> {
@@ -107,7 +109,7 @@ impl<D: DocModel> Store<D> {
         &self,
         base: Seq,
         touches: &impl Fn(&StepInfo<D::Key>) -> bool,
-    ) -> Result<Vec<HandedBack<D::Key>>, Error<D>> {
+    ) -> Result<Vec<HandedBack<D>>, Error<D>> {
         let steps: Vec<StepInfo<D::Key>> = self.steps().into_iter().filter(|s| s.step > base).collect();
         let mut taken: Vec<&StepInfo<D::Key>> = Vec::new();
         for step in steps.iter().filter(|s| !s.foreign) {
@@ -122,12 +124,33 @@ impl<D: DocModel> Store<D> {
             }
         }
         let mut handed_back = Vec::with_capacity(taken.len());
-        for step in taken.into_iter().rev() {
-            let outcome = self.undo_step(step.step, &KeySet::new())?;
-            handed_back.push(HandedBack {
-                step: step.clone(),
-                undo: outcome.version.seq(),
-            });
+        // newest first; a step whose undo cannot be moved past a later one (keys apart, places
+        // not) takes back every later step of this store's first, then is taken back again
+        let mut pending: Vec<StepInfo<D::Key>> = taken.into_iter().cloned().collect();
+        while let Some(step) = pending.pop() {
+            match self.undo_step(step.step, &KeySet::new()) {
+                Ok(outcome) => handed_back.push(HandedBack {
+                    step,
+                    previous: outcome.previous,
+                    version: outcome.version,
+                }),
+                Err(StoreError::Entangled { .. }) => {
+                    let later: Vec<StepInfo<D::Key>> = self
+                        .steps()
+                        .into_iter()
+                        .filter(|s| s.step > step.step && !s.foreign)
+                        .collect();
+                    if later.is_empty() {
+                        return Err(StoreError::Entangled {
+                            step: step.step,
+                            overlap: step.writes,
+                        });
+                    }
+                    pending.push(step);
+                    pending.extend(later);
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(handed_back)
     }

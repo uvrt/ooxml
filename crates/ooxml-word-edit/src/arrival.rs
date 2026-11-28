@@ -250,7 +250,7 @@ pub struct Arrived {
     pub previous: Option<Snapshot<WordDoc>>,
     /// The steps of this session's taken back first, newest first: each touched what the
     /// other editor changed (or was entangled with one that did).
-    pub handed_back: Vec<HandedBack<Key>>,
+    pub handed_back: Vec<HandedBack<WordDoc>>,
     /// The parts it changed.
     pub parts: Vec<String>,
     /// The blocks it changed, by id.

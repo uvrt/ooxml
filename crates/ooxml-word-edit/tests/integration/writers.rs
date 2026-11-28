@@ -366,7 +366,11 @@ fn another_editor(shared: &Editor, targets: &[String], seed: u64, count: usize) 
             let base = shared.store().snapshot();
             let file = their_file(&base, &mut rng, targets);
             let arrived = shared.receive("Ada", base.seq(), opened_file(&file)).unwrap();
-            let back = arrived.handed_back.iter().map(|h| (h.step.step, h.undo)).collect();
+            let back = arrived
+                .handed_back
+                .iter()
+                .map(|h| (h.step.step, h.version.seq()))
+                .collect();
             arrived.previous.is_some().then(|| {
                 let made = Made::Foreign {
                     base: base.seq(),
@@ -403,7 +407,11 @@ fn replay_serially(bytes: &Arc<[u8]>, records: &[(Seq, Made, Snapshot<WordDoc>)]
             }
             Made::Foreign { base, file, back } => {
                 let arrived = serial.receive("Ada", *base, opened_file(file)).unwrap();
-                let again: Vec<(Seq, Seq)> = arrived.handed_back.iter().map(|h| (h.step.step, h.undo)).collect();
+                let again: Vec<(Seq, Seq)> = arrived
+                    .handed_back
+                    .iter()
+                    .map(|h| (h.step.step, h.version.seq()))
+                    .collect();
                 assert_eq!(&again, back, "seed {seed}: the steps handed back at version {at}");
                 arrived.version
             }
