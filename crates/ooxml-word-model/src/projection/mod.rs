@@ -27,7 +27,7 @@ use crate::ids::{BlockKey, StoryIx, VersionDelta};
 use crate::model::{Block, Section, Story};
 use crate::numbering::{Numbering, PictureBullet};
 use crate::parts::PartRelationships;
-use crate::read::{sections, At, BodyElement, Fields, KeyOf, Reader, Steps};
+use crate::read::{At, BodyElement, Fields, KeyOf, Reader, Steps};
 use crate::settings::Settings;
 use crate::styles::StyleSheet;
 use crate::theme::{colour_mapping, colour_scheme, font_scheme, ThemeColours};
@@ -310,7 +310,7 @@ impl<'v> Projecting<'v> {
         self.stats.elements += walk.stats.elements;
         self.stats.elements_read += walk.stats.elements_read;
         let blocks: Story = Arc::from(crate::read::body_story(self.view, walk.out));
-        let sections: Arc<[Section]> = Arc::from(sections(
+        let sections: Arc<[Section]> = Arc::from(crate::docx::sections::story_sections(
             &blocks,
             crate::w::Body::new(&body).section().map(crate::w::SectPr::element),
         ));
