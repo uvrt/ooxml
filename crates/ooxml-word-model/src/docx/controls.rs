@@ -6,9 +6,11 @@
 //!
 //! Must not: change a control or read its content's formatting.
 
-use crate::docx::text::{offset_before, paragraph_text, View};
+use crate::docx::text::{offset_before, paragraph_text};
+
 use crate::docx::{at_path, child_val, Docx, StoryPart};
 use crate::ids::W;
+use crate::view::View;
 use ooxml_xml::{Element, Node};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,7 +68,7 @@ impl Control {
                 .ids
                 .paragraphs_within(&self.path)
                 .iter()
-                .map(|p| paragraph_text(&p.element, View::Current))
+                .map(|p| paragraph_text(&p.element, View::Final))
                 .collect();
             return texts.join("\n");
         }
@@ -87,10 +89,10 @@ impl Control {
             *last += 1;
         }
         let (from, to) = (
-            offset_before(paragraph, &start, View::Current),
-            offset_before(paragraph, &end, View::Current),
+            offset_before(paragraph, &start, View::Final),
+            offset_before(paragraph, &end, View::Final),
         );
-        paragraph_text(paragraph, View::Current)
+        paragraph_text(paragraph, View::Final)
             .chars()
             .skip(from)
             .take(to.saturating_sub(from))

@@ -16,9 +16,10 @@ use super::AddressError;
 use crate::docx::controls::Control;
 use crate::docx::outline::{body_blocks, headings, Heading};
 use crate::docx::sections::{section_id, sections};
-use crate::docx::text::{paragraph_text, View};
+use crate::docx::text::paragraph_text;
 use crate::docx::{style_name, Docx, StoryPart};
 use crate::ids::{Entry, W};
+use crate::view::View;
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
@@ -383,7 +384,7 @@ pub fn offered(docx: &Docx) -> Vec<String> {
         .iter()
         .take(20)
         .map(|h| {
-            let text: String = paragraph_text(&h.element, View::Current)
+            let text: String = paragraph_text(&h.element, View::Final)
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")

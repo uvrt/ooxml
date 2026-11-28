@@ -185,6 +185,10 @@ OBSERVATIONS: dict[str, dict] = {
         "probe": "crates/ooxml-oracle/word/probes/typography_probe.py",
         "readers": ["python/docx-agent/tests/test_typography.py"],
     },
+    "view-word.json": {
+        "probe": "crates/ooxml-oracle/word/probes/view_probe.py",
+        "readers": ["crates/ooxml-word-model/tests/integration/accepted.rs"],
+    },
 }
 
 

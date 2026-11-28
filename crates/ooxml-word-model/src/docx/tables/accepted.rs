@@ -12,10 +12,10 @@
 //! Must not: change a table.
 
 use super::labels::labelled;
-use super::{cell_deleted, content_kept, placed_cells, TableGrid};
+use super::{placed_cells, TableGrid};
 use crate::address::AddressError;
-use crate::docx::find_path;
 use crate::ids::W;
+use crate::view::{cell_ends, content_kept, CellEnds, View};
 use ooxml_base::pyfmt::repr_str;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet};
@@ -194,7 +194,7 @@ impl TableGrid<'_> {
         for (r, columns, _) in given.iter() {
             if self
                 .cell_element(r, columns.start)
-                .is_none_or(|e| find_path(e, &["tcPr", "cellDel"]).is_some())
+                .is_none_or(|e| View::Final.removes_cell(e))
             {
                 merged.insert(r, columns, ());
             }
@@ -220,16 +220,18 @@ impl TableGrid<'_> {
         let mut covered: BTreeMap<usize, bool> = BTreeMap::new();
         let columns = self.column_count();
         for (r, row) in self.rows.iter().enumerate() {
-            let deleted_row = find_path(row, &["trPr", "del"]).is_some();
+            let deleted_row = View::Final.removes_row(row);
             if !deleted_row {
                 out.rows.push(r);
             }
             let cells = placed_cells(row);
-            let shown: Vec<&(Arc<Element>, usize, usize)> = cells.iter().filter(|c| !cell_deleted(&c.0)).collect();
+            let shown: Vec<&(Arc<Element>, usize, usize)> =
+                cells.iter().filter(|c| !View::Final.removes_cell(&c.0)).collect();
             let elements: Vec<&Element> = shown.iter().map(|c| &*c.0).collect();
-            let (groups, gone) = crate::read::cell_ends(&elements);
+            let ends = cell_ends(&elements);
             // a row whose deletion is pending goes whole: its cells' ends take nothing in
-            out.cell_ends |= !deleted_row && (!gone.is_empty() || groups.iter().any(|g| g.len() > 1));
+            out.cell_ends |= !deleted_row && ends.any();
+            let CellEnds { groups, gone } = ends;
             // each cell taken into the one before it, to that cell's first grid column
             let mut taken: Vec<(*const Element, usize)> = Vec::new();
             for group in &groups {
@@ -251,7 +253,7 @@ impl TableGrid<'_> {
             let mut before: Option<usize> = None;
             for (cell, start, span) in &cells {
                 let me = Arc::as_ptr(cell);
-                let mut deleted = cell_deleted(cell);
+                let mut deleted = View::Final.removes_cell(cell);
                 let into = taken.iter().find(|(t, _)| *t == me).map(|(_, s)| *s);
                 let widens = match before {
                     Some(first) if deleted && content_kept(cell) => Some(first),

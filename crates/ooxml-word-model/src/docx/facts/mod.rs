@@ -14,6 +14,7 @@
 use crate::docx::revisions::is_revision;
 use crate::docx::Found;
 use crate::ids::{W, WP};
+use crate::view::View;
 use ooxml_xml::{Element, Node};
 use runs::Runs;
 use std::sync::Arc;
@@ -176,8 +177,10 @@ impl PartFacts {
         out
     }
 
-    /// Whether a table cell of the part ends with a paragraph mark that is deleted or moved
-    /// away, or is itself deleted: Accept All takes the next cell's text into it.
+    /// Whether a table row of the part kept in the final view has a cell whose end Accept All
+    /// takes away ([`crate::view::CellEnds::any`]): the next cell taken into it, or the cell
+    /// gone with its text. A deleted cell is no cell end (it is removed, or widens the cell
+    /// before it).
     #[must_use]
     pub fn cell_ends(&self) -> bool {
         self.blocks().any(|(_, f)| f.cell_ends)
@@ -221,7 +224,7 @@ impl BlockFacts {
         let name = element.name();
         let within = Within {
             fallback: within.fallback,
-            row_gone: within.row_gone || (name.is(Some(W), "tr") && row_deleted(element)),
+            row_gone: within.row_gone || (name.is(Some(W), "tr") && View::Final.removes_row(element)),
         };
         let fallback = within.fallback;
         if name.is(Some(W), "del") || name.is(Some(W), "cellDel") {
@@ -251,7 +254,7 @@ impl BlockFacts {
                 self.revisions.push(found());
             } else if name.is(Some(WP), "inline") || name.is(Some(WP), "anchor") {
                 self.frames.push(found());
-            } else if name.is(Some(W), "tc") && !within.row_gone && cell_end_taken(element) {
+            } else if name.is(Some(W), "tr") && !within.row_gone && crate::view::row_ends(element).any() {
                 self.cell_ends = true;
             }
         }
@@ -279,28 +282,6 @@ struct Within {
     row_gone: bool,
 }
 
-/// Whether a `w:tr`'s deletion is pending (`w:trPr/w:del`).
-fn row_deleted(row: &Element) -> bool {
-    row.find(Some(W), "trPr")
-        .is_some_and(|p| p.find(Some(W), "del").is_some())
-}
-
-/// Whether Accept All takes away a cell's end: its last paragraph's mark deleted or moved
-/// away, or the cell deleted.
-fn cell_end_taken(cell: &Element) -> bool {
-    let deleted = |e: &Element| e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom");
-    if cell
-        .find(Some(W), "tcPr")
-        .is_some_and(|p| p.find(Some(W), "cellDel").is_some())
-    {
-        return true;
-    }
-    let last = cell.child_elements().filter(|c| c.name().is(Some(W), "p")).last();
-    last.and_then(|p| p.find(Some(W), "pPr"))
-        .and_then(|p| p.find(Some(W), "rPr"))
-        .is_some_and(|r| r.child_elements().any(|c| deleted(c)))
-}
-
 #[cfg(test)]
 mod tests {
     use super::PartFacts;
@@ -308,7 +289,7 @@ mod tests {
     use crate::ids::W;
     use ooxml_base::XmlLimits;
 
-    const DOC: &str = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:sdt><w:sdtContent><w:p><w:ins w:id="1"><w:r><w:t>a</w:t></w:r></w:ins></w:p></w:sdtContent></w:sdt><w:p><w:hyperlink w:anchor="x"/><mc:AlternateContent><mc:Choice/><mc:Fallback><w:sdt/><w:hyperlink w:anchor="y"/></mc:Fallback></mc:AlternateContent></w:p><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+    const DOC: &str = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body><w:sdt><w:sdtContent><w:p><w:ins w:id="1"><w:r><w:t>a</w:t></w:r></w:ins></w:p></w:sdtContent></w:sdt><w:p><w:hyperlink w:anchor="x"/><mc:AlternateContent><mc:Choice/><mc:Fallback><w:sdt/><w:hyperlink w:anchor="y"/></mc:Fallback></mc:AlternateContent></w:p><w:tbl><w:tr><w:tc><w:p><w:pPr><w:rPr><w:del w:id="2"/></w:rPr></w:pPr></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl></w:body></w:document>"#;
 
     #[test]
     fn one_walk_finds_what_the_walks_did_and_a_later_version_reuses_its_blocks() {

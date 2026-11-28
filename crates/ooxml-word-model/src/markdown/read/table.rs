@@ -16,9 +16,9 @@
 
 use super::{CellRecord, Item2, Placed, Reader, Record, TableRecord};
 use crate::docx::find_path;
-use crate::docx::tables::{cell_merge, merge_heads, row_cells, RowSpec, VMerge};
-use crate::docx::text::View;
+use crate::docx::tables::{merge_heads, row_cells, RowSpec, VMerge};
 use crate::ids::W;
+use crate::view::{content_kept, View};
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -58,15 +58,6 @@ impl Reader<'_> {
             }
         }
         records
-    }
-
-    fn cell_hidden(&self, cell: &Element) -> bool {
-        let tag = match self.view {
-            View::Markup => return false,
-            View::Current => "cellDel",
-            View::Original => "cellIns",
-        };
-        find_path(cell, &["tcPr", tag]).is_some()
     }
 
     fn cell_records(
@@ -174,11 +165,10 @@ impl Reader<'_> {
 
     /// One row of a table in the view, into `grid`.
     fn table_row(&mut self, part: &str, table_id: &str, style: &str, grid: &mut Grid, r: usize, row: &Placed) {
-        let properties = row.element.find(Some(W), "trPr");
-        let has = |local: &str| properties.is_some_and(|p| p.find(Some(W), local).is_some());
-        if (self.view == View::Current && has("del")) || (self.view == View::Original && has("ins")) {
+        if self.view.removes_row(&row.element) {
             return;
         }
+        let properties = row.element.find(Some(W), "trPr");
         let header = properties
             .and_then(|p| p.find(Some(W), "tblHeader"))
             .is_some_and(|h| !matches!(h.attribute(Some(W), "val"), Some("0" | "false" | "off")));
@@ -194,11 +184,11 @@ impl Reader<'_> {
         let all = cells(row);
         for (n, tc) in all.iter().enumerate() {
             let span = spec.cells.get(n).map_or(1, |c| c.span);
-            if self.cell_hidden(&tc.element) {
+            if self.view.removes_cell(&tc.element) {
                 // one whose content is not deleted widens the cell before it, as Word's
                 // Accept All does (round 54, R110)
                 match line.last_mut() {
-                    Some(before) if self.view == View::Current && crate::docx::tables::content_kept(&tc.element) => {
+                    Some(before) if self.view == View::Final && content_kept(&tc.element) => {
                         before.column_span += span;
                     }
                     _ => gone_here.extend(column..column + span),
@@ -244,7 +234,7 @@ impl Reader<'_> {
     /// In the final view, the cells continuing a merge whose rows above them go that start
     /// it or stand alone ([`crate::docx::tables::merge_heads`]).
     fn merge_heads(&self, root: &Arc<Element>, rows: &[(Box<[u32]>, String)]) -> HashMap<(usize, usize), VMerge> {
-        if self.view != View::Current {
+        if self.view != View::Final {
             return HashMap::new();
         }
         // the rows by their place in the table, as the reader counts them
@@ -256,19 +246,13 @@ impl Reader<'_> {
             return HashMap::new();
         };
         let refs: Vec<&Element> = elements.iter().map(|e| &**e).collect();
-        let kept = |row: &Element| find_path(row, &["trPr", "del"]).is_none();
-        merge_heads(&refs, &kept, &|cell| cell_merge(cell, true))
+        let kept = |row: &Element| !View::Final.removes_row(row);
+        merge_heads(&refs, &kept, &|cell| View::Final.merge(cell))
     }
 
     /// Whether a cell continues a vertical merge (a pending tracked one as accepting leaves it).
     fn continues(&self, tc: &Element) -> bool {
-        if self.view == View::Current {
-            if let Some(tracked) = find_path(tc, &["tcPr", "cellMerge"]) {
-                return tracked.attribute(Some(W), "vMerge") == Some("cont");
-            }
-        }
-        find_path(tc, &["tcPr", "vMerge"])
-            .is_some_and(|m| matches!(m.attribute(Some(W), "val"), None | Some("continue")))
+        self.view.merge(tc) == VMerge::Continue
     }
 }
 

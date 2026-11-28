@@ -1,0 +1,254 @@
+{
+ "_about": "What Word 16.106 for Mac's Accept All leaves of the table shapes in crates/ooxml-oracle/word/probes/view_probe.py (lane ph3-rd1c)",
+ "word": "Word 16.106",
+ "AllCellsDeleted": {
+  "blocks": [
+   {
+    "p": "Before AllCellsDeleted"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "A1"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "B1"
+       ],
+       "span": 1
+      }
+     ],
+     [
+      {
+       "text": [
+        "A3"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "B3"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After AllCellsDeleted"
+   }
+  ],
+  "revisions_left": 0
+ },
+ "AllCellsDeletedEmpty": {
+  "blocks": [
+   {
+    "p": "Before AllCellsDeletedEmpty"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "A1"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "B1"
+       ],
+       "span": 1
+      }
+     ],
+     [
+      {
+       "text": [
+        "A3"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "B3"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After AllCellsDeletedEmpty"
+   }
+  ],
+  "revisions_left": 0
+ },
+ "ControlEndsCell": {
+  "blocks": [
+   {
+    "p": "Before ControlEndsCell"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "P1Q1"
+       ],
+       "span": 1
+      }
+     ],
+     [
+      {
+       "text": [
+        "P2"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "Q2"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After ControlEndsCell"
+   }
+  ],
+  "revisions_left": 0
+ },
+ "ParagraphEndsCell": {
+  "blocks": [
+   {
+    "p": "Before ParagraphEndsCell"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "P1Q1"
+       ],
+       "span": 1
+      }
+     ],
+     [
+      {
+       "text": [
+        "P2"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "Q2"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After ParagraphEndsCell"
+   }
+  ],
+  "revisions_left": 0
+ },
+ "KeptAfterGone": {
+  "blocks": [
+   {
+    "p": "Before KeptAfterGone"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "Y2"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "Z2"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After KeptAfterGone"
+   }
+  ],
+  "revisions_left": 0
+ },
+ "KeptAfterPlain": {
+  "blocks": [
+   {
+    "p": "Before KeptAfterPlain"
+   },
+   {
+    "table": [
+     [
+      {
+       "text": [
+        "Y1"
+       ],
+       "span": 2
+      }
+     ],
+     [
+      {
+       "text": [
+        "Y2"
+       ],
+       "span": 1
+      },
+      {
+       "text": [
+        "Z2"
+       ],
+       "span": 1
+      }
+     ]
+    ],
+    "grid": [
+     2000,
+     2000
+    ]
+   },
+   {
+    "p": "After KeptAfterPlain"
+   }
+  ],
+  "revisions_left": 0
+ }
+}

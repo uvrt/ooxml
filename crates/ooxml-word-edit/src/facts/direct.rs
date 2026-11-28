@@ -14,8 +14,9 @@ use ooxml_base::pyfmt::round2;
 use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun, Formatting};
 use ooxml_word_model::docx::keeps::{row_keeps, Keeps, TableKeeps};
-use ooxml_word_model::docx::text::{text_runs, View};
+use ooxml_word_model::docx::text::text_runs;
 use ooxml_word_model::docx::{at_path, StoryPart};
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -231,7 +232,7 @@ fn run_props(
     cell: Option<&Cell>,
     props: &mut Vec<(&'static str, FormatValue, FormatValue)>,
 ) -> Vec<&'static str> {
-    let runs = text_runs(paragraph, View::Current);
+    let runs = text_runs(paragraph, View::Final);
     let total: usize = runs.iter().map(|r| r.text).sum();
     let mut overridden: Vec<Overridden> = Vec::new();
     for run in &runs {

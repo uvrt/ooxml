@@ -7,17 +7,11 @@ use super::fields::Fields;
 use super::{At, KeyOf, Reader, Steps};
 use crate::model::{Block, Graphic, InlineObject, Paragraph, Run, Table};
 use crate::value::{text, Text};
+use crate::view::View;
 use crate::w;
 use crate::xmlread::child;
 use ooxml_xml::Element;
 use std::sync::Arc;
-
-/// Whether a paragraph's mark is deleted, or moved away, in the final view.
-pub(crate) fn mark_removed(element: &Element) -> bool {
-    child(element, "pPr")
-        .and_then(|p| child(p, "rPr"))
-        .is_some_and(|m| child(m, "del").is_some() || child(m, "moveFrom").is_some())
-}
 
 impl Reader<'_> {
     /// The paragraph `element`, in a table with `table_style` and `conditions` where it is
@@ -50,7 +44,7 @@ impl Reader<'_> {
             unkeyed,
             para_id: w::P::new(element).para_id().map(text),
             joins: Arc::from(Vec::new()),
-            mark_deleted: mark_removed(element),
+            mark_deleted: View::Final.removes_mark(element),
             section,
             bookmarks: Arc::from(bookmarks),
         }

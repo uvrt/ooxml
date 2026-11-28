@@ -5,10 +5,12 @@
 //!
 //! Must not: change a comment.
 
-use crate::docx::text::{paragraph_text, View, OBJECT};
+use crate::docx::text::{paragraph_text, OBJECT};
+
 use crate::docx::Docx;
 use crate::ids::{W, W14};
 use crate::parts::{related, related_parts, REL_COMMENTS, REL_COMMENTS_EXTENDED, REL_COMMENTS_IDS, W15, W16CID};
+use crate::view::View;
 use ooxml_xml::Node;
 use std::collections::HashMap;
 
@@ -93,13 +95,13 @@ pub fn comments(docx: &Docx) -> Vec<Comment> {
         });
         let says = inside
             .iter()
-            .map(|p| paragraph_text(&p.element, View::Current))
+            .map(|p| paragraph_text(&p.element, View::Final))
             .collect::<Vec<_>>()
             .join("\n");
         let texts: Vec<String> = inside
             .iter()
             .map(|p| {
-                paragraph_text(&p.element, View::Current)
+                paragraph_text(&p.element, View::Final)
                     .replace(OBJECT, "")
                     .trim()
                     .to_owned()

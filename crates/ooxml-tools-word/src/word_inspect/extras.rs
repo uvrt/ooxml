@@ -11,10 +11,10 @@ use ooxml_word_model::address::resolve::{in_table, marker_range, range_text};
 use ooxml_word_model::docx::comments::comments as comment_records;
 use ooxml_word_model::docx::revisions::{records as revision_records, Record as Revision, KINDS};
 use ooxml_word_model::docx::tables::{placed_row_cells, CellSpec};
-use ooxml_word_model::docx::text::View;
 use ooxml_word_model::docx::{at_path, child_val, style_id, style_kind, style_name, Docx};
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::{note_elements, Reader, Record};
+use ooxml_word_model::view::View;
 use ooxml_xml::{Element, Node};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -330,7 +330,7 @@ fn range_value(docx: &Docx, part: &str, start: &[u32], end: Option<&[u32]>) -> V
     let Some(story) = docx.part(part) else {
         return Value::Null;
     };
-    let Ok(range) = marker_range(story, start, end, View::Current) else {
+    let Ok(range) = marker_range(story, start, end, View::Final) else {
         return Value::Null;
     };
     let id = if range.start_id == range.end_id {
@@ -338,7 +338,7 @@ fn range_value(docx: &Docx, part: &str, start: &[u32], end: Option<&[u32]>) -> V
     } else {
         format!("{}@{}..{}@{}", range.start_id, range.start, range.end_id, range.end)
     };
-    json!({"id": id, "t": range_text(story, &range, View::Current)})
+    json!({"id": id, "t": range_text(story, &range, View::Final)})
 }
 
 /// What a cell states itself, for a reply on one cell (docx-agent's `_cell` and

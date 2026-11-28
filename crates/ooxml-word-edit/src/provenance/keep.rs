@@ -20,8 +20,9 @@ use ooxml_provenance::dumps;
 use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::provenance::keep::{kept, Kept};
 use ooxml_word_model::docx::provenance::{kind_of, resolve_followed, Kind, TextEntry};
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::ids::Entry;
+use ooxml_word_model::view::View;
 use serde_json::Value;
 
 /// The kind of a paragraph's entry.
@@ -75,7 +76,7 @@ impl Command<WordDoc> for KeepText {
                 continue;
             }
             sink.read(Key::block(part.part.as_str(), paragraph.id.as_str()));
-            let now = paragraph_text(&paragraph.element, View::Current);
+            let now = paragraph_text(&paragraph.element, View::Final);
             let old = draft
                 .as_ref()
                 .and_then(|d| d.text_of(TEXT, &paragraph.id))

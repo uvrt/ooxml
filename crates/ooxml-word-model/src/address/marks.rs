@@ -11,9 +11,10 @@
 
 use super::syntax::RangeText;
 use super::AddressError;
-use crate::docx::text::{offset_before, paragraph_text, View};
+use crate::docx::text::{offset_before, paragraph_text};
 use crate::docx::{Docx, StoryPart};
 use crate::ids::Entry;
+use crate::view::View;
 use ooxml_base::pyfmt::repr_str;
 use std::collections::{HashMap, HashSet};
 
@@ -141,7 +142,7 @@ fn no_bookmark(name: &str) -> AddressError {
 pub fn bookmark_range(docx: &Docx, bookmark: &Bookmark<'_>) -> Result<RangeText, AddressError> {
     let part = bookmark.part;
     let _ = docx;
-    marker_range(part, &bookmark.start, bookmark.end.as_deref(), View::Current)
+    marker_range(part, &bookmark.start, bookmark.end.as_deref(), View::Final)
 }
 
 /// The range from the marker at `start` through the one at `end` (or `start` alone) of

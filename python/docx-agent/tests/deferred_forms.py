@@ -57,10 +57,6 @@ DEFERRED: dict[str, str] = {
         "word_read final view of Accept All's cell ends",
     "test_rows_joins_r54r.py::test_the_joins_read_as_accept_all_leaves_them":
         "word_read final view of Accept All's cell ends",
-    "test_tracked_tables_r54.py::test_a_deleted_cell_whose_content_is_kept_widens_the_cell_before_in_the_final_view":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_reshape_r55.py::test_the_final_view_reads_the_merge_over_a_deleted_column_as_accepted":
-        "word_read final view of Accept All's cell ends",
     "test_side_by_side_edits.py::test_a_dataset_table_put_alone_after_edits_side_by_side":
         "word_insert_markdown from data (from, blob)",
     "test_tools_word.py::test_insert_markdown_with_every_style_role_writes_no_direct_formatting[normal0]":
@@ -196,28 +192,6 @@ DEFERRED: dict[str, str] = {
     "test_rust_reads_on.py::test_the_reads_answer_as_the_python_path_does[generated/tables-accepted.docx]":
         "word_read final view of Accept All's cell ends",
     "test_rust_word_read.py::test_word_read_in_rust_equals_todays_on_the_fixtures[generated/tables-accepted.docx]":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_block_from_a_source_fills_the_columns_as_accepted":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_column_fill_counts_the_columns_as_accepted":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[0-after-| Area | New | Phase | Remark |]":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[1-before-| Area | New | Phase | Remark |]":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_column_inserted_beside_a_pending_deletion_lands_where_accept_all_has_it[None-None-| Area | Phase | Remark | New |]":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_a_position_before_the_deleted_column_says_nothing":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_col_label_finds_the_columns_as_accepted":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_delete_column_index_counts_the_columns_as_accepted":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_set_cells_col_skips_a_column_whose_deletion_is_pending":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_merge_r54m.py::test_sync_counts_the_columns_as_accepted":
-        "word_read final view of Accept All's cell ends",
-    "test_tracked_tables_r54.py::test_a_tracked_column_deletion_reads_as_accepted":
         "word_read final view of Accept All's cell ends",
     "test_text_facts.py::test_a_slide_reference_is_refused_and_an_escaped_one_written":
         "word_set_text by reference",

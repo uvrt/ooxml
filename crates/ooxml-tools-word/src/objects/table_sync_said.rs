@@ -22,8 +22,9 @@ use ooxml_word_edit::{
 };
 use ooxml_word_model::docx::provenance::{kind_of, provenance, Kind};
 use ooxml_word_model::docx::tables::TableGrid;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::view::View;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
@@ -566,7 +567,7 @@ pub(super) fn keeps(
             let Some(paragraph) = part.ids.paragraphs().get(k) else {
                 continue;
             };
-            let text = paragraph_text(&paragraph.element, View::Current);
+            let text = paragraph_text(&paragraph.element, View::Final);
             if !paragraph.id.rsplit('/').next().unwrap_or_default().starts_with("p:") || text.is_empty() {
                 continue;
             }

@@ -1,5 +1,5 @@
 //! Owns: [`PartTexts`], each paragraph's text in the current view of one story part's
-//! version ([`super::text::paragraph_text`], `View::Current`), in the order of the part's
+//! version ([`super::text::paragraph_text`], `View::Final`), in the order of the part's
 //! paragraphs (`PartIds::paragraphs`), read once per version and kept with the part: a later
 //! version shares each run (chunk) of paragraphs it holds as an earlier one held them, takes
 //! the text of every other paragraph it shares with it (the same element, by pointer) and
@@ -12,8 +12,10 @@
 //!
 //! Must not: keep anything a part's tree does not determine, or a text of any other view.
 
-use crate::docx::text::{paragraph_text, View};
+use crate::docx::text::paragraph_text;
+
 use crate::ids::PartIds;
+use crate::view::View;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -108,7 +110,7 @@ impl PartTexts {
                 continue;
             }
             let text = at.and_then(|n| earlier?.line(n)).map_or_else(
-                || Arc::from(paragraph_text(element, View::Current)),
+                || Arc::from(paragraph_text(element, View::Final)),
                 |line| Arc::clone(&line.text),
             );
             fresh.push(Line {

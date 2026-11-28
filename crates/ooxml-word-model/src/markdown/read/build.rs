@@ -12,7 +12,8 @@ use crate::docx::Docx;
 use crate::ids::W;
 use crate::markdown::model::{has_content, Block, Inline, ListBlock, Table};
 use crate::markdown::select::{select, RangeError, Selected};
-use crate::markdown::{Stories, ViewName};
+use crate::markdown::Stories;
+use crate::view::View;
 
 /// The model blocks `to_markdown` writes for `range` (`None`: the body) of `docx`, with
 /// the id comments or (`ids` off) as plain Markdown.
@@ -22,7 +23,7 @@ use crate::markdown::{Stories, ViewName};
 pub fn project(
     docx: &Docx,
     range: Option<&Address>,
-    view: ViewName,
+    view: View,
     stories: Stories,
     ids: bool,
 ) -> Result<Vec<Block>, RangeError> {
