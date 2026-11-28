@@ -2,9 +2,10 @@
 //! row's cells (inside row-level content controls and custom XML too) placed by
 //! `w:gridBefore` and `w:gridSpan`, a vertically merged cell answering at each position it
 //! covers with its origin; the grid's column count (`w:tblGrid`); the rows accepting the
-//! tracked changes keeps, and the columns (`accepted_columns`, Word's Accept All: a
-//! deleted cell whose content is kept widens the cell before it, a grid column only removed
-//! cells cover goes); a cell's text; a cell found by labels (`labels`).
+//! tracked changes keeps, and the columns (`accepted_columns`, the grid Word's Accept All
+//! rebuilds, [`crate::view::ViewGrid`]: a deleted cell whose content is kept widens the cell
+//! before it, a grid column only removed cells cover goes, columns no cell divides are one,
+//! the grid spans to the widest row); a cell's text; a cell found by labels (`labels`).
 //!
 //! Must not: change a table or resolve its formatting.
 
@@ -92,8 +93,8 @@ impl<'a> TableGrid<'a> {
         grid_columns(&self.table)
     }
 
-    /// How many grid columns accepting the tracked changes keeps (docx-agent's
-    /// `accepted_columns`).
+    /// How many columns the table has as accepted (docx-agent's `accepted_columns`; the
+    /// grid Word's Accept All rebuilds, [`crate::view::ViewGrid`]).
     #[must_use]
     pub fn accepted_columns(&self) -> usize {
         self.kept_columns().len()
