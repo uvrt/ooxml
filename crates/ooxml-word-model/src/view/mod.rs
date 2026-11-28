@@ -23,7 +23,7 @@ mod grid;
 mod joins;
 
 pub use cells::{cell_ends, content_kept, row_ends, CellEnds};
-pub use grid::{RowShape, ViewGrid};
+pub use grid::{RowShape, ShapeCell, ViewGrid};
 pub use joins::{plan as join_plan, Joined, Joining};
 
 use crate::docx::tables::VMerge;

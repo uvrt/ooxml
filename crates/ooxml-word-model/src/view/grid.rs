@@ -29,12 +29,23 @@ use std::ops::Range;
 pub struct RowShape {
     /// Where its first cell begins (`w:gridBefore`).
     pub before: usize,
-    /// Its cells in order: the columns each covers in the view (a deleted cell whose content
-    /// stays widening the cell before it), and whether the view keeps it there (`false`: a
-    /// cell the view removes, one taken into the cell before it, or one gone with its end).
-    pub cells: Vec<(Range<usize>, bool)>,
+    /// Its cells in order.
+    pub cells: Vec<ShapeCell>,
     /// Where its `w:gridAfter` ends.
     pub end: usize,
+}
+
+/// A cell of a [`RowShape`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeCell {
+    /// The source grid columns it covers.
+    pub columns: Range<usize>,
+    /// Whether the view keeps it there (`false`: a cell the view removes, one taken into the
+    /// cell before it, or one gone with its end).
+    pub kept: bool,
+    /// A deleted cell whose content stays: its columns are the kept cell's before it, with
+    /// no edge between them where they meet.
+    pub widens: bool,
 }
 
 impl RowShape {
@@ -64,26 +75,42 @@ impl RowShape {
             ..RowShape::default()
         };
         let mut column = spec.before;
-        let mut kept_before = false;
         for (k, cell) in all.iter().enumerate() {
-            let span = view.span(cell);
-            let columns = column..column.saturating_add(span);
+            let columns = column..column.saturating_add(view.span(cell));
             column = columns.end;
-            if view.removes_cell(cell) {
-                let widened = out.cells.iter_mut().rev().find(|(_, kept)| *kept);
-                match widened {
-                    Some(previous) if view == View::Final && kept_before && content_kept(cell) => {
-                        previous.0.end = columns.end;
-                    }
-                    _ => out.cells.push((columns, false)),
+            let entry = if view.removes_cell(cell) {
+                let widens = view == View::Final && out.cells.iter().any(|c| c.kept) && content_kept(cell);
+                ShapeCell {
+                    columns,
+                    kept: widens,
+                    widens,
                 }
-                continue;
-            }
-            kept_before = true;
-            out.cells.push((columns, !lost.contains(&k)));
+            } else {
+                ShapeCell {
+                    columns,
+                    kept: !lost.contains(&k),
+                    widens: false,
+                }
+            };
+            out.cells.push(entry);
         }
         out.end = column.saturating_add(spec.after);
         Some(out)
+    }
+
+    /// The places it has a cell edge at: each cell's start and end but where a cell widening
+    /// the one before it meets it, its `w:gridBefore`'s end and its `w:gridAfter`'s.
+    fn edges(&self) -> impl Iterator<Item = usize> + '_ {
+        let joins = |k: usize| {
+            matches!((k.checked_sub(1).and_then(|p| self.cells.get(p)), self.cells.get(k)),
+                (Some(before), Some(cell)) if cell.widens && before.columns.end == cell.columns.start)
+        };
+        let inner = self.cells.iter().enumerate().flat_map(move |(k, c)| {
+            let start = (!joins(k)).then_some(c.columns.start);
+            let end = (!joins(k + 1)).then_some(c.columns.end);
+            start.into_iter().chain(end)
+        });
+        [self.before, self.end].into_iter().chain(inner)
     }
 }
 
@@ -115,9 +142,7 @@ impl ViewGrid {
         // columns run between them (by runs, so a span of billions of columns is one)
         let mut edges: BTreeSet<usize> = BTreeSet::from([0, reach]);
         for row in rows {
-            edges.insert(row.before);
-            edges.extend(row.cells.iter().flat_map(|(c, _)| [c.start, c.end]));
-            edges.insert(row.end);
+            edges.extend(row.edges());
         }
         let bounds: Vec<usize> = edges.into_iter().filter(|e| *e <= reach).collect();
         let runs: Vec<Range<usize>> = bounds
@@ -137,10 +162,10 @@ impl ViewGrid {
                 }
             };
             mark(&(0..row.before), false);
-            for (columns, kept) in &row.cells {
-                mark(columns, !kept);
+            for cell in &row.cells {
+                mark(&cell.columns, !cell.kept);
             }
-            let last = row.cells.last().map_or(row.before, |(c, _)| c.end);
+            let last = row.cells.last().map_or(row.before, |c| c.columns.end);
             mark(&(last..row.end), false);
         }
         let columns = runs
@@ -207,6 +232,13 @@ impl ViewGrid {
             .count()
     }
 
+    /// How many of the view's columns a cell over the source columns `parts` covers (its own,
+    /// and those of the deleted cells whose content it takes).
+    #[must_use]
+    pub fn span_of(&self, parts: &[Range<usize>]) -> usize {
+        parts.iter().map(|p| self.span(p)).sum()
+    }
+
     /// The widths of the view's columns that begin inside the source grid, from its widths
     /// (`grid`, one per source column; a column past it has none of its own, the table's
     /// resolution sizes it as one written past the grid).
@@ -266,14 +298,58 @@ impl View {
 
 #[cfg(test)]
 mod tests {
-    use super::{RowShape, ViewGrid};
+    use super::{RowShape, ShapeCell, ViewGrid};
 
     fn row(before: usize, cells: &[(usize, usize, bool)], end: usize) -> RowShape {
         RowShape {
             before,
-            cells: cells.iter().map(|&(s, e, k)| (s..e, k)).collect(),
+            cells: cells
+                .iter()
+                .map(|&(s, e, kept)| ShapeCell {
+                    columns: s..e,
+                    kept,
+                    widens: false,
+                })
+                .collect(),
             end,
         }
+    }
+
+    #[test]
+    fn a_widening_cell_joins_the_one_before_it_and_a_hole_between_still_goes() {
+        let widening = |s: usize, e: usize| ShapeCell {
+            columns: s..e,
+            kept: true,
+            widens: true,
+        };
+        let plain = |s: usize, e: usize, kept: bool| ShapeCell {
+            columns: s..e,
+            kept,
+            widens: false,
+        };
+        // 19830c99: [D][deleted, content kept][E][F] beside [A span 2][B][C]
+        let rows = [
+            row(0, &[(0, 2, true), (2, 3, true), (3, 4, true)], 4),
+            RowShape {
+                before: 0,
+                cells: vec![plain(0, 1, true), widening(1, 2), plain(2, 3, true), plain(3, 4, true)],
+                end: 4,
+            },
+        ];
+        assert_eq!(ViewGrid::build(&rows, 4).columns(), &[0..2, 2..3, 3..4]);
+        // r55: a tracked merge's first cell, a deleted cell gone, two whose content stays,
+        // above rows whose column 1 is deleted
+        let rows = [
+            RowShape {
+                before: 0,
+                cells: vec![plain(0, 1, true), plain(1, 2, false), widening(2, 3), widening(3, 4)],
+                end: 4,
+            },
+            row(0, &[(0, 1, true), (1, 2, false), (2, 3, true), (3, 4, true)], 4),
+        ];
+        let grid = ViewGrid::build(&rows, 4);
+        assert_eq!(grid.columns(), &[0..1, 2..3, 3..4]);
+        assert_eq!(grid.span_of(&[0..1, 2..3, 3..4]), 3);
     }
 
     #[test]

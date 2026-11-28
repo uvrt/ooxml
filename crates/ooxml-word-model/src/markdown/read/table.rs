@@ -145,7 +145,7 @@ impl Reader<'_> {
         let view_grid = ViewGrid::of(self.view, &rows, columns);
         for (line, ranges) in grid.rows.iter_mut().zip(&grid.ranges) {
             for (cell, range) in line.iter_mut().zip(ranges) {
-                cell.view_span = view_grid.span(range);
+                cell.view_span = view_grid.span_of(range);
             }
         }
         let width = view_grid.width();
@@ -179,7 +179,7 @@ impl Reader<'_> {
             grid.counting_header = false;
         }
         let mut line: Vec<CellRecord> = Vec::new();
-        let mut ranges: Vec<Range<usize>> = Vec::new();
+        let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
         let spec = RowSpec::of(&row.element);
         let mut column = spec.before;
         let all = cells(row);
@@ -192,7 +192,7 @@ impl Reader<'_> {
                 if let (Some(before), Some(range)) = (line.last_mut(), ranges.last_mut()) {
                     if self.view == View::Final && content_kept(&tc.element) {
                         before.column_span += span;
-                        range.end = here.end;
+                        range.push(here.clone());
                     }
                 }
             } else if let (true, Some(origin)) = (
@@ -224,7 +224,7 @@ impl Reader<'_> {
                     records,
                     path: tc.path.clone(),
                 });
-                ranges.push(here);
+                ranges.push(vec![here]);
             }
             column += span;
         }
@@ -266,8 +266,9 @@ struct Grid {
     /// The cells continuing a merge the final view starts again or leaves alone.
     heads: HashMap<(usize, usize), VMerge>,
     rows: Vec<Vec<CellRecord>>,
-    /// Each row's cells' source grid columns in the view.
-    ranges: Vec<Vec<Range<usize>>>,
+    /// Each row's cells' source grid columns in the view (a cell's own, and those of the
+    /// deleted cells whose content it takes).
+    ranges: Vec<Vec<Vec<Range<usize>>>>,
     header_rows: usize,
     counting_header: bool,
     placed: bool,

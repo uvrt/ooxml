@@ -269,8 +269,9 @@ struct Built {
     cell_properties: Vec<Arc<[Props]>>,
     conditions: Vec<Arc<[Arc<[Text]>]>>,
     cell_places: Vec<Arc<[(u32, u32)]>>,
-    /// Each row's cells' source grid columns, and where its `w:gridAfter` begins and ends.
-    columns: Vec<(Vec<Range<usize>>, Range<usize>)>,
+    /// Each row's cells' source grid columns (a cell's own, and those of the deleted cells
+    /// whose content it takes), and where its `w:gridAfter` begins and ends.
+    columns: Vec<Columns>,
     moved: Vec<(usize, Vec<Block>)>,
 }
 
@@ -322,7 +323,7 @@ impl Reader<'_> {
         let mut props_of: Vec<Props> = Vec::new();
         let spec = crate::docx::tables::RowSpec::of(plan.row);
         let mut column = spec.before;
-        let mut ranges: Vec<Range<usize>> = Vec::new();
+        let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
         for (j, cell) in all.iter().enumerate() {
             let columns = column..column.saturating_add(View::Final.span(cell));
             column = columns.end;
@@ -331,11 +332,11 @@ impl Reader<'_> {
                 let mut props = accepted_cell_properties(self, cell);
                 headed(&mut props, shape.heads.get(&(plan.index, j)));
                 props_of.push(props);
-                ranges.push(columns);
+                ranges.push(vec![columns]);
             } else if let Some(last) = props_of.last_mut().filter(|_| widens(cell)) {
                 absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
-                if let Some(range) = ranges.last_mut() {
-                    range.end = columns.end;
+                if let Some(parts) = ranges.last_mut() {
+                    parts.push(columns);
                 }
             }
         }
@@ -504,11 +505,11 @@ fn count(k: usize) -> u32 {
 /// `table` with each cell's span and each row's `w:gridBefore` and `w:gridAfter` counted in
 /// `grid`'s columns, where they differ from the source grid's; `columns` each row's cells'
 /// source columns and its `w:gridAfter`'s, from `table`'s first row.
-fn regridded(table: Table, grid: &ViewGrid, columns: &[(Vec<Range<usize>>, Range<usize>)]) -> Table {
+fn regridded(table: Table, grid: &ViewGrid, columns: &[Columns]) -> Table {
     if grid.is_source() {
         return table;
     }
-    let count = |range: &Range<usize>| Value::Int(i64::try_from(grid.span(range)).unwrap_or(i64::MAX));
+    let count = |span: usize| Value::Int(i64::try_from(span).unwrap_or(i64::MAX));
     let set = |props: &mut Props, name: &'static str, value: Value, none: bool| {
         if none {
             props.remove(name);
@@ -524,10 +525,10 @@ fn regridded(table: Table, grid: &ViewGrid, columns: &[(Vec<Range<usize>>, Range
             let cells: Vec<Props> = row
                 .iter()
                 .zip(ranges)
-                .map(|(props, range)| {
+                .map(|(props, parts)| {
                     let mut props = props.clone();
-                    let span = grid.span(range);
-                    set(&mut props, "gridSpan", count(range), span == 1);
+                    let span = grid.span_of(parts);
+                    set(&mut props, "gridSpan", count(span), span == 1);
                     props
                 })
                 .collect();
@@ -540,10 +541,10 @@ fn regridded(table: Table, grid: &ViewGrid, columns: &[(Vec<Range<usize>>, Range
         .zip(columns)
         .map(|(props, (ranges, after))| {
             let mut props = props.clone();
-            let first = ranges.first().map_or(after.start, |r| r.start);
+            let first = ranges.first().and_then(|p| p.first()).map_or(after.start, |r| r.start);
             for (name, range) in [("gridBefore", 0..first), ("gridAfter", after.clone())] {
                 if props.contains_key(name) {
-                    set(&mut props, name, count(&range), false);
+                    set(&mut props, name, count(grid.span(&range)), false);
                 }
             }
             props
@@ -556,13 +557,7 @@ fn regridded(table: Table, grid: &ViewGrid, columns: &[(Vec<Range<usize>>, Range
     }
 }
 
-fn part_of(
-    table: &Table,
-    start: usize,
-    end: usize,
-    grid: (Arc<[i64]>, ViewGrid),
-    columns: &[(Vec<Range<usize>>, Range<usize>)],
-) -> Table {
+fn part_of(table: &Table, start: usize, end: usize, grid: (Arc<[i64]>, ViewGrid), columns: &[Columns]) -> Table {
     fn slice<T: Clone>(items: &[T], start: usize, end: usize) -> Arc<[T]> {
         Arc::from(items.get(start..end).unwrap_or_default().to_vec())
     }
@@ -579,15 +574,14 @@ fn part_of(
     regridded(part, &grid.1, columns.get(start..end).unwrap_or_default())
 }
 
+/// A row's cells' source grid columns, each cell's in parts (its own, and those of the deleted
+/// cells whose content it takes), and its `w:gridAfter`'s.
+type Columns = (Vec<Vec<Range<usize>>>, Range<usize>);
+
 /// A part's grid: its widths and its columns.
 type PartGrid<'g> = &'g dyn Fn(usize, usize) -> (Arc<[i64]>, ViewGrid);
 
-fn split(
-    table: Table,
-    moved: Vec<(usize, Vec<Block>)>,
-    grid_of: PartGrid<'_>,
-    columns: &[(Vec<Range<usize>>, Range<usize>)],
-) -> Vec<Block> {
+fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: PartGrid<'_>, columns: &[Columns]) -> Vec<Block> {
     if moved.is_empty() {
         return if table.rows.is_empty() {
             Vec::new()
