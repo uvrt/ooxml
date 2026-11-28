@@ -63,6 +63,14 @@ enum How {
     /// The people part, theirs listing these authors more than the base's (each listed
     /// where it lands, [`Change::People`]): a union by author.
     People(Vec<Arc<str>>),
+    /// A part the base did not have: theirs, and one of ours added since under the same
+    /// name moved to a name of its own ([`Change::Moved`]).
+    Added,
+    /// A relationships part: the union by id of theirs and what was added here since the
+    /// base, an id of ours theirs gives another entry renamed ([`Change::Relinked`]).
+    Rels(Option<Tree>, Tree),
+    /// The content types: the union by part name and extension ([`Change::Typed`]).
+    Types(Option<Tree>, Tree),
 }
 
 /// A part whose patches could not be moved past what changed in it since the base: take it
@@ -101,6 +109,17 @@ impl Arrival {
             let name = PartName::normalize(&name);
             if !from.has_part(&name) {
                 parts.push(ArrivedPart::whole(name, How::Removed));
+                continue;
+            }
+            if let Some(merged) = bookkeeping(base, &from, &name)? {
+                parts.push(ArrivedPart {
+                    keys: BTreeSet::from([Key::Part(name.clone())]),
+                    touched: BTreeSet::new(),
+                    came: BTreeSet::new(),
+                    root: None,
+                    name,
+                    how: merged,
+                });
                 continue;
             }
             if let Some(authors) = added_people(base, &docx.main, &from, &name)? {
@@ -176,6 +195,8 @@ impl Arrival {
             let mine = |key: &Key| part_of(key) == Some(&part.name);
             match part.how {
                 How::Whole | How::Removed => reads.iter().chain(all).any(mine),
+                // merged by id and name, ours renamed or moved where both name one
+                How::Added | How::Rels(..) | How::Types(..) => false,
                 How::People(_) => writes.iter().any(mine),
                 How::Patched(_) => {
                     // one of its blocks read or written, the part (or its root) written whole,
@@ -202,6 +223,74 @@ impl Arrival {
         }
     }
 
+    /// The part whole as `from` holds it, writing `keys`.
+    fn whole(&self, name: Arc<str>, keys: Arc<[Key]>) -> Change {
+        Change::Arrived {
+            part: name,
+            patches: None,
+            keys,
+            from: self.from.clone(),
+            on: None,
+        }
+    }
+
+    /// A part the base did not have, theirs whole; one of ours added since under the same
+    /// name (other bytes) moved first to a name of its own. Keyed by nothing: a part of ours
+    /// made meanwhile under that name is a place both changes take, so that transaction is
+    /// prepared again and names its part anew, not refused.
+    fn added(&self, tx: &mut Txn<'_, WordDoc>, name: Arc<str>) -> Result<Change, ArrivalError> {
+        let ours = tx.doc().package().part(&name).is_some();
+        if ours && !same_bytes(tx.doc().package(), &self.from, &name)? {
+            let to = crate::merging::fresh_name(tx.doc().package(), &self.from, &name);
+            let rels = crate::merging::targeting(tx.doc().package(), &name).map_err(EditError::from)?;
+            tx.write(Change::Moved {
+                from: Arc::clone(&name),
+                to: Arc::from(to.as_str()),
+                rels: rels.iter().map(|r| Arc::from(r.as_str())).collect(),
+            })?;
+        }
+        Ok(self.whole(name, Arc::from([])))
+    }
+
+    /// A story part's patches as they land on `tx`'s head (as they are where the part there
+    /// is still `on`, the base's: `same`), their root's head merged after them.
+    fn patched_on(
+        &self,
+        tx: &mut Txn<'_, WordDoc>,
+        base: &WordDoc,
+        part: &ArrivedPart,
+        (name, keys): (Arc<str>, Arc<[Key]>),
+        (patches, on, same): (&[Patch], Option<ooxml_opc::PartVersion>, bool),
+    ) -> Result<Change, ArrivalError> {
+        let placed = if same {
+            patches.to_vec()
+        } else {
+            placed_past(patches, &base.tree(&name)?, &tx.doc().tree(&name)?)
+                .ok_or_else(|| Unplaced(name.to_string()))?
+        };
+        let Some(head) = &part.root else {
+            return Ok(Change::Arrived {
+                part: name,
+                patches: Some(placed.into()),
+                keys,
+                from: self.from.clone(),
+                on: on.filter(|_| same),
+            });
+        };
+        // their root's head merged where it lands, after their children
+        tx.write(Change::Arrived {
+            part: Arc::clone(&name),
+            patches: Some(placed.into()),
+            keys,
+            from: self.from.clone(),
+            on: None,
+        })?;
+        Ok(Change::RootHead {
+            part: name,
+            head: Arc::clone(head),
+        })
+    }
+
     /// Make the change in `tx`, on its head, `base` the version it was made from: each part
     /// as theirs, and the other editor's id values added to the ledger.
     ///
@@ -210,7 +299,14 @@ impl Arrival {
     /// since `base`; what the store or the document refused.
     pub fn prepare(&self, tx: &mut Txn<'_, WordDoc>, base: &WordDoc) -> Result<(), ArrivalError> {
         let mut trees = Vec::new();
-        for part in &self.parts {
+        // the bookkeeping last, merged over the parts as they land
+        let last = |p: &&ArrivedPart| matches!(p.how, How::Rels(..) | How::Types(..));
+        let ordered = self
+            .parts
+            .iter()
+            .filter(|p| !last(p))
+            .chain(self.parts.iter().filter(last));
+        for part in ordered {
             let keys = part.written_on(tx.doc())?;
             for key in &keys {
                 tx.read(key.clone());
@@ -221,15 +317,7 @@ impl Arrival {
             let here = tx.doc().package().part(&name);
             let same = matches!((&on, here), (Some(on), Some(here)) if on.same(here));
             let change = match &part.how {
-                // the part here as at the base: theirs whole, saved as they wrote it
-                How::People(_) if same => Change::Arrived {
-                    part: name,
-                    patches: None,
-                    keys,
-                    from: self.from.clone(),
-                    on: None,
-                },
-                How::People(authors) => {
+                How::People(authors) if !same => {
                     let mut sink = crate::sink::EditSink::new(tx, crate::policy::RevisionPolicy::Untracked);
                     for author in authors {
                         sink.people(Some(author), None)?;
@@ -238,45 +326,23 @@ impl Arrival {
                 }
                 How::Removed if !tx.doc().package().has_part(&name) => continue,
                 How::Removed => Change::Remove { part: name },
-                How::Whole => Change::Arrived {
+                How::Rels(base, theirs) => Change::Relinked {
                     part: name,
-                    patches: None,
-                    keys,
+                    base: base.clone(),
+                    theirs: theirs.clone(),
                     from: self.from.clone(),
-                    on: None,
+                    keys,
                 },
-                How::Patched(patches) => {
-                    let placed = if same {
-                        patches.clone()
-                    } else {
-                        placed_past(patches, &base.tree(&name)?, &tx.doc().tree(&name)?)
-                            .ok_or_else(|| Unplaced(name.to_string()))?
-                    };
-                    if let Some(head) = &part.root {
-                        // their root's head merged where it lands, after their children
-                        tx.write(Change::Arrived {
-                            part: Arc::clone(&name),
-                            patches: Some(placed.into()),
-                            keys: Arc::clone(&keys),
-                            from: self.from.clone(),
-                            on: None,
-                        })?;
-                        Change::RootHead {
-                            part: name,
-                            head: Arc::clone(head),
-                        }
-                    } else {
-                        Change::Arrived {
-                            part: name,
-                            patches: Some(placed.into()),
-                            keys,
-                            from: self.from.clone(),
-                            on: on.filter(|_| same),
-                        }
-                    }
-                }
+                How::Types(base, theirs) => Change::Typed {
+                    base: base.clone(),
+                    theirs: theirs.clone(),
+                },
+                How::Added => self.added(tx, name)?,
+                How::Patched(patches) => self.patched_on(tx, base, part, (name, keys), (patches, on, same))?,
+                // the part whole as theirs (people with the part here as at the base)
+                How::Whole | How::People(_) => self.whole(name, keys),
             };
-            if !matches!(part.how, How::Removed) {
+            if !matches!(part.how, How::Removed | How::Rels(..) | How::Types(..)) {
                 if let Ok(Some(tree)) = self.from.tree(&part.name) {
                     trees.push(tree);
                 }
@@ -429,6 +495,25 @@ impl ArrivedPart {
             .cloned()
             .collect())
     }
+}
+
+/// How `name`, a part `from` changed against `base`, is merged where it is one of the
+/// package's bookkeeping parts: a relationships part, the content types, or a part the base
+/// did not have; `None` for any other.
+fn bookkeeping(base: &WordDoc, from: &Package, name: &PartName) -> Result<Option<How>, EditError> {
+    let theirs = || from.tree(name);
+    if name.as_str().ends_with(".rels") {
+        return Ok(theirs()?.map(|t| How::Rels(base.package().tree(name).ok().flatten(), t)));
+    }
+    if name.as_str() == ooxml_opc::CONTENT_TYPES_PART {
+        return Ok(theirs()?.map(|t| How::Types(base.package().tree(name).ok().flatten(), t)));
+    }
+    Ok((!base.package().has_part(name)).then_some(How::Added))
+}
+
+/// Whether `ours` and `theirs` hold the part `name` with the same bytes.
+fn same_bytes(ours: &Package, theirs: &Package, name: &str) -> Result<bool, EditError> {
+    Ok(ours.read(name)? == theirs.read(name)?)
 }
 
 /// The authors `from`'s people part lists beyond `base`'s, where `name` is the base's people

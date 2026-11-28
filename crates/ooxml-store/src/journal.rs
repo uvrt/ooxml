@@ -28,7 +28,14 @@ pub(crate) struct Journal<D: DocModel> {
 
 /// One version's entry: its number, the change set that made it, the keys that wrote, and
 /// the editor who made it when that is another editor's commit ([`crate::Caller::foreign`]).
-type Entry<D> = (Seq, ChangeSet<D>, KeySet<<D as DocModel>::Key>, Option<Arc<str>>);
+/// The last: the keys it wrote only as merges (made where it was applied).
+type Entry<D> = (
+    Seq,
+    ChangeSet<D>,
+    KeySet<<D as DocModel>::Key>,
+    Option<Arc<str>>,
+    KeySet<<D as DocModel>::Key>,
+);
 
 /// Another editor's commit in the way of a transaction: its version, the editor, and the
 /// keys of the transaction's it wrote.
@@ -63,8 +70,11 @@ impl<D: DocModel> Since<D> {
     ) -> Option<ForeignHit<D::Key>> {
         self.0.iter().find_map(|entry| {
             let editor = entry.3.as_ref()?;
-            let mut overlap = entry.2.intersection(depends);
-            if let Some(keys) = entry.2.keys() {
+            // what it wrote only as merges (bookkeeping made where it landed) is no person's
+            // edit: a transaction in its way is prepared again, not refused
+            let written = entry.2.without(&entry.4);
+            let mut overlap = written.intersection(depends);
+            if let Some(keys) = written.keys() {
                 let met = keys
                     .iter()
                     .filter(|key| predicates.iter().any(|p| p.depends(head, key)));
@@ -112,8 +122,15 @@ impl<D: DocModel> Journal<D> {
     }
 
     /// Keep the change set that made version `seq`, and the keys it wrote.
-    pub(crate) fn push(&mut self, seq: Seq, changes: ChangeSet<D>, writes: KeySet<D::Key>, foreign: Option<Arc<str>>) {
-        self.entries.push_back(Arc::new((seq, changes, writes, foreign)));
+    pub(crate) fn push(
+        &mut self,
+        seq: Seq,
+        changes: ChangeSet<D>,
+        (writes, merges): (KeySet<D::Key>, KeySet<D::Key>),
+        foreign: Option<Arc<str>>,
+    ) {
+        self.entries
+            .push_back(Arc::new((seq, changes, writes, foreign, merges)));
     }
 
     /// Let go of the oldest entries beyond the latest `window`, but none after `needed` (the

@@ -867,6 +867,7 @@ impl<D: DocModel> Store<D> {
         let changes = ChangeSet::made(body.changes);
         let writes = body.writes.clone();
         let foreign = body.caller.foreign_name();
+        let merges = body.merges.clone();
         let step = Step {
             before,
             after: Arc::clone(&version),
@@ -878,7 +879,7 @@ impl<D: DocModel> Store<D> {
             foreign: body.caller.foreign,
         };
         let garbage = state.history.commit(step);
-        self.journal(state, seq, changes, writes.clone(), foreign);
+        self.journal(state, seq, changes, (writes.clone(), merges), foreign);
         (version, writes, garbage)
     }
 
@@ -974,7 +975,7 @@ impl<D: DocModel> Store<D> {
         let garbage = state
             .history
             .record(planned.target, head, Arc::clone(&version), changes.clone());
-        self.journal(&mut state, seq, changes, planned.writes.clone(), None);
+        self.journal(&mut state, seq, changes, (planned.writes.clone(), KeySet::new()), None);
         let held = self.clock.monotonic().saturating_sub(entered);
         drop(state);
         drop(garbage);
@@ -996,10 +997,10 @@ impl<D: DocModel> Store<D> {
         state: &mut State<D>,
         seq: Seq,
         changes: ChangeSet<D>,
-        writes: KeySet<D::Key>,
+        written: (KeySet<D::Key>, KeySet<D::Key>),
         foreign: Option<Arc<str>>,
     ) {
-        state.journal.push(seq, changes, writes, foreign);
+        state.journal.push(seq, changes, written, foreign);
         let needed = state.history.oldest_reach();
         state.journal.trim(self.config.rebase_window, needed);
     }

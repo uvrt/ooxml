@@ -80,6 +80,7 @@ mod lists;
 mod markdown;
 mod marks;
 mod merge;
+mod merging;
 mod moving;
 mod moving_tracked;
 mod names;

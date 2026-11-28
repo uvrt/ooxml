@@ -115,6 +115,41 @@ pub enum Change {
         /// Their root's head.
         head: Arc<ooxml_xml::Head>,
     },
+    /// A relationships part as the union of another editor's (`theirs`) and the entries
+    /// added here since their base (`base`, the part there), merged where the change lands;
+    /// an id of ours theirs gives another entry renamed, with the references to it in our
+    /// blocks of the source part ([`crate::merging::relinked`]). `from` is their version.
+    Relinked {
+        /// The relationships part.
+        part: Arc<str>,
+        /// It at their base, where it was there.
+        base: Option<Tree>,
+        /// Theirs.
+        theirs: Tree,
+        /// Their version.
+        from: Package,
+        /// The keys it writes: the part and its source part.
+        keys: Arc<[Key]>,
+    },
+    /// The content types as the union of another editor's (`theirs`) and the entries added
+    /// here since their base, merged where the change lands ([`crate::merging::typed`]).
+    Typed {
+        /// At their base.
+        base: Option<Tree>,
+        /// Theirs.
+        theirs: Tree,
+    },
+    /// A part added here since another editor's base under a name their version gives a
+    /// part of its own, moved to a name of its own with what targets it
+    /// ([`crate::merging::moved`]).
+    Moved {
+        /// The name both gave.
+        from: Arc<str>,
+        /// The name ours moves to.
+        to: Arc<str>,
+        /// The relationships parts whose entries target it, where the change was made.
+        rels: Arc<[Arc<str>]>,
+    },
     /// A part as another editor's version of the document has it (a co-authoring refresh,
     /// [`crate::Arrival`]): `patches`, the changes from the version that editor's save was
     /// made from, applied in place (the blocks they do not touch keep their ids and what is
@@ -267,6 +302,7 @@ impl Change {
             | Change::Arrived { part, .. }
             | Change::Declare { part, .. }
             | Change::RootHead { part, .. }
+            | Change::Relinked { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),
             Change::Restore { .. }
@@ -274,6 +310,8 @@ impl Change {
             | Change::Draw { .. }
             | Change::Number
             | Change::People { .. }
+            | Change::Typed { .. }
+            | Change::Moved { .. }
             | Change::Spaced(_) => None,
         }
     }

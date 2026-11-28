@@ -13,7 +13,9 @@ use crate::interleave::Paused;
 use ooxml_base::Limits;
 use ooxml_opc::Package;
 use ooxml_store::{Caller, Seq, Snapshot, StoreError};
-use ooxml_word_edit::{EditError, Editor, InsertParagraph, Key, RevisionPolicy, SetText, Tracking, WordDoc};
+use ooxml_word_edit::{
+    EditError, Editor, InsertParagraph, InsertPicture, Key, RevisionPolicy, SetText, Tracking, WordDoc,
+};
 use std::collections::HashSet;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
@@ -394,4 +396,153 @@ fn people_both_sides_list_come_together_by_author() {
     let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
     assert!(arrived.handed_back.is_empty());
     assert_eq!(people(ours.store().snapshot().doc()), ["Ada", "Ann", "Bo"]);
+}
+
+/// A one-pixel PNG of the colour `rgb`.
+fn png(rgb: [u8; 3]) -> Arc<[u8]> {
+    fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+        out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+    }
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = 0xFFFF_FFFFu32;
+        for byte in data {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+    fn adler(data: &[u8]) -> u32 {
+        let (mut a, mut b) = (1u32, 0u32);
+        for byte in data {
+            a = (a + u32::from(*byte)) % 65521;
+            b = (b + a) % 65521;
+        }
+        (b << 16) | a
+    }
+    let raw = [0u8, rgb[0], rgb[1], rgb[2]];
+    // a stored deflate block of the one scanline
+    let mut idat = vec![0x78, 0x01, 0x01, 4, 0, 0xFB, 0xFF];
+    idat.extend_from_slice(&raw);
+    idat.extend_from_slice(&adler(&raw).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    chunk(&mut out, b"IHDR", &[0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0]);
+    chunk(&mut out, b"IDAT", &idat);
+    chunk(&mut out, b"IEND", &[]);
+    out.into()
+}
+
+fn picture(target: &str, image: Arc<[u8]>) -> InsertPicture {
+    InsertPicture {
+        at: ooxml_word_model::address::Address::from(format!("{target}@0")),
+        image,
+        width: Some(20.0),
+        alt_text: None,
+        policy: RevisionPolicy::Untracked,
+    }
+}
+
+/// The pictures the main part draws: each one's relationship id and the bytes it targets.
+fn pictures(doc: &WordDoc) -> Vec<(String, Arc<[u8]>)> {
+    let package = doc.package();
+    let tree = package.tree(MAIN).unwrap().unwrap();
+    let r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    let a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let rels = package.relationships(MAIN).unwrap();
+    let mut out = Vec::new();
+    let mut stack = vec![Arc::clone(tree.root())];
+    while let Some(e) = stack.pop() {
+        if e.name().is(Some(a), "blip") {
+            if let Some(id) = e.attribute(Some(r), "embed") {
+                let target = rels
+                    .iter()
+                    .find(|rel| rel.id == id)
+                    .and_then(|rel| rel.target_part.clone())
+                    .unwrap();
+                out.push((id.to_owned(), package.read(&target).unwrap().unwrap()));
+            }
+        }
+        stack.extend(e.child_elements().cloned());
+    }
+    out
+}
+
+#[test]
+fn two_editors_each_adding_a_picture_after_one_base_keep_both() {
+    let (ours, targets) = opened();
+    let base = ours.store().snapshot();
+    let (mine, theirs_image) = (png([200, 10, 10]), png([10, 10, 200]));
+    ours.run(&Caller::named("a"), &picture(&targets[1], Arc::clone(&mine)))
+        .unwrap();
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &picture(&targets[3], Arc::clone(&theirs_image)))
+            .unwrap();
+    });
+    // both picked the same next id and the same media name
+    let their_pictures = pictures(editor(&bytes).store().snapshot().doc());
+    let our_pictures = pictures(ours.store().snapshot().doc());
+    assert_eq!(their_pictures[0].0, our_pictures[0].0, "the same rId on both sides");
+    let arrived = ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+    assert!(arrived.handed_back.is_empty(), "nothing handed back: ours renamed");
+    let head = ours.store().snapshot();
+    let drawn = pictures(head.doc());
+    assert_eq!(
+        drawn.len(),
+        2,
+        "{:?}",
+        drawn.iter().map(|(id, _)| id).collect::<Vec<_>>()
+    );
+    assert_ne!(drawn[0].0, drawn[1].0, "each its own id");
+    let images: Vec<&Arc<[u8]>> = drawn.iter().map(|(_, b)| b).collect();
+    assert!(
+        images.contains(&&mine) && images.contains(&&theirs_image),
+        "each draws its own picture"
+    );
+    // the document saves and opens again with both
+    let saved: Arc<[u8]> = head.doc().package().save().unwrap().into();
+    assert_eq!(pictures(editor(&saved).store().snapshot().doc()).len(), 2);
+}
+
+#[test]
+fn a_picture_prepared_before_theirs_comes_in_is_prepared_again_not_refused() {
+    let (ours, targets) = opened();
+    let base = ours.store().snapshot();
+    let (mine, theirs_image) = (png([10, 200, 10]), png([200, 200, 10]));
+    let bytes = theirs(&base, |other| {
+        other
+            .run(&Caller::anonymous(), &picture(&targets[3], Arc::clone(&theirs_image)))
+            .unwrap();
+    });
+    let (prepared, wait) = channel();
+    let (release, go) = channel();
+    let paused = Paused {
+        command: picture(&targets[1], Arc::clone(&mine)),
+        prepared,
+        go: Mutex::new(go),
+        first: AtomicBool::new(true),
+    };
+    // the relationships and the media name it picked are bookkeeping theirs merged: it is
+    // prepared again where theirs landed, not refused as changed meanwhile
+    let attempts = std::thread::scope(|scope| {
+        let handle = scope.spawn(|| ours.run(&Caller::named("agent"), &paused).map(|done| done.attempts));
+        wait.recv().unwrap();
+        ours.receive("Ada", base.seq(), open(&bytes)).unwrap();
+        release.send(()).unwrap();
+        handle.join().unwrap()
+    })
+    .unwrap();
+    assert!(attempts >= 1);
+    let drawn = pictures(ours.store().snapshot().doc());
+    assert_eq!(drawn.len(), 2);
+    assert_ne!(drawn[0].0, drawn[1].0);
 }

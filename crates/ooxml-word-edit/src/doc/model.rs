@@ -49,7 +49,11 @@ impl DocModel for WordDoc {
                 (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone())
             }
             Change::Head { part, patch, .. } => (self.with_tree(part, |t| patch.apply(t))?, self.ids.clone()),
-            Change::RootHead { .. } | Change::Declare { .. } => (self.headed(change)?, self.ids.clone()),
+            Change::RootHead { .. }
+            | Change::Declare { .. }
+            | Change::Relinked { .. }
+            | Change::Typed { .. }
+            | Change::Moved { .. } => (self.merged_in(change)?, self.ids.clone()),
             Change::Put { part, tree } => (self.package.with_new_tree(part, tree.clone()), self.ids.clone()),
             Change::Arrived {
                 part,
@@ -64,13 +68,7 @@ impl DocModel for WordDoc {
             }
             Change::Bytes { part, bytes } => (self.package.with_bytes(part, Arc::clone(bytes)), self.ids.clone()),
             Change::Remove { part } => (self.package.without(part)?, self.ids.clone()),
-            Change::Restore { parts, from } => {
-                let mut package = self.package.package().clone();
-                for part in parts.iter() {
-                    package = package.restored(part, from)?;
-                }
-                (package, self.ids.clone())
-            }
+            Change::Restore { parts, from } => (self.restored(parts, from)?, self.ids.clone()),
             Change::People { add, tidy, .. } => (self.people(add.as_deref(), tidy.as_deref())?, self.ids.clone()),
             Change::Ids(added) => {
                 // the package is as it was: no part is written
@@ -164,6 +162,12 @@ impl DocModel for WordDoc {
                 tidy: add.clone(),
                 keys: Arc::clone(keys),
             },
+            // another editor's bookkeeping merged (their step, which no undo takes back): the
+            // parts it may write put back as they are here
+            Change::Relinked { .. } | Change::Typed { .. } | Change::Moved { .. } => Change::Restore {
+                parts: bookkeeping_parts(change).into(),
+                from: self.package.package().clone(),
+            },
             // ids given are never given again, a declaration made stays: nothing to take back
             // (another editor's head merged: their step, never taken back)
             Change::Ids(_)
@@ -199,6 +203,11 @@ impl DocModel for WordDoc {
         match change {
             Change::Declare { part, .. } | Change::RootHead { part, .. } => {
                 into.insert(Key::Root(PartName::normalize(part)));
+            }
+            Change::Relinked { .. } | Change::Typed { .. } | Change::Moved { .. } => {
+                for part in bookkeeping_parts(change) {
+                    into.insert(Key::Part(PartName::normalize(&part)));
+                }
             }
             Change::Arrived { part, keys, .. } => {
                 into.insert(Key::StyleUse(PartName::normalize(part)));
@@ -335,9 +344,18 @@ impl DocModel for WordDoc {
             Change::Draw { seed, .. } => {
                 into.insert(Key::Seq(Arc::clone(seed)));
             }
+            // ids added to the ledger: a set, two adders do not conflict (a reader of a
+            // sequence still conflicts with them)
+            Change::Ids(_) => Self::written(change, into),
             // declarations added where the change lands, the root's own kept
             Change::Declare { part, .. } => {
                 into.insert(Key::Root(PartName::normalize(part)));
+            }
+            // another editor's bookkeeping merged where it lands: ids and names made there
+            Change::Relinked { .. } | Change::Typed { .. } | Change::Moved { .. } => {
+                for part in bookkeeping_parts(change) {
+                    into.insert(Key::Part(PartName::normalize(&part)));
+                }
             }
             _ => {}
         }
@@ -490,4 +508,28 @@ fn arrived_rebase(change: &Change, past: &Change, first: First) -> Option<Result
         return Some(Ok(moved));
     }
     None
+}
+
+/// The parts another editor's merged bookkeeping may write: a relationships part and its
+/// source part; the content types; a moved part, the name it moves to, the content types and
+/// every relationships part.
+fn bookkeeping_parts(change: &Change) -> Vec<Arc<str>> {
+    match change {
+        Change::Relinked { part, .. } => {
+            let mut parts = vec![Arc::clone(part)];
+            parts.extend(crate::merging::source_of(part).map(|s| Arc::from(s.as_str())));
+            parts
+        }
+        Change::Typed { .. } => vec![Arc::from(ooxml_opc::CONTENT_TYPES_PART)],
+        Change::Moved { from, to, rels } => {
+            let mut parts = vec![
+                Arc::clone(from),
+                Arc::clone(to),
+                Arc::from(ooxml_opc::CONTENT_TYPES_PART),
+            ];
+            parts.extend(rels.iter().cloned());
+            parts
+        }
+        _ => Vec::new(),
+    }
 }

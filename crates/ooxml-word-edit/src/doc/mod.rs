@@ -625,6 +625,35 @@ impl WordDoc {
         })
     }
 
+    /// The package with `parts` as `from`, another version of it, has them (what undo puts
+    /// back, [`super::Change::Restore`]).
+    pub(crate) fn restored(&self, parts: &[Arc<str>], from: &Package) -> Result<Package, ModelError> {
+        let mut package = self.package.package().clone();
+        for part in parts {
+            package = package.restored(part, from)?;
+        }
+        Ok(package)
+    }
+
+    /// The package after another editor's bookkeeping merged where it lands
+    /// ([`super::Change::Relinked`], [`super::Change::Typed`], [`super::Change::Moved`]).
+    pub(crate) fn merged_in(&self, change: &super::Change) -> Result<Package, ModelError> {
+        let package = self.package.package();
+        match change {
+            super::Change::Relinked {
+                part,
+                base,
+                theirs,
+                from,
+                ..
+            } => crate::merging::relinked(package, part, base.as_ref(), theirs, from),
+            super::Change::Typed { base, theirs } => crate::merging::typed(package, base.as_ref(), theirs),
+            super::Change::Moved { from, to, .. } => crate::merging::moved(package, from, to),
+            super::Change::Declare { .. } | super::Change::RootHead { .. } => self.headed(change),
+            _ => Ok(package.clone()),
+        }
+    }
+
     /// The package with `part`'s root head merged with `theirs` ([`super::Change::RootHead`]).
     pub(crate) fn root_merged(&self, part: &str, theirs: &ooxml_xml::Head) -> Result<Package, ModelError> {
         let tree = self

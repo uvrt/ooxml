@@ -266,7 +266,7 @@ fn relate(
 }
 
 /// `posixpath.relpath(target, base)` for a target below or beside `base`.
-fn relative_to(target: &str, base: &str) -> String {
+pub(crate) fn relative_to(target: &str, base: &str) -> String {
     let t: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
     let b: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
     let common = t.iter().zip(&b).take_while(|(x, y)| x == y).count();
