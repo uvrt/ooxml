@@ -1,7 +1,7 @@
 //! Owns: the parts beside the version's text that a page's drawing reads (its pictures'
 //! parts and media types, its drawings' charts, diagrams and the parts they relate to, the
-//! pictures a shape's or VML object's markup names, the theme and settings a drawing or a
-//! text effect is coloured from), each by its name and a digest of its content -- what a
+//! pictures a shape's or VML object's markup names, the theme a drawing or a text effect
+//! is coloured from), each by its name and a digest of its content -- what a
 //! comparison of two versions' pages digests beside the page's paint, so that a picture
 //! replaced or a chart edited under the same relationship tells the page apart
 //! ([`crate::digests`]); and the content digests, kept by each part's content
@@ -24,11 +24,9 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a drawing or a text effect is coloured from beside its own markup: the theme (its
-/// colours, formats and fonts) and the settings (their colour map).
-const COLOURED_FROM: [&str; 2] = [
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme",
-    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings",
-];
+/// colours, formats and fonts; the settings' colour map is digested as read,
+/// [`crate::digests`]).
+const THEME: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 /// The namespaces a relationship id is named in, in markup (`r:embed`, `r:id`, `r:link`).
 const RELATIONSHIPS: [&str; 2] = [
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -131,7 +129,7 @@ pub(crate) fn parts_read(
             |_| Vec::new(),
             |rels| {
                 rels.iter()
-                    .filter(|r| COLOURED_FROM.iter().any(|kind| rel_type_is(&r.rel_type, kind)))
+                    .filter(|r| rel_type_is(&r.rel_type, THEME))
                     .filter_map(|r| r.target_part.clone())
                     .collect()
             },

@@ -38,6 +38,7 @@ impl PageEngine {
             names: &version.layout.document.names,
             faces: &*version.names,
             parts: &parts,
+            colour_map: &version.layout.document.context.settings.color_map,
         };
         crate::digests::digests(paint, &of, KEY, which)
     }

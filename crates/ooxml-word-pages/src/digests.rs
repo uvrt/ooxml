@@ -38,6 +38,9 @@ pub(crate) struct DigestOf<'a> {
     pub(crate) names: &'a VersionNames,
     pub(crate) faces: &'a dyn FaceNames,
     pub(crate) parts: &'a [PartRead],
+    /// The settings' colour map (`w:clrSchemeMapping`): what a drawing's or a text effect's
+    /// scheme colours are mapped through.
+    pub(crate) colour_map: &'a std::collections::BTreeMap<ooxml_word_model::value::Text, ooxml_word_model::value::Text>,
 }
 
 /// `paint` digested under `key`, with the lines `which` says, each named through the
@@ -67,7 +70,18 @@ pub(crate) fn digests(paint: &PagePaint, of: &DigestOf<'_>, key: DigestKey, whic
         .collect();
     // Which feed group each item is drawn in, by its block's durable id, in drawing order.
     let groups = ooxml_word_layout::paint::feed::group_ids(paint, of.names);
-    let rest = digest(&(frame, rules, pictures, drawings, text_boxes, groups, of.parts));
+    // A drawing's or a text effect's scheme colours go through the colour map.
+    let coloured = !paint.drawings.is_empty()
+        || paint.text_boxes.iter().any(|t| !t.drawings.is_empty())
+        || paint
+            .lines
+            .iter()
+            .chain(paint.text_boxes.iter().flat_map(|t| t.lines.iter()))
+            .any(|l| l.spans.iter().any(|s| s.effects.is_some()));
+    let colour_map = coloured.then_some(of.colour_map);
+    let rest = digest(&(
+        frame, rules, pictures, drawings, text_boxes, groups, of.parts, colour_map,
+    ));
     let line = |line: &PaintedLine| (named.written(&line.name), line.story.clone(), drawn_line(line));
     let lines = paint.lines.iter().map(line);
     let lines = match which {

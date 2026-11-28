@@ -393,4 +393,3 @@ fn an_insert_before_an_early_paragraph_digests_only_the_pages_it_changed() {
         found.changed.len()
     );
 }
-

@@ -1027,7 +1027,7 @@ fn text_box(text: &str) -> String {
 }
 
 #[test]
-fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
+fn the_layouts_compared_and_the_summary_both_see_a_text_boxs_text_change() {
     let mut engine = engine();
     let before = engine
         .lay_out_bytes(Arc::from(package(&text_box("Before"))))
@@ -1043,14 +1043,13 @@ fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
         .unwrap()
         .unwrap();
     let aliases = std::collections::HashMap::new();
-    // docx-agent's layout summary (`Page.lines`) does not see a text box's text change;
-    // its comparison of the layouts (`Page.text_lines`, word_template's reflow) does
-    assert!(engine
-        .summary(&after)
-        .unwrap()
-        .compare(&summary, &aliases)
-        .changed
-        .is_empty());
+    // the layout summary (`Page.lines`) digests the text box's content with what the page
+    // draws besides its lines (lane fix-feed-compare, decision drawing-compare-2026-11-28);
+    // the comparison of the layouts (`Page.text_lines`, word_template's reflow) reads its lines
+    assert_eq!(
+        engine.summary(&after).unwrap().compare(&summary, &aliases).changed,
+        vec![1]
+    );
     assert_eq!(
         engine.contents(&after).unwrap().compare(&contents, &aliases).changed,
         vec![1]
