@@ -12,11 +12,12 @@ use crate::docx::controls::control_kind;
 use crate::docx::drawings::drawing_kind;
 use crate::docx::formatting::{Cell, EffectiveRun};
 use crate::docx::graphics::Graphic;
-use crate::docx::text::{leading_text, View, NON_BREAKING_HYPHEN, OBJECT, SOFT_HYPHEN};
+use crate::docx::text::{leading_text, NON_BREAKING_HYPHEN, OBJECT, SOFT_HYPHEN};
 use crate::docx::{child_val, live_paths};
 use crate::ids::{MC, W, WP};
 use crate::markdown::model::{plain_text, Inline, Mark, Marks};
 use crate::markdown::stylemap::Construct;
+use crate::view::{Revision, View};
 use ooxml_xml::{Element, Node};
 use std::sync::Arc;
 
@@ -117,8 +118,8 @@ impl<'r, 'a> Walk<'r, 'a> {
                 self.simple_field(&child);
             } else if is_w(e, &["sdt"]) {
                 self.inline_control(&child);
-            } else if is_w(e, &["ins", "moveTo", "del", "moveFrom"]) {
-                self.revision_container(&child);
+            } else if let Some(revision) = Revision::of(e) {
+                self.revision_container(&child, revision);
             } else if is_w(e, &["bookmarkStart"]) {
                 self.bookmark(e);
             } else if (e.name().is(Some(M), "oMath") || e.name().is(Some(M), "oMathPara")) && self.visible() {
@@ -194,13 +195,9 @@ impl<'r, 'a> Walk<'r, 'a> {
         self.record.inline.push(Inline::Html(comment(&format!("/{id}"))));
     }
 
-    fn revision_container(&mut self, node: &Placed) {
-        let inserted = is_w(&node.element, &["ins", "moveTo"]);
-        let shown = if inserted {
-            self.reader.view != View::Original
-        } else {
-            self.reader.view != View::Current
-        };
+    fn revision_container(&mut self, node: &Placed, revision: Revision) {
+        let inserted = revision.adds();
+        let shown = self.reader.view.keeps(revision);
         let found = self.reader.revision_id(&self.record.part, &node.path);
         if !self.record.detail.revisions.contains(&found) {
             self.record.detail.revisions.push(found.clone());
@@ -221,11 +218,7 @@ impl<'r, 'a> Walk<'r, 'a> {
         self.revision.pop();
         self.record.inline.push(Inline::Critic(format!("{sign}}}")));
         let author = node.element.attribute(Some(W), "author").unwrap_or("");
-        let moved = if is_w(&node.element, &["moveTo", "moveFrom"]) {
-            " moved"
-        } else {
-            ""
-        };
+        let moved = if revision.moves() { " moved" } else { "" };
         self.record
             .inline
             .push(Inline::Html(comment(format!("{id}{moved} {author}").trim())));
@@ -399,7 +392,7 @@ impl<'r, 'a> Walk<'r, 'a> {
                 continue;
             }
             if is_w(e, &["instrText", "delInstrText"]) {
-                let take = is_w(e, &["instrText"]) || self.reader.view != View::Current;
+                let take = is_w(e, &["instrText"]) || self.reader.view.shows_deleted_text();
                 if let Some(top) = self.fields.last_mut().filter(|f| !f.0 && take) {
                     top.2 = format!("{}{}", top.2, leading_text(e)).trim().to_owned();
                     if let Some(last) = self.record.detail.fields.last_mut() {
@@ -483,7 +476,7 @@ impl<'r, 'a> Walk<'r, 'a> {
                 }
                 out.extend(text.chars().map(Piece::Char));
             }
-            "delText" if self.reader.view != View::Current => out.extend(leading_text(e).chars().map(Piece::Char)),
+            "delText" if self.reader.view.shows_deleted_text() => out.extend(leading_text(e).chars().map(Piece::Char)),
             "br" | "cr" => out.push(match e.attribute(Some(W), "type") {
                 Some("page") => Piece::Html(comment("page break")),
                 Some("column") => Piece::Html(comment("column break")),

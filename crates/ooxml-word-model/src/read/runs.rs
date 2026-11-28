@@ -1,8 +1,8 @@
 //! Owns: a `w:r` as the runs it contributes (its drawn text and marks, less what lies in a
 //! field's instruction or a computed field's cached result, and the computed field an `end`
 //! in it closes), `w:fldSimple`, and the run-level containers a paragraph's runs are found
-//! in (`w:hyperlink`, `w:ins`, `w:moveTo`, `w:sdt`...; a deletion and a move's source are
-//! not drawn) -- docx2svg's `_runs`, `_simple_field` and `_inline`.
+//! in (`w:hyperlink`, `w:sdt`..., and the revisions the final view shows: a deletion and a
+//! move's source are not drawn) -- docx2svg's `_runs`, `_simple_field` and `_inline`.
 //!
 //! Must not: read a paragraph's own properties (`paragraph`), or a drawing's content
 //! (`drawing`).
@@ -11,6 +11,7 @@ use super::fields::{keyword, merge_format, Fields, Open, Part};
 use super::{Reader, Steps};
 use crate::model::{Anchor, Bookmark, Field, InlineObject, Run, RunProps};
 use crate::value::{text, Text};
+use crate::view::View;
 use crate::w;
 use crate::xmlread::{attr, child, children, elements, local, text as element_text};
 use ooxml_xml::Element;
@@ -19,16 +20,9 @@ use std::sync::Arc;
 
 const RUN_MARKS: &[&str] = &["tab", "br", "cr", "noBreakHyphen", "softHyphen"];
 pub(super) const RUN_OBJECTS: &[&str] = &["drawing", "pict", "object", "AlternateContent"];
-const RUN_CONTAINERS: &[&str] = &[
-    "hyperlink",
-    "ins",
-    "moveTo",
-    "smartTag",
-    "customXml",
-    "sdt",
-    "dir",
-    "bdo",
-];
+/// The run-level containers a paragraph's runs are read through, besides the revisions whose
+/// content the final view shows ([`View::shows`]).
+const RUN_CONTAINERS: &[&str] = &["hyperlink", "smartTag", "customXml", "sdt", "dir", "bdo"];
 
 /// The run being gathered: text and marks since the last flush.
 #[derive(Default)]
@@ -355,7 +349,7 @@ impl Reader<'_> {
                     steps.step(node);
                     Self::bookmark(node, fields, runs.len());
                 }
-                _ if RUN_CONTAINERS.contains(&name) => {
+                _ if RUN_CONTAINERS.contains(&name) || View::Final.shows(node) == Some(true) => {
                     let here = steps.step(node);
                     if name == "sdt" {
                         if let Some(content) = child(node, "sdtContent") {

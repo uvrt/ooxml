@@ -13,15 +13,16 @@
 //! anything a version's content does not determine.
 
 use crate::markdown::read::{Kept, Shared};
-use crate::markdown::{RangeError, Stories, ViewName};
+use crate::markdown::{RangeError, Stories};
+use crate::view::View;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// A Markdown read's key: its range, view and stories.
-pub type MarkdownKey = (Option<String>, ViewName, Stories);
+pub type MarkdownKey = (Option<String>, View, Stories);
 
 /// A story's window readings' key: its part and the view.
-pub type WindowKey = (String, ViewName);
+pub type WindowKey = (String, View);
 
 /// A part's relationships as read, or why they could not be.
 type RelationshipsRead = Result<Arc<crate::parts::PartRelationships>, ooxml_opc::OpcError>;

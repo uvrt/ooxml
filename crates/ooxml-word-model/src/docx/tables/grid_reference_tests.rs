@@ -5,9 +5,10 @@
 //! (`observations/grid-values-word.json`): [`fixed`].
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use super::{cell_merge, cells_at, own_rows, Grid, RowSpec, VMerge};
+use super::{cells_at, own_rows, Grid, RowSpec, VMerge};
 use crate::docx::find_path;
 use crate::ids::W;
+use crate::view::View;
 use crate::xmlread::py_int;
 use ooxml_xml::Element;
 use std::collections::HashMap;
@@ -59,7 +60,7 @@ fn old_positions(rows: &[&Element]) -> Vec<Vec<Option<(usize, usize)>>> {
         let mut column = before;
         for tc in old_cells(row) {
             let span = usize::try_from(int_val(find_path(&tc, &["tcPr", "gridSpan"]), 1).max(1)).unwrap_or(1);
-            let continues = cell_merge(&tc, false) == VMerge::Continue;
+            let continues = View::Markup.merge(&tc) == VMerge::Continue;
             let origin = match (continues, origins.get(&column)) {
                 (true, Some(origin)) => *origin,
                 _ => {

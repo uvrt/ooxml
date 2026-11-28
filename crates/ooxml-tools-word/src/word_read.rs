@@ -14,7 +14,8 @@ use ooxml_tools::paging::page_text;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::expand_heading;
 use ooxml_word_model::address::Address;
-use ooxml_word_model::markdown::{to_markdown, RangeError, Stories, ViewName};
+use ooxml_word_model::markdown::{to_markdown, RangeError, Stories};
+use ooxml_word_model::view;
 use serde_json::{json, Value};
 
 /// Which view of the revisions to read.
@@ -77,10 +78,10 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         )
         .at("range"));
     }
-    let view = match args.view {
-        Some(View::Markup) => ViewName::Markup,
-        Some(View::Original) => ViewName::Original,
-        _ => ViewName::Final,
+    let shown_view = match args.view {
+        Some(View::Markup) => view::View::Markup,
+        Some(View::Original) => view::View::Original,
+        _ => view::View::Final,
     };
     cancel.check().map_err(cancelled)?;
     let docx = version.docx()?;
@@ -92,8 +93,8 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         .map(|r| expand_heading(&docx, &Address::from(version.follow(r))))
         .transpose()
         .map_err(|e| range_refusal(e, &args.doc))?;
-    let markdown = to_markdown(&docx, range.as_ref(), view, stories).map_err(|e| range_refusal(e, &args.doc))?;
-    if let Some(refusal) = not_supported(&docx, view, args) {
+    let markdown = to_markdown(&docx, range.as_ref(), shown_view, stories).map_err(|e| range_refusal(e, &args.doc))?;
+    if let Some(refusal) = not_supported(&docx, shown_view, args) {
         return Err(refusal);
     }
     cancel.check().map_err(cancelled)?;
@@ -105,10 +106,10 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
         first_page,
     )?;
     let shown = range.map_or_else(|| "the document".to_owned(), |r| r.as_str().to_owned());
-    let view_name = match view {
-        ViewName::Final => "final",
-        ViewName::Markup => "markup",
-        ViewName::Original => "original",
+    let view_name = match shown_view {
+        view::View::Final => "final",
+        view::View::Markup => "markup",
+        view::View::Original => "original",
     };
     let mut done = Done::new(format!("Read {shown} ({view_name})"));
     done.data = Some(Value::from(text));
@@ -120,9 +121,9 @@ pub fn word_read(args: &WordRead, version: &Version<'_>, cancel: &dyn Cancel) ->
 /// A reading in `view` not supported yet: the final view of a table with a cell's end
 /// that Accept All takes away, refused with the markup view of the same range as the way
 /// out.
-fn not_supported(docx: &ooxml_word_model::docx::Docx, view: ViewName, args: &WordRead) -> Option<ToolError> {
+fn not_supported(docx: &ooxml_word_model::docx::Docx, shown: view::View, args: &WordRead) -> Option<ToolError> {
     let shared = ooxml_word_model::markdown::read::Shared::of(docx);
-    if view != ViewName::Final || !shared.cell_ends(docx) {
+    if shown != view::View::Final || !shared.cell_ends(docx) {
         return None;
     }
     let mut call = serde_json::Map::new();

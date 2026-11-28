@@ -7,6 +7,7 @@
 
 use crate::docx::text::leading_text;
 use crate::ids::W;
+use crate::view::View;
 use ooxml_xml::{Element, Node};
 
 /// A field found.
@@ -82,7 +83,7 @@ fn visit(element: &Element, deleted: bool, f: &mut impl FnMut(&Element, bool)) {
     for node in element.children().iter() {
         let Node::Element(child) = node else { continue };
         f(child, deleted);
-        let inside = deleted || child.name().is(Some(W), "del") || child.name().is(Some(W), "moveFrom");
+        let inside = deleted || View::Final.shows(child) == Some(false);
         visit(child, inside, f);
     }
 }

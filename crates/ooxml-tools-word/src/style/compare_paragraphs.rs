@@ -14,8 +14,9 @@ use ooxml_word_edit::pairing::{self, Signature};
 use ooxml_word_model::docx::at_path;
 use ooxml_word_model::docx::find_path;
 use ooxml_word_model::docx::formatting::{EffectiveParagraph, EffectiveRun};
-use ooxml_word_model::docx::text::{paragraph_text, text_runs, View};
+use ooxml_word_model::docx::text::{paragraph_text, text_runs};
 use ooxml_word_model::ids::W;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use serde_json::{json, Map, Value};
 
@@ -71,13 +72,13 @@ pub(crate) struct Aligned {
 fn signature(side: &Side<'_>, paragraph: &Para) -> Signature {
     pairing::signature(
         paragraph_style(side, &paragraph.0),
-        &paragraph_text(&paragraph.0, View::Current),
+        &paragraph_text(&paragraph.0, View::Final),
     )
 }
 
 /// A missing or extra paragraph as reported: its style and the start of its text.
 pub(crate) fn described(side: &Side<'_>, paragraph: &Para) -> Map<String, Value> {
-    let text = pairing::collapse(&paragraph_text(&paragraph.0, View::Current));
+    let text = pairing::collapse(&paragraph_text(&paragraph.0, View::Final));
     let chars: Vec<char> = text.chars().collect();
     let text = if chars.len() > TEXT_START {
         let start: String = chars.iter().take(TEXT_START).collect();
@@ -201,7 +202,7 @@ fn run_values(
     cell: Option<&ooxml_word_model::docx::formatting::Cell>,
 ) -> Vec<(&'static str, Value)> {
     let mut counts: Vec<Vec<(Value, usize)>> = vec![Vec::new(); RUN.len()];
-    for run in text_runs(paragraph, View::Current) {
+    for run in text_runs(paragraph, View::Final) {
         let Some(element) = at_path(paragraph, &run.path) else {
             continue;
         };

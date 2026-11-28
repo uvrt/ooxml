@@ -18,7 +18,9 @@
 # severity}), "optimistic-batches-2026-11-25" (a batch on one document runs optimistically,
 # holding nothing, and run again where it conflicts: what it says of itself says so),
 # "limits-in-details-2026-11-25" (round 60, R142: a limit refusal says its limit and what the
-# call gave in details) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
+# call gave in details), "view-follows-word-2026-11-28" (the final view follows Word's Accept All:
+# the user's standing rule that Word is the oracle, render final = Accept All, applied by main's
+# RD1c ruling) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
 # from the first read: the streams' ids by place are re-targeted by
 # the re-target tool (lane ph3-st1, removed in ST2), and what the map cannot say -- the renames stamping
 # made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry
@@ -906,3 +908,29 @@ case = "*test_rows_r58.py::test_rows_grow_and_sync_add_look_like_the_last_row"
 tool = "word_edit_table"
 fields = ["after.word/document.xml"]
 cause = "Lane ph3-st2 (stamp-on-open ST2, Q1): an id never written stays fresh for the whole transaction that first writes its part, so cells written after rows were placed keep the textIds given at open instead of renewing them"
+
+# view-follows-word-2026-11-28 (lane ph3-rd1c): word_read's final view of tables whose deleted cells
+# are no cell ends, read where the recording refused it.
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_tables_r54"
+case = "test_tracked_tables_r54::test_a_tracked_column_deletion_reads_as_accepted#1"
+tool = "word_read"
+fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.details.not_supported", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
+cause = "Phase 3 RD1c (ooxml-word-model view, #455): the final view's cell ends follow Word's Accept All; a deleted cell is no cell end, so word_read reads this table where the recording refused it as not supported yet"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_tables_r54"
+case = "test_tracked_tables_r54::test_a_deleted_cell_whose_content_is_kept_widens_the_cell_before_in_the_final_view#2"
+tool = "word_read"
+fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.details.not_supported", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
+cause = "Phase 3 RD1c (ooxml-word-model view, #455): the final view's cell ends follow Word's Accept All; a deleted cell is no cell end, so word_read reads this table where the recording refused it as not supported yet"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_the_final_view_reads_the_merge_over_a_deleted_column_as_accepted#3"
+tool = "word_read"
+fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.details.not_supported", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
+cause = "Phase 3 RD1c (ooxml-word-model view, #455): the final view's cell ends follow Word's Accept All; a deleted cell is no cell end, so word_read reads this table where the recording refused it as not supported yet"

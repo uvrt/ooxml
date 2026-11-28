@@ -197,7 +197,7 @@ fn selected(
     ) -> Result<Vec<crate::markdown::select::Selected>, AddressError>,
 ) -> Result<Vec<String>, AddressError> {
     use crate::markdown::select::Selected;
-    let mut reader = crate::markdown::read::Reader::new(docx, crate::markdown::ViewName::Final);
+    let mut reader = crate::markdown::read::Reader::new(docx, crate::view::View::Final);
     let found = select(&mut reader)?;
     Ok(found
         .into_iter()

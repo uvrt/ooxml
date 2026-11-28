@@ -177,3 +177,103 @@ fn a_cell_of_billions_of_columns_taken_in_is_one_run() {
     assert_eq!(a.given.get(1, 1), None);
     assert_eq!(a.given.iter().count(), 1);
 }
+
+/// Word 16.106's Accept All of the shapes where the readers' final views differed before
+/// one View module (`crates/ooxml-oracle/word/observations/view-word.json`,
+/// `probes/view_probe.py`): each case's table, its rows as accepted and the cells each keeps,
+/// held to the rows and cells Word's accepted table has; whether the part's facts see a
+/// cell end there.
+#[test]
+fn rows_and_cell_ends_as_accepted_follow_words_accept_all() {
+    use ooxml_word_model::view::{row_ends, View};
+    let observed: serde_json::Value =
+        serde_json::from_str(include_str!("../../../ooxml-oracle/word/observations/view-word.json")).unwrap();
+    for (name, rows, ends) in word_cases() {
+        let word = &observed[name]["blocks"][1]["table"];
+        let word_rows = word.as_array().unwrap();
+        let body = table(&rows.iter().map(|cells| row(cells, "")).collect::<Vec<_>>());
+        let a = accepted(&body);
+        assert_eq!(a.height(), word_rows.len(), "{name}: rows as accepted");
+        let docx = Docx::open(
+            &package(&Parts {
+                body: body.clone(),
+                ..Parts::default()
+            }),
+            std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+        )
+        .unwrap();
+        let part = docx.body().unwrap();
+        assert_eq!(part.facts().cell_ends(), ends, "{name}: a cell end");
+        let table = part.root().find(Some(ooxml_word_model::ids::W), "body").unwrap();
+        let table = table.find(Some(ooxml_word_model::ids::W), "tbl").unwrap();
+        let kept: Vec<_> = table
+            .child_elements()
+            .filter(|r| r.name().local() == "tr" && !View::Final.removes_row(r))
+            .collect();
+        let cells: Vec<usize> = kept.iter().map(|r| row_ends(r).groups.len()).collect();
+        let word_cells: Vec<usize> = word_rows.iter().map(|r| r.as_array().unwrap().len()).collect();
+        assert_eq!(cells, word_cells, "{name}: cells kept per row");
+    }
+}
+
+/// The cases of `view-word.json`: each its name, its table's rows of cells, and whether a
+/// cell end is there.
+fn word_cases() -> Vec<(&'static str, Vec<Vec<String>>, bool)> {
+    let deleted_cell = format!(r#"<w:cellDel w:id="5" {AUTHOR}/>"#);
+    let control = |content: &str| {
+        format!(r#"<w:sdt><w:sdtPr><w:id w:val="1"/></w:sdtPr><w:sdtContent>{content}</w:sdtContent></w:sdt>"#)
+    };
+    let empty = "<w:p/>".to_owned();
+    vec![
+        (
+            "AllCellsDeleted",
+            vec![
+                vec![plain("A1"), plain("B1")],
+                vec![cell(&text("A2"), &deleted_cell), cell(&text("B2"), &deleted_cell)],
+                vec![plain("A3"), plain("B3")],
+            ],
+            false,
+        ),
+        (
+            "AllCellsDeletedEmpty",
+            vec![
+                vec![plain("A1"), plain("B1")],
+                vec![cell(&empty, &deleted_cell), cell(&empty, &deleted_cell)],
+                vec![plain("A3"), plain("B3")],
+            ],
+            false,
+        ),
+        (
+            "ControlEndsCell",
+            vec![
+                vec![cell(&control(&marked("P1")), ""), plain("Q1")],
+                vec![plain("P2"), plain("Q2")],
+            ],
+            true,
+        ),
+        (
+            "ParagraphEndsCell",
+            vec![
+                vec![cell(&marked("P1"), ""), plain("Q1")],
+                vec![plain("P2"), plain("Q2")],
+            ],
+            true,
+        ),
+        (
+            "KeptAfterGone",
+            vec![
+                vec![cell(&marked("Y1"), ""), cell(&text("Z1"), &deleted_cell)],
+                vec![plain("Y2"), plain("Z2")],
+            ],
+            false,
+        ),
+        (
+            "KeptAfterPlain",
+            vec![
+                vec![plain("Y1"), cell(&text("Z1"), &deleted_cell)],
+                vec![plain("Y2"), plain("Z2")],
+            ],
+            false,
+        ),
+    ]
+}

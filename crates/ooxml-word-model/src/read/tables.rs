@@ -9,17 +9,27 @@
 
 use super::fields::Fields;
 use super::join::{join, joined};
-use super::paragraph::mark_removed;
 use super::{At, Reader};
-use crate::docx::tables::{cell_merge, merge_heads, VMerge};
+use crate::docx::tables::{merge_heads, VMerge};
 use crate::model::{Block, Look, Paragraph, Table};
 use crate::props::table_properties;
 use crate::value::{text, Key, Props, Text, Value};
+use crate::view::{cell_ends, content_kept, CellEnds, View};
 use crate::w;
-use crate::xmlread::{attr, attr_on, child, elements, local, text as element_text};
+use crate::xmlread::{attr, attr_on, child, elements, local};
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+/// Whether the final view removes a cell.
+fn removed(cell: &Element) -> bool {
+    View::Final.removes_cell(cell)
+}
+
+/// Whether a cell the final view removes widens the cell before it (its content stays).
+fn widens(cell: &Element) -> bool {
+    removed(cell) && content_kept(cell)
+}
 
 /// `parent`'s `w:tr` or `w:tc` children, also those inside row- and cell-level content
 /// controls and `w:customXml`.
@@ -76,49 +86,6 @@ fn level_placed<'a>(parent: &'a Element, name: &str) -> Vec<(Vec<usize>, &'a Ele
     out
 }
 
-fn cell_deleted(cell: &Element) -> bool {
-    child(cell, "tcPr").and_then(|p| child(p, "cellDel")).is_some()
-}
-
-fn all_cells_deleted(row: &Element) -> bool {
-    let cells = level_of(row, "tc");
-    !cells.is_empty() && cells.iter().all(|c| cell_deleted(c))
-}
-
-const SHOWN: &[&str] = &[
-    "t",
-    "tab",
-    "br",
-    "cr",
-    "drawing",
-    "pict",
-    "object",
-    "sym",
-    "noBreakHyphen",
-    "ptab",
-];
-
-/// Whether a deleted cell keeps anything: content outside deletions, or a mark of its own.
-fn content_kept(cell: &Element) -> bool {
-    fn shown(node: &Element, nested: bool) -> bool {
-        for item in elements(node) {
-            let name = local(item);
-            if matches!(name, "del" | "moveFrom" | "tcPr" | "pPr" | "rPr") {
-                continue;
-            }
-            if name == "p" && !nested && !mark_removed(item) {
-                return true;
-            }
-            let has_text = name != "t" || !element_text(item).is_empty();
-            if (SHOWN.contains(&name) && has_text) || shown(item, nested || name == "tbl") {
-                return true;
-            }
-        }
-        false
-    }
-    shown(cell, false)
-}
-
 fn absorb(previous: &mut Props, deleted: &Props) {
     let span = |p: &Props| {
         p.get("gridSpan")
@@ -169,52 +136,6 @@ fn headed(props: &mut Props, head: Option<&VMerge>) {
     }
 }
 
-/// Whether the last block of a cell (or a control's content) is a paragraph whose mark is
-/// deleted.
-fn last_mark_removed(container: &Element) -> bool {
-    let blocky = |e: &Element| elements(e).any(|n| matches!(local(n), "p" | "tbl" | "sdt" | "customXml"));
-    let nodes: Vec<&Arc<Element>> = elements(container).collect();
-    for node in nodes.into_iter().rev() {
-        match local(node) {
-            "p" => return mark_removed(node),
-            "tbl" => return false,
-            "sdt" => {
-                if let Some(content) = child(node, "sdtContent").filter(|c| blocky(c)) {
-                    return last_mark_removed(content);
-                }
-            }
-            "customXml" if blocky(node) => return last_mark_removed(node),
-            _ => {}
-        }
-    }
-    false
-}
-
-/// A row's cells grouped: each group a cell kept and the cells it takes in; and the cells
-/// gone.
-pub(crate) fn cell_ends(cells: &[&Element]) -> (Vec<Vec<usize>>, HashSet<usize>) {
-    let mut groups = Vec::new();
-    let mut gone = HashSet::new();
-    let mut n = 0;
-    while n < cells.len() {
-        let mut group = vec![n];
-        let removed = |k: usize| cells.get(k).is_some_and(|c| last_mark_removed(c));
-        while group.last().is_some_and(|&g| removed(g) && g + 1 < cells.len()) {
-            let next = group.last().map_or(n, |g| g + 1);
-            group.push(next);
-        }
-        let last = group.last().copied().unwrap_or(n);
-        if removed(last) {
-            gone.extend(group.iter().copied());
-        } else {
-            gone.extend(group.iter().skip(1).copied());
-            groups.push(group);
-        }
-        n = last + 1;
-    }
-    (groups, gone)
-}
-
 fn cell_taken(mut blocks: Vec<Block>, taken: Vec<Block>) -> Vec<Block> {
     if let (Some(Block::Paragraph(last)), Some(Block::Paragraph(first))) = (blocks.last(), taken.first()) {
         let made = Block::Paragraph(Arc::new(joined(last, first)));
@@ -259,9 +180,9 @@ fn vacated_columns(rows: &[&Element], count: usize, gone: &HashSet<*const Elemen
                 .filter(|s| *s != 0)
                 .unwrap_or(1)
                 .max(1);
-            let deleted = (cell_deleted(cell) && !(kept_before && content_kept(cell)))
-                || gone.contains(&std::ptr::from_ref(cell));
-            kept_before = kept_before || !cell_deleted(cell);
+            let deleted =
+                (removed(cell) && !(kept_before && content_kept(cell))) || gone.contains(&std::ptr::from_ref(cell));
+            kept_before = kept_before || !removed(cell);
             for c in column..column.saturating_add(span).min(end) {
                 let was = covered.get(&c).copied().unwrap_or(true);
                 covered.insert(c, was && deleted);
@@ -444,7 +365,7 @@ impl Reader<'_> {
                 let mut props = accepted_cell_properties(self, cell);
                 headed(&mut props, shape.heads.get(&(plan.index, j)));
                 props_of.push(props);
-            } else if let Some(last) = props_of.last_mut().filter(|_| cell_deleted(cell) && content_kept(cell)) {
+            } else if let Some(last) = props_of.last_mut().filter(|_| widens(cell)) {
                 absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
             }
         }
@@ -505,11 +426,10 @@ impl Reader<'_> {
         let tbl_pr = props_element.map(w::TblPr::new);
         let style = text(tbl_pr.and_then(w::TblPr::style).and_then(w::Val::val).unwrap_or(""));
         let look = table_look(tbl_pr.and_then(w::TblPr::look).map(w::TblLook::element));
-        let kept =
-            |row: &Element| child(row, "trPr").and_then(|p| child(p, "del")).is_none() && !all_cells_deleted(row);
+        let kept = |row: &Element| !View::Final.removes_row(row);
         let placed_rows = level_placed(element, "tr");
         let all_rows: Vec<&Element> = placed_rows.iter().map(|(_, r)| *r).collect();
-        let heads = merge_heads(&all_rows, &kept, &|cell| cell_merge(cell, true));
+        let heads = merge_heads(&all_rows, &kept, &|cell| View::Final.merge(cell));
         let row_elements: Vec<(usize, &Element)> = all_rows
             .iter()
             .copied()
@@ -523,11 +443,10 @@ impl Reader<'_> {
         let mut plans = Vec::new();
         for (index, row) in &row_elements {
             let rel = placed_rows.get(*index).map(|(r, _)| r.clone()).unwrap_or_default();
-            let shown: Vec<&Element> = level_of(row, "tc").into_iter().filter(|c| !cell_deleted(c)).collect();
-            let (groups, gone_here) = cell_ends(&shown);
+            let shown: Vec<&Element> = level_of(row, "tc").into_iter().filter(|c| !removed(c)).collect();
+            let CellEnds { groups, gone: lost } = cell_ends(&shown);
             gone.extend(
-                gone_here
-                    .iter()
+                lost.iter()
                     .filter_map(|&n| shown.get(n))
                     .map(|c| std::ptr::from_ref(*c)),
             );

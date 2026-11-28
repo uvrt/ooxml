@@ -2816,37 +2816,37 @@
 {"digest":"sha256:46c306924ab9c987f8d58d400641441d","id":"find:beabfd4559f218d1","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:53206561538f0517c5b675575a390026","id":"ids:aca66b739fcde148","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:53d4de425b1b52e951617835833ad37a","id":"ids:b42051c952f7763e","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:533ebe1ed2d50d27","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:6e7488f120c269f8","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:185748900988135c","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:b297a5bad32a58e2","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:d37f969d769c66fa","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:529f5e8766eae877","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:73af2a2fe8827b4e","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:91819f08c7386388","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:542a419de372aee9","not_supported":"word_inspect of Accept All's cell ends","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
-{"id":"inspect:ef4dd738b1ddc3b6","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:ad752ba3d754df6a","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:682a66c585c51d4d","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:a7be9483a44cffaa","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"inspect:b2a54b5feabedd28","not_supported":"word_inspect of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:3d98cc7afe56117c","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:da29588164a1d054","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:a8bf8407e7b4ce3b","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:4aff8fe059810bde","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:d8950e8a5bbb426e","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:be796676f48822cc","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:4945e4b1ba3f8131","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:888ff6fabc1d8472","not_supported":"word_read final view of Accept All's cell ends","source":"stamp-on-open-2026-11-26: a row named by its place re-targeted to its tr: id, or a row past its one-row table to that table; answers as main's but for the spelling (ST2, decision 4; 92: word_comments 40, word_follow_sample 38, word_inspect 7, word_read 7)"}
+{"digest":"sha256:5c79c2d2bdd68519f747b9c4562e5098","id":"inspect:533ebe1ed2d50d27","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:6af646f4bc0ef8b61cb37cd066bdf962","id":"inspect:6e7488f120c269f8","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:5278b30ca3187ac06e4ec537324cc7ee","id":"inspect:185748900988135c","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:0ae166867f8fe8f691f7ff314d2eb4be","id":"inspect:b297a5bad32a58e2","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:a43009e7515d4d7f9be5fffec0beabd2","id":"inspect:d37f969d769c66fa","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:2e10b95f93bdfc245bfb309c8dd38d4b","id":"inspect:529f5e8766eae877","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:c0e8aa1972852012daef8a7f58fc1e6a","id":"inspect:73af2a2fe8827b4e","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:e133d22d288946c190a1b039042fe784","id":"inspect:91819f08c7386388","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:c897a97dd288ad3e69dfffeed4a93449","id":"inspect:542a419de372aee9","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:60714a5c8d13c536dcbcb204189d0b54","id":"inspect:ef4dd738b1ddc3b6","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:86deebaf302d2f4f282aced13979edd1","id":"inspect:ad752ba3d754df6a","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:16ac94e9b48266bca679cbab390c8475","id":"inspect:682a66c585c51d4d","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:51fcf78bd2d6dc5247484f183e2ec19f","id":"inspect:a7be9483a44cffaa","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:583b668852aed407b45ce558cb0a82ca","id":"inspect:b2a54b5feabedd28","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:48233587efe8b51cf784cf98e9fdc6f8","id":"ranges:3d98cc7afe56117c","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:78dec8876f517342461706cd7357228e","id":"ranges:da29588164a1d054","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:1984270cfd699b56152da42a77e55aa3","id":"ranges:a8bf8407e7b4ce3b","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:852b7faacc1a704b7feff4ff53f2c016","id":"ranges:4aff8fe059810bde","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:f7b9762af097b6f562096b022b1180c6","id":"ranges:d8950e8a5bbb426e","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:dfc26bd25a7f1379caab9d4373f2981a","id":"ranges:be796676f48822cc","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:8bc39d9e0a5d2a5648d0158a44363925","id":"ranges:4945e4b1ba3f8131","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:308ec3a3cbee3c5c073ae29d4654f983","id":"ranges:888ff6fabc1d8472","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
 {"digest":"sha256:45bf1604432de408a80aa46100a1dcd8","id":"ranges:e291dd74835c06c9","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:f218f2f1204f9f70","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:836223382f3ca698","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
-{"id":"ranges:21a4e55937bbec8b","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:7baf509d318e68c232ede4dd9d6a5ed9","id":"ranges:f218f2f1204f9f70","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:81b3bd424689b20f208d6b17d517574c","id":"ranges:836223382f3ca698","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
+{"digest":"sha256:20109ed6cf1086a7d23ab02a8404f951","id":"ranges:21a4e55937bbec8b","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
 {"digest":"sha256:d4840625dcbbff93a00ec648ae7edf2e","id":"ranges:8d3b0423af17542c","source":"frozen Python a512c901, unmeasured"}
-{"id":"read:84478860d13fe817","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e45723cb55fbbde2b988998a2fa0a861","id":"read:84478860d13fe817","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
 {"digest":"sha256:b6ffe299e2ba629fcd39eaceb60e9d4d","id":"read:01f7b2e1cad119ef","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:5e8ee2ea93a778569d650fc1699d996c","id":"read:48141b237ee8df91","source":"frozen Python a512c901, unmeasured"}
-{"id":"read:362e783cf480b73b","not_supported":"word_read final view of Accept All's cell ends","source":"frozen Python a512c901, unmeasured"}
+{"digest":"sha256:e45723cb55fbbde2b988998a2fa0a861","id":"read:362e783cf480b73b","source":"RD1c: the final view's cell ends follow Word's Accept All (one View rule); these documents were refused by a stricter facts flag"}
 {"digest":"sha256:d51ca3291b38b3f7a5fb15cdc5eb588f","id":"laid:12c6c9ee998e7ae7","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:81bf1a6582134489bf517cffd537859d","id":"laid:e4b6143ad84c9aa3","source":"frozen Python a512c901, unmeasured"}
 {"digest":"sha256:81bf1a6582134489bf517cffd537859d","id":"laid:dcc5aa32af0dbc1b","source":"frozen Python a512c901, unmeasured"}

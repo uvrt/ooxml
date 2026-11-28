@@ -15,9 +15,10 @@ use crate::{EditError, Result};
 use ooxml_store::ReadPredicate;
 use ooxml_word_model::address::scope_paragraphs;
 use ooxml_word_model::address::Address;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::{Docx, StoryPart};
 use ooxml_word_model::ids::Entry;
+use ooxml_word_model::view::View;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -174,11 +175,11 @@ impl HoldsMatch {
             Some(Entry::Paragraph(k)) => ids
                 .paragraphs()
                 .get(k)
-                .is_some_and(|p| self.holds(&paragraph_text(&p.element, View::Current))),
+                .is_some_and(|p| self.holds(&paragraph_text(&p.element, View::Final))),
             Some(Entry::Table(k)) => ids.tables().get(k).is_some_and(|table| {
                 ids.paragraphs_within(&table.path)
                     .iter()
-                    .any(|p| self.holds(&paragraph_text(&p.element, View::Current)))
+                    .any(|p| self.holds(&paragraph_text(&p.element, View::Final)))
             }),
             None => false,
         }
@@ -288,7 +289,8 @@ mod tests {
     use ooxml_derive::CacheBudget;
     use ooxml_opc::Package;
     use ooxml_store::{Caller, Clock, StoreConfig};
-    use ooxml_word_model::docx::text::{paragraph_text as model_text, View};
+    use ooxml_word_model::docx::text::paragraph_text as model_text;
+    use ooxml_word_model::view::View;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -335,7 +337,7 @@ mod tests {
                 assert_eq!(kept, paragraph_text(&work, work.root()), "{what}: {}", paragraph.id);
                 assert_eq!(
                     kept,
-                    model_text(&paragraph.element, View::Current),
+                    model_text(&paragraph.element, View::Final),
                     "{what}: {}",
                     paragraph.id
                 );
