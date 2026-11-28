@@ -35,6 +35,8 @@ const READS_KEPT: usize = 16;
 pub struct Derived {
     reading: OnceLock<Arc<Shared>>,
     sections: OnceLock<Vec<super::sections::Section>>,
+    /// Which list a paragraph's properties put it in ([`super::numbering::ListMembers`]).
+    members: OnceLock<Arc<super::numbering::ListMembers>>,
     /// Each part's relationships, read once ([`crate::parts::PartRelationships`]).
     relationships: Mutex<HashMap<String, RelationshipsRead>>,
     markdown: Mutex<HashMap<MarkdownKey, Arc<String>>>,
@@ -90,6 +92,21 @@ impl Derived {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(source.to_owned(), read.clone());
         read
+    }
+
+    /// The version's list membership rule (`docx`'s styles and numbering part), read once.
+    pub(crate) fn list_members(&self, docx: &super::Docx) -> &Arc<super::numbering::ListMembers> {
+        self.members.get_or_init(|| {
+            let rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+            let numbering = crate::parts::related(&docx.package, &docx.main, rel)
+                .ok()
+                .flatten()
+                .and_then(|part| docx.package.tree(&part).ok().flatten());
+            Arc::new(super::numbering::ListMembers::read(
+                docx.styles(),
+                numbering.as_ref().map(|t| &**t.root()),
+            ))
+        })
     }
 
     /// The version's sections (`docx`'s), read once.
