@@ -92,16 +92,6 @@ pub enum Change {
         /// Its tree.
         tree: Tree,
     },
-    /// A part put in place as another writer wrote it (a host's commit of parts): a story
-    /// part whose blocks lack ids read with them stamped, kept unwritten
-    /// ([`ooxml_word_model::stamp::received`]); written like any other part by the next
-    /// change of the package.
-    Received {
-        /// The part.
-        part: Arc<str>,
-        /// Its tree, as written.
-        tree: Tree,
-    },
     /// A part as another editor's version of the document has it (a co-authoring refresh,
     /// [`crate::Arrival`]): `patches`, the changes from the version that editor's save was
     /// made from, applied in place (the blocks they do not touch keep their ids and what is
@@ -251,7 +241,6 @@ impl Change {
             Change::Splice { part, .. }
             | Change::Head { part, .. }
             | Change::Put { part, .. }
-            | Change::Received { part, .. }
             | Change::Arrived { part, .. }
             | Change::Bytes { part, .. }
             | Change::Remove { part } => Some(part),

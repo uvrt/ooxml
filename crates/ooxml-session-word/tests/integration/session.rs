@@ -40,8 +40,8 @@ fn committed(
     d: &ooxml_session::DocId,
     parts: Vec<(String, Option<Arc<[u8]>>)>,
     context: &CallContext,
-) -> Result<(ooxml_session::Updated, ooxml_session::Opened), SessionError> {
-    let updated = s.update(d, parts, context)?;
+) -> Result<(ooxml_session::Refreshed, ooxml_session::Opened), SessionError> {
+    let updated = crate::common::refreshed(s, d, parts, context)?;
     Ok((updated, s.snapshot(d)?))
 }
 
@@ -187,7 +187,7 @@ fn updates_make_versions_and_snapshots_stay() {
         put("word/document.xml", &doc),
         ("word/media/x.bin".to_owned(), Some(Arc::from(&b"\x00\x01"[..]))),
     ];
-    let updated = s.update(&d, parts, &context).unwrap();
+    let updated = crate::common::refreshed(&s, &d, parts, &context).unwrap();
     assert_eq!((updated.version, updated.changed), (1, true));
     assert_eq!(call(&s, "describe", json!({"doc": "d1"}))["data"]["controls"], json!(2));
     // the snapshot taken before still reads version 0
@@ -203,12 +203,12 @@ fn updates_make_versions_and_snapshots_stay() {
             .len(),
         1
     );
-    let removed = s.update(&d, vec![("word/media/x.bin".into(), None)], &context).unwrap();
+    let removed = crate::common::refreshed(&s, &d, vec![("word/media/x.bin".into(), None)], &context).unwrap();
     assert_eq!(removed.version, 2);
     // a part that does not parse changes nothing
-    let bad = s.update(&d, vec![put("word/document.xml", "<w:document")], &context);
+    let bad = crate::common::refreshed(&s, &d, vec![put("word/document.xml", "<w:document")], &context);
     assert!(matches!(bad, Err(SessionError::Package(_))));
-    let gone = s.update(&d, vec![("word/media/x.bin".into(), None)], &context);
+    let gone = crate::common::refreshed(&s, &d, vec![("word/media/x.bin".into(), None)], &context);
     assert!(matches!(gone, Err(SessionError::Package(_))));
     assert_eq!(s.snapshot(&d).unwrap().version(), 2);
     let saved = s.save(&d).unwrap();
@@ -256,7 +256,7 @@ fn a_cancelled_or_late_call_stops_with_timeout() {
     };
     let reply = Value::Object(s.call("describe", json!({"doc": "d1"}), &late).to_json());
     assert_eq!(reply["error"]["code"], json!("timeout"));
-    let update = s.update(&d, vec![put("word/x.xml", "<x/>")], &late);
+    let update = crate::common::refreshed(&s, &d, vec![put("word/x.xml", "<x/>")], &late);
     assert!(matches!(update, Err(SessionError::Base(BaseError::Cancelled))));
     assert_eq!(s.snapshot(&d).unwrap().version(), 0);
     assert_eq!(s.stats().cancelled, 3);
@@ -281,7 +281,7 @@ fn parallel_writers_equal_a_serial_count() {
                     let own = put(&format!("word/w{t}.xml"), &format!("<n v=\"{k}\"/>"));
                     let shared = put("word/shared.xml", &format!("<n t=\"{t}\" v=\"{k}\"/>"));
                     let parts = if k % 5 == 0 { vec![own, shared] } else { vec![own] };
-                    assert!(s.update(&d, parts, &context).unwrap().changed);
+                    assert!(crate::common::refreshed(&s, &d, parts, &context).unwrap().changed);
                     let reply = s.call("describe", json!({"doc": "d1"}), &CallContext::default());
                     assert!(!reply.is_error());
                 }
@@ -306,7 +306,7 @@ fn a_call_reads_the_version_its_context_names() {
     let (updated, first) = committed(&s, &d, vec![put("word/document.xml", &two)], &context).unwrap();
     assert_eq!((updated.version, first.version()), (1, 1));
     let three = format!("<w:document {W}><w:body><w:sdt/><w:sdt/><w:sdt/></w:body></w:document>");
-    s.update(&d, vec![put("word/document.xml", &three)], &context).unwrap();
+    crate::common::refreshed(&s, &d, vec![put("word/document.xml", &three)], &context).unwrap();
     let at = CallContext {
         at: vec![first.clone()],
         ..CallContext::default()
@@ -344,8 +344,7 @@ fn inspect_with_layout_asks_the_context_s_placer() {
         r#"<w:document {W} xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"><w:body><w:p w14:paraId="00000001"><w:r><w:t>a</w:t></w:r></w:p></w:body></w:document>"#
     );
     let d = s.open(Arc::from(docx()), DocKind::Docx, "a.docx").unwrap();
-    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
-        .unwrap();
+    crate::common::refreshed(&s, &d, vec![put("word/document.xml", &doc)], &CallContext::default()).unwrap();
     let arguments = json!({"doc": "d1", "target": "body", "layout": true});
     let refused = call(&s, "word_inspect", arguments.clone());
     assert_eq!(refused["error"]["code"], json!("refused"));
@@ -417,8 +416,7 @@ fn a_diagram_whose_parts_are_missing_reads_as_a_drawing() {
     let doc = format!(
         r#"<w:document {W} xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><w:body><w:p><w:r><w:t>a</w:t></w:r></w:p>{diagram}</w:body></w:document>"#
     );
-    s.update(&d, vec![put("word/document.xml", &doc)], &CallContext::default())
-        .unwrap();
+    crate::common::refreshed(&s, &d, vec![put("word/document.xml", &doc)], &CallContext::default()).unwrap();
     let read = s.call("word_read", json!({"doc": "d1"}), &CallContext::default());
     assert!(read.not_supported_form().is_none());
     let text = Value::Object(read.to_json());
@@ -495,7 +493,7 @@ fn a_window_read_counts_lists_from_its_marks_across_versions() {
         put("word/numbering.xml", &numbering),
         put("word/document.xml", &numbered(300, Some((150, "changed")))),
     ];
-    fresh.update(&d2, all, &context).unwrap();
+    crate::common::refreshed(&fresh, &d2, all, &context).unwrap();
     let whole = Value::Object(
         fresh
             .call("word_read", json!({"doc": "d1", "range": "p:00000105"}), &context)
@@ -538,7 +536,8 @@ fn a_call_is_handed_the_other_documents_it_names_pinned() {
     let context = CallContext::default();
     let two = format!("<w:document {W}><w:body><w:sdt/><w:sdt/></w:body></w:document>");
     let (_, first) = committed(&s, &d2, vec![put("word/document.xml", &two)], &context).unwrap();
-    s.update(
+    crate::common::refreshed(
+        &s,
         &d2,
         vec![put("word/document.xml", &two.replace("<w:sdt/>", "<w:sdt/><w:sdt/>"))],
         &context,

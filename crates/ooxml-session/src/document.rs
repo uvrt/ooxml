@@ -12,10 +12,9 @@ use crate::model::PackageDoc;
 use crate::owners::{Owners, StepOwner};
 use crate::problems::Problem;
 use crate::stored::{Stored, StoredDoc};
-use crate::update::PartUpdate;
 use crate::{DocKind, Registry, SessionError};
 use ooxml_opc::Package;
-use ooxml_store::{Caller, Store};
+use ooxml_store::Store;
 use ooxml_tools::{Tool, ToolError, ToolResult};
 use serde_json::{Map, Value};
 use std::any::Any;
@@ -86,16 +85,6 @@ impl FormatDoc for Stored<PackageDoc> {
 
     fn save(&self, at: &AnyVersion, _checked: bool) -> Result<Vec<u8>, SessionError> {
         Ok(at.package().save()?)
-    }
-
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        let (version, changed, attempts) = Stored::update(self, caller, tool, update)?;
-        Ok((Self::any(version), changed, attempts))
     }
 
     fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {

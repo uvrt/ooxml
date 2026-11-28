@@ -334,6 +334,91 @@ impl HostSession {
             })
     }
 
+    /// Take in another editor's version of the open document `doc` (co-authoring refresh,
+    /// phase 3 CF2): `file`, their file, made from the version `base` names (a token of this
+    /// session's changes feed, `<session nonce>-<seq>`), committed as one step by `editor`,
+    /// so the changes feed shows it as an ordinary version. This session's steps since
+    /// `base` that touched what it changed are taken back first; the answer names each, with
+    /// who made it, so the host tells those callers. It is kept in the session's log as a
+    /// call of `refresh`.
+    ///
+    /// The answer: `{version, token, changed, parts, blocks, handed_back: [{step, caller,
+    /// tool, context, blocks, undo}]}` -- `token` the base of the next refresh, `step` and
+    /// `undo` state numbers.
+    ///
+    /// # Errors
+    /// A failure naming the document where none `doc` is open; `not_found` for a `base` this
+    /// session does not hold (another session's, past the head, or no longer kept), with the
+    /// way out reopening from the server's file; `not_supported` naming the format where it
+    /// takes no other editor's versions (pptx and xlsx until Phase 4); a file that is not one.
+    pub fn refresh(&self, doc: &str, base: &str, file: Arc<[u8]>, editor: &str) -> Result<Value, ToolError> {
+        let id = DocId::parse(doc)
+            .ok_or_else(|| ToolError::failure(Failure::Internal, format!("no open document {doc}")).at("doc"))?;
+        let start = std::time::Instant::now();
+        let context = self.application_context();
+        let refreshed = self.session.refresh(&id, base, file, editor, &context);
+        let (ok, code, summary, version) = match &refreshed {
+            Ok(r) => (
+                true,
+                None,
+                format!(
+                    "{editor}'s version came in: {} block(s) changed, {} step(s) handed back",
+                    r.blocks.len(),
+                    r.handed_back.len()
+                ),
+                Some(r.number),
+            ),
+            Err(error) => {
+                let error = error.to_tool_error();
+                (
+                    false,
+                    Some(error.code().as_str().to_owned()),
+                    error.message().to_owned(),
+                    None,
+                )
+            }
+        };
+        let arguments = serde_json::json!({"doc": doc, "base": base, "editor": editor});
+        self.stores().log.push(CallRecord {
+            tool: ooxml_session::REFRESH.to_owned(),
+            docs: vec![doc.to_owned()],
+            digest: crate::records::digest(&arguments),
+            shape: crate::records::shape(&arguments),
+            ok,
+            code,
+            summary,
+            duration: start.elapsed(),
+            version,
+            arguments: None,
+            roles: None,
+            context: None,
+            panic: None,
+        });
+        let refreshed = refreshed.map_err(|error| error.to_tool_error().at("doc"))?;
+        let handed_back: Vec<Value> = refreshed
+            .handed_back
+            .iter()
+            .map(|h| {
+                serde_json::json!({
+                    "step": h.step,
+                    "caller": h.caller,
+                    "tool": h.tool,
+                    "context": h.context,
+                    "blocks": h.blocks,
+                    "undo": h.undo,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "version": refreshed.version,
+            "token": refreshed.token,
+            "changed": refreshed.changed,
+            "parts": refreshed.parts,
+            "blocks": refreshed.blocks,
+            "handed_back": handed_back,
+        }))
+    }
+
     /// Register an input and return its handle (`b1`).
     ///
     /// # Errors

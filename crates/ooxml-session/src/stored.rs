@@ -14,16 +14,15 @@
 use crate::batch_run::{BatchCommitted, BatchOps, BatchRefused, OpRan};
 use crate::format::AnyVersion;
 use crate::history::{numbers_of, Direction, Numbers};
-use crate::model::{PackageDoc, PartChange, PartContent};
+use crate::model::PackageDoc;
 use crate::owners::{OwnUndo, Owners, StepOwner};
-use crate::update::{PartUpdate, Parts};
 use crate::SessionError;
 use ooxml_opc::Package;
 use ooxml_store::{
     AttemptState, Caller, DocModel, Error, HistoryOutcome, InOp, LockTimes, OpTxn, Seq, Snapshot, Store, StoreError,
     StoreStats, Txn, TxnMark, TxnOwner,
 };
-use ooxml_xml::Tree;
+use ooxml_tools::Meanwhile;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -46,20 +45,9 @@ pub trait Holds<D: DocModel>: Send + Sync + 'static {
     /// The package of a version of the model.
     fn package(doc: &D) -> &Package;
 
-    /// The change that puts `tree` as `part` (a test's update of parts).
-    fn put_tree(part: String, tree: Tree) -> D::Change;
-
-    /// The change that puts `bytes` as `part`.
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> D::Change;
-
-    /// The change that removes `part`.
-    fn remove(part: String) -> D::Change;
-
-    /// What the put trees add to the version's ledger, if anything.
-    fn ledger(doc: &D, trees: &[&Tree]) -> Option<D::Change>;
-
-    /// The version `version` was made from `previous` by `by` (a test's update, an undo or
-    /// redo, a step group's revert), changing the document. Nothing by default.
+    /// The version `version` was made from `previous` by `by` (another editor's version
+    /// come in, an undo or redo, a step group's revert), changing the document. Nothing by
+    /// default.
     ///
     /// # Errors
     /// The format's, when it cannot read the versions.
@@ -81,28 +69,6 @@ impl Holds<PackageDoc> for Store<PackageDoc> {
 
     fn package(doc: &PackageDoc) -> &Package {
         doc.package()
-    }
-
-    fn put_tree(part: String, tree: Tree) -> PartChange {
-        PartChange::Put {
-            part,
-            content: PartContent::Tree(tree),
-        }
-    }
-
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> PartChange {
-        PartChange::Put {
-            part,
-            content: PartContent::Bytes(bytes),
-        }
-    }
-
-    fn remove(part: String) -> PartChange {
-        PartChange::Remove { part }
-    }
-
-    fn ledger(_doc: &PackageDoc, _trees: &[&Tree]) -> Option<PartChange> {
-        None
     }
 }
 
@@ -147,34 +113,31 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
         AnyVersion::of(snapshot, H::package)
     }
 
-    /// Commit a test's update of parts as `caller`, made by `tool`: the version it leaves,
-    /// whether it changed anything, and how many times it was prepared.
+    /// Another editor's version came in (a co-authoring refresh): `previous` the head it
+    /// was published after, `version` it, made by `editor`; and the undos that took back the
+    /// steps it touched first, each `(previous, version)`. The format told of each, and of
+    /// the numbers they keep.
     ///
     /// # Errors
-    /// The update's or the store's.
-    pub fn update(
+    /// The format's, when it cannot read the versions.
+    pub fn arrived(
         &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(Snapshot<D>, bool, u32), SessionError> {
-        let store = self.store();
-        let update = &Parts::<D, H> {
-            update,
-            model: PhantomData,
-        };
-        let done = store.run(caller, update)?;
-        let previous = done.previous.filter(|_| done.changed);
-        let (version, attempts) = (done.version, done.attempts);
-        if let Some(previous) = &previous {
+        undos: &[(Snapshot<D>, Snapshot<D>)],
+        made: Option<(&Snapshot<D>, &Snapshot<D>)>,
+        editor: &str,
+    ) -> Result<(), SessionError> {
+        for (previous, version) in undos {
+            self.moved(previous, version, None)?;
+        }
+        if let Some((previous, version)) = made {
             let by = StepBy {
-                caller: caller.name(),
-                tool,
+                caller: Some(editor),
+                tool: Some(crate::refresh::REFRESH),
                 history: false,
             };
-            self.held.noted(previous, &version, by)?;
+            self.held.noted(previous, version, by)?;
         }
-        Ok((version, previous.is_some(), attempts))
+        Ok(())
     }
 
     /// The state numbers of the steps its history holds (undo's and plain redo's).
@@ -231,24 +194,33 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
             let (Some(step), later) = (steps.get(index), steps.get(index + 1..).unwrap_or_default()) else {
                 return Ok(None);
             };
-            if !later.is_empty() {
+            // past another editor's later steps only (never taken back): scoped, refused
+            // where entangled with one of them
+            let scoped = !later.is_empty() && later.iter().all(|s| s.foreign);
+            if !later.is_empty() && !scoped {
                 return Err(SessionError::Entangled {
                     step: step.number,
                     later: later.iter().map(|s| s.number).collect(),
                 });
             }
-            match store.undo_newest(step.step) {
+            let undone = if scoped {
+                store.undo_step(step.step, &ooxml_store::KeySet::new())
+            } else {
+                store.undo_newest(step.step)
+            };
+            match undone {
                 Ok(outcome) => {
                     self.owners.undone(OwnUndo {
                         caller: Arc::from(caller),
                         number: step.number,
                         seq: step.step.0,
+                        scoped,
                     });
                     return Ok(Some(outcome));
                 }
                 // another commit came first: it is the later change now
                 Err(StoreError::NotNext { .. }) => {}
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(crate::store_error::<D>(error, Meanwhile::History)),
             }
         }
     }
@@ -261,6 +233,21 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
             let Some(undo) = self.owners.latest_undo(caller) else {
                 return Ok(None);
             };
+            if undo.scoped {
+                // taken back past another editor's step: brought back by its step, refused
+                // where entangled with what came since
+                return match store.redo_step(Seq(undo.seq)) {
+                    Ok(outcome) => {
+                        self.owners.forget(&undo);
+                        Ok(Some(outcome))
+                    }
+                    Err(StoreError::UnknownStep { .. }) => {
+                        self.owners.forget(&undo);
+                        continue;
+                    }
+                    Err(error) => Err(crate::store_error::<D>(error, Meanwhile::History)),
+                };
+            }
             let Some(next) = store.redoable().pop() else {
                 // nothing of it comes back: the redo went
                 self.owners.forget(&undo);
@@ -276,7 +263,7 @@ impl<D: DocModel, H: Holds<D>> Stored<D, H> {
                 }
                 // another undo or redo came first: look again
                 Err(StoreError::NotNext { .. }) => {}
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(crate::store_error::<D>(error, Meanwhile::History)),
             }
         }
     }
@@ -323,7 +310,7 @@ fn plain<D: DocModel>(outcome: Result<HistoryOutcome<D>, Error<D>>) -> Result<Op
     match outcome {
         Ok(outcome) => Ok(Some(outcome)),
         Err(StoreError::NothingToUndo | StoreError::NothingToRedo) => Ok(None),
-        Err(error) => Err(error.into()),
+        Err(error) => Err(crate::store_error::<D>(error, Meanwhile::History)),
     }
 }
 
@@ -357,6 +344,11 @@ pub trait StoredDoc: Send + Sync {
     /// A step numbered `number`, ended by the version `seq`, was made by `owner` (`None`:
     /// none, a change from outside the tools): kept as its owner, the format told its number.
     fn stepped(&self, seq: u64, number: u64, owner: Option<StepOwner>);
+
+    /// Another editor's version `seq`, numbered `number`, came in, made by `owner`: noted
+    /// as [`StoredDoc::stepped`] notes a step, but no caller's own undo is let go (it drops
+    /// no redo).
+    fn arrived_step(&self, seq: u64, number: u64, owner: StepOwner);
 
     /// Up to `steps` undos or redos as `caller` (`None`: the session's own; a named caller,
     /// its own): how many were done.
@@ -465,6 +457,11 @@ impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
         self.owners.stepped(number, owner, || self.held_numbers());
     }
 
+    fn arrived_step(&self, seq: u64, number: u64, owner: StepOwner) {
+        self.held.numbered(seq, number);
+        self.owners.arrived(number, owner);
+    }
+
     fn history(&self, steps: usize, caller: Option<&str>, direction: Direction) -> Result<usize, SessionError> {
         self.history_run(steps, caller, direction)
     }
@@ -514,7 +511,7 @@ impl<D: DocModel, H: Holds<D>> StoredDoc for Stored<D, H> {
                 timing: done.timing,
             }),
             Err(Refused::Op(index)) => Err(BatchRefused::Op(index)),
-            Err(Refused::Store(error)) => Err(BatchRefused::Store(error.into())),
+            Err(Refused::Store(error)) => Err(BatchRefused::Store(crate::store_error::<D>(error, Meanwhile::Edit))),
         }
     }
 

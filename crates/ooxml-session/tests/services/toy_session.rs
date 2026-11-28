@@ -21,10 +21,10 @@ use ooxml_opc::Package;
 use ooxml_session::datasets::{CallDatasets, DatasetLimits, DatasetStore, DocMeta};
 use ooxml_session::sources::{CallSources, FormatOpen, FormatSources, OpenDoc, SourceHost};
 use ooxml_session::{
-    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, OpenEnv, PackageDoc, PartUpdate, Registry,
-    SessionError, Stored, StoredDoc,
+    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, OpenEnv, PackageDoc, Registry, SessionError, Stored,
+    StoredDoc,
 };
-use ooxml_store::{Caller, Store, StoreConfig};
+use ooxml_store::{Store, StoreConfig};
 use ooxml_tools::datasets::{Cache, Dataset};
 use ooxml_tools::sources::{Cell, Prefixes};
 use ooxml_tools::{Refusal, Tool as ToolSpec, ToolError, ToolResult, TryCall, WayOut};
@@ -433,15 +433,6 @@ impl FormatDoc for ToyDoc {
 
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
         FormatDoc::save(&self.stored, at, checked)
-    }
-
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        FormatDoc::update(&self.stored, caller, tool, update)
     }
 
     fn run(&self, tool: &dyn ToolSpec, run: &FormatRun<'_>) -> ToolResult<Value> {

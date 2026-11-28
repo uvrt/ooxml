@@ -10,10 +10,9 @@
 
 use ooxml_opc::Package;
 use ooxml_session::{
-    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageFormat, PartUpdate,
-    Registry, SessionError, StoredDoc,
+    AnyVersion, DocKind, Finished, Format, FormatDoc, FormatRun, NewDocument, OpenEnv, PackageFormat, Registry,
+    SessionError, StoredDoc,
 };
-use ooxml_store::Caller;
 use ooxml_tools::datasets::Dataset;
 use ooxml_tools::{Refusal, Tool, ToolError, ToolResult, WayOut};
 use serde_json::{Map, Value};
@@ -125,15 +124,6 @@ impl FormatDoc for FrozenDoc {
 
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
         self.inner.save(at, checked)
-    }
-
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        self.inner.update(caller, tool, update)
     }
 
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {

@@ -3,8 +3,8 @@
 //! Owns: a [`Session`] holding documents by [`DocId`], each as its format keeps it
 //! ([`Format`], [`FormatDoc`]: Word's in `ooxml-session-word`, the kinds Rust does not own
 //! yet as packages, [`PackageFormat`]) over one generic history ([`Stored`]); opening, saving
-//! and closing; a commit of parts given as bytes for tests ([`Session::update`],
-//! section 13); the tool [`Registry`], each tool's spec made once and the kinds it serves;
+//! and closing; another editor's version of an open document coming in
+//! ([`Session::refresh`], co-authoring); the tool [`Registry`], each tool's spec made once and the kinds it serves;
 //! dispatch of a call ([`Session::call`]): arguments taken as meant, the document found,
 //! the handler run on a snapshot, the reply as a [`ooxml_tools::ToolResult`]; and a call's
 //! [`CallContext`]: who calls, its cancellation token and its deadline, read through the
@@ -48,6 +48,7 @@ pub mod outputs;
 mod owners;
 mod panics;
 pub mod problems;
+mod refresh;
 mod refs;
 mod registry;
 pub mod scales;
@@ -55,14 +56,13 @@ mod session;
 pub mod sources;
 mod stored;
 mod undo;
-mod update;
 
 pub use batch::{ReadBatch, ReadOp, BATCH_TIMEOUT, MAX_READ_BATCH_CHARS, READ_BATCH};
 pub use batch_run::{BatchCommitted, BatchOps, BatchRefused, OpRan};
 pub use context::{revision_date, CallCancel, CallContext, CancelToken, FormatHost, LayoutCancel, StoreClock};
 pub use dispatch::{CallMade, InBatch};
 pub use document::{package_has_part, PackageFormat};
-pub use error::SessionError;
+pub use error::{store_error, SessionError};
 pub use feed::{FeedAnswer, FeedAsk, FeedBytes, FeedError};
 pub use format::{
     no_source, AnyVersion, BatchHold, Deferred, Finished, Format, FormatDoc, FormatRun, Holding, LockSpent,
@@ -74,9 +74,9 @@ pub use memory::{Account, MemoryBudget};
 pub use model::{ModelError, PackageDoc, PartChange, PartContent};
 pub use ooxml_store::Caller;
 pub use owners::{Owners, StepOwner};
+pub use refresh::{FormatRefreshed, HandedBackStep, RefreshAsk, Refreshed, TakenBack, REFRESH};
 pub use refs::{CallRefs, RefMap, RefOwner, RefTable, RefsMark, Resolved, ScopedStep};
 pub use registry::{KindRegistrar, Registry};
 pub use session::{Opened, Session, SessionConfig, SessionStats};
 pub use stored::{Holds, StepBy, Stored, StoredDoc};
 pub use undo::{Undo, UNDO};
-pub use update::{PartUpdate, Updated};

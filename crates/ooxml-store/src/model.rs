@@ -59,6 +59,14 @@ pub trait DocModel: Clone + Send + Sync + 'static {
         false
     }
 
+    /// `key` as a reply names it to a caller (a block's id, a part's name), where it names
+    /// something a caller knows; `None` for bookkeeping (an id sequence, say). What a refusal
+    /// says changed ([`crate::StoreError::ForeignChange`]). None by default.
+    fn key_name(key: &Self::Key) -> Option<String> {
+        let _ = key;
+        None
+    }
+
     /// What `after` changed against `before`: the store works it out for each version it
     /// publishes against the version it was published after, when first asked
     /// ([`crate::Version::changes`]) -- so a commit, an undo, a redo and a revert all get it

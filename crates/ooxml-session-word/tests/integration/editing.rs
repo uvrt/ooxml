@@ -102,7 +102,7 @@ fn put(session: &Session, doc: &DocId, body: &str, context: &CallContext) -> u64
         "word/document.xml".to_owned(),
         Some(Arc::from(document(body).as_bytes())),
     )];
-    session.update(doc, parts, context).unwrap().version
+    crate::common::refreshed(session, doc, parts, context).unwrap().version
 }
 
 pub(crate) fn body_of(session: &Session, doc: &DocId) -> String {
@@ -264,8 +264,8 @@ fn a_caller_undoes_only_its_own_latest_change() {
         .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
         .unwrap();
     let (ann, bo) = (as_caller("ann"), as_caller("bo"));
-    put(&s, &d, &paragraph("11111111", "by ann"), &ann);
-    put(&s, &d, &paragraph("11111111", "by bo"), &bo);
+    written(&s, "by ann", &ann);
+    written(&s, "by bo", &bo);
     match s.undo(&d, 1, &ann) {
         Err(SessionError::Entangled { step, later }) => {
             assert_eq!(step, 1);
@@ -399,13 +399,13 @@ fn the_save_gate_refuses_new_problems_and_parts_given_feed_the_ledger() {
         Err(SessionError::NewProblems { new }) => assert!(!new.is_empty()),
         other => panic!("{other:?}"),
     }
-    // ids parts given bring are in the ledger, and stay there after undo
+    // ids another editor's version brings are in the ledger; its steps no undo takes back
     let fresh = format!("{}{}", paragraph("11111111", "one"), paragraph("3A3A3A3A", "two"));
     put(&s, &d, &fresh, &CallContext::default());
     s.save_checked(&d).unwrap();
-    s.undo(&d, 2, &CallContext::default()).unwrap();
+    assert_eq!(s.undo(&d, 2, &CallContext::default()).unwrap().count, 0);
     let head = s.snapshot(&d).unwrap();
-    assert_eq!(head.version(), 4);
+    assert_eq!(head.version(), 2);
     assert!(head.word().unwrap().ids().contains(0x3A3A_3A3A));
 }
 
@@ -759,8 +759,8 @@ fn the_history_is_listed_in_state_numbers() {
         .open(docx(&paragraph("11111111", "one")), DocKind::Docx, "a.docx")
         .unwrap();
     let (ann, bo) = (as_caller("ann"), as_caller("bo"));
-    put(&s, &d, &paragraph("11111111", "by ann"), &ann);
-    put(&s, &d, &paragraph("11111111", "by bo"), &bo);
+    written(&s, "by ann", &ann);
+    written(&s, "by bo", &bo);
     let numbers = s.numbers(&d).unwrap();
     assert_eq!(numbers.highest, 2);
     let steps: Vec<_> = numbers
@@ -784,7 +784,7 @@ fn the_history_is_listed_in_state_numbers() {
     assert_eq!(s.numbered(&d, 1).unwrap().map(|o| o.number()), Some(1));
     assert!(s.numbered(&d, 0).unwrap().is_some_and(|o| o.number() == 0));
     // a new step takes the next number; redo is gone
-    put(&s, &d, &paragraph("11111111", "by ann again"), &ann);
+    written(&s, "by ann again", &ann);
     let numbers = s.numbers(&d).unwrap();
     assert_eq!((numbers.highest, numbers.redo.len()), (3, 0));
     assert_eq!(numbers.steps.last().map(|s| (s.before, s.after)), Some((1, 3)));

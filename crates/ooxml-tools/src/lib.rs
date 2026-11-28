@@ -44,6 +44,7 @@
 #![forbid(unsafe_code)]
 
 pub mod blobs;
+mod changed_meanwhile;
 mod check;
 pub mod cost;
 pub mod datasets;
@@ -73,6 +74,7 @@ mod types;
 mod validate;
 pub mod written;
 
+pub use changed_meanwhile::Meanwhile;
 pub use difflib::close_matches;
 pub use error::{ErrorCode, Failure, Refusal, ToolError, TryCall, WayOut};
 pub use handlers::{

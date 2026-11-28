@@ -534,39 +534,11 @@ impl WordDoc {
             .is_some_and(|saved| ooxml_word_model::ids::used_long_hex(&[&**saved.root()]).contains(&now))
     }
 
-    /// The package with `part` put in place as another writer wrote it (`tree`), every
-    /// part read with ids given at open written (the package changes), and the ids: a story
-    /// part whose blocks lack ids read stamped and kept unwritten, a block the part held the
-    /// same before keeping its ids, the rest drawn from this version's ledger
-    /// ([`ooxml_word_model::stamp::received`]).
-    fn received(&self, part: &str, tree: &Tree) -> Result<(Package, Ids), ModelError> {
-        let before = self.package.tree(part).ok().flatten();
-        let package = self.package.written().with_new_tree(part, tree.clone());
-        self.stamped_in(package, part, before, tree)
-    }
-
-    /// The package and ids after a part another writer put in place (`Change::Received`)
-    /// or another editor's version brought (`Change::Arrived`); other changes change
-    /// nothing here.
-    pub(crate) fn taken_in(&self, change: &super::Change) -> Result<(Package, Ids), ModelError> {
-        match change {
-            super::Change::Received { part, tree } => self.received(part, tree),
-            super::Change::Arrived {
-                part,
-                patches,
-                from,
-                on,
-                ..
-            } => self.arrived(part, patches.as_deref(), from, on.as_ref()),
-            _ => Ok((self.package.package().clone(), self.ids.clone())),
-        }
-    }
-
     /// The package with `part` as another editor's version `from` has it
     /// ([`super::Change::Arrived`]): `patches` applied to the part here (or the part whole
     /// where `None`); saved as `from` holds it where the part here is `on`, the part the
-    /// patches were worked out against; stamped where it lands as [`WordDoc::received`]
-    /// stamps, every part read with ids given at open written.
+    /// patches were worked out against; stamped where it lands by the rule of a part another
+    /// writer put ([`ooxml_word_model::stamp::received`]), every part read with ids given at open written.
     pub(crate) fn arrived(
         &self,
         part: &str,

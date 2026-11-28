@@ -1069,6 +1069,22 @@ class HostedSession(Session):
         answer["pictures"] = {hash_: (mime, bytes(data)) for hash_, mime, data in pictures}
         return answer
 
+    def refresh(self, doc_id: str, data: bytes, *, base: str, editor: str) -> dict[str, Any]:
+        """Take in another editor's version of the document ``doc_id`` (co-authoring refresh):
+        ``data``, their file, made from the version ``base`` names (a ``token`` of
+        :meth:`changes`), committed as one step by ``editor``, so the changes feed shows it as
+        an ordinary version.  This session's steps since ``base`` that touched what it changed
+        are taken back first (each an undo of its own, which can be redone by hand) and named.
+        A dict of ``version`` (the store's seq), ``token`` (the next ``base``), ``changed``,
+        ``parts``, ``blocks`` (the ids it changed) and ``handed_back``: each step taken back,
+        newest first, as ``step`` and ``undo`` (state numbers), ``caller``, ``tool``,
+        ``context`` and ``blocks``, so the host tells those callers.  Raises the host's refusal
+        (a ``ToolError``: ``not_found`` for a ``base`` this session does not hold,
+        ``not_supported`` for a format that takes none)."""
+        with _viewing():
+            text = self.rust.refresh(self._named(doc_id), base, bytes(data), editor=editor)
+        return json.loads(text)
+
     def memory_now(self, doc_id: str) -> dict[str, float]:
         """What this process holds, in MB (``describe``'s, the application's): ``document``,
         what the host keeps of the document, and the process's own (:func:`.memory.process_memory`)."""

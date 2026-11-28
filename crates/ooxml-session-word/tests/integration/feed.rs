@@ -1,7 +1,8 @@
 //! The changes feed (lane CF1a): a client that starts empty and applies each answer -- the
 //! page list, each changed page's groups, offsets, removals and order -- rebuilds every page's
 //! feed-mode SVG byte for byte, over random edits (paragraphs, table rows and cells, text
-//! boxes inserted, deleted, split and rewritten), undos and reflows; one letter sends one
+//! boxes inserted, deleted, split and rewritten, each another editor's version), versions
+//! going back and reflows; one letter sends one
 //! group; a stale `since` (another session's, past the head, below the floor) gets
 //! everything; an undo sends only its pages; parts and blocks without laying out; readers
 //! during six writers each answered from one version; a small memory budget held, a page let
@@ -247,7 +248,7 @@ impl Doc {
             "word/document.xml".to_owned(),
             Some(Arc::from(self.document().as_bytes())),
         )];
-        s.update(d, parts, &CallContext::default()).unwrap();
+        crate::common::refreshed(s, d, parts, &CallContext::default()).unwrap();
     }
 }
 
@@ -346,15 +347,19 @@ fn replay(seed: u64, steps: usize) {
     let mut client = Client::default();
     let first = caught_up(&s, &d, &mut client, &layout, &format!("seed {seed}, first"));
     assert!(first.full);
+    // each version comes in as another editor's (no undo takes one back): every fifth goes
+    // back to the version before, as an undo's content would
+    let mut before: Vec<Doc> = Vec::new();
     for step in 0..steps {
         let at = format!("seed {seed} step {step}");
-        if step % 5 == 4 {
-            let undone = call(&s, "undo", json!({"doc": d.to_string()}), &CallContext::default());
-            assert!(undone.get("error").is_none(), "{undone}");
-        } else {
-            while !doc.edit(&mut rng) {}
-            doc.put(&s, &d);
+        match (step % 5 == 4).then(|| before.pop()).flatten() {
+            Some(earlier) => doc = earlier,
+            None => {
+                before.push(doc.clone());
+                while !doc.edit(&mut rng) {}
+            }
         }
+        doc.put(&s, &d);
         let found = caught_up(&s, &d, &mut client, &layout, &format!("{at}: {doc:?}"));
         assert!(!found.full, "{at}");
     }
@@ -415,15 +420,15 @@ fn one_letter_sends_one_group_and_an_undo_only_its_pages() {
     assert_eq!(pages.changed.len(), 1, "{pages:?}");
     assert_eq!(pages.changed[0].page, letter.pages.as_ref().unwrap().changed[0].page);
     assert_eq!(pages.changed[0].groups.len(), 1);
-    // an insert at the start moves every page's lines; its undo sends those pages back, the
-    // page it added gone from the list
+    // an insert at the start moves every page's lines; taking it out sends those pages back,
+    // the page it added gone from the list
     let mut grown = doc.clone();
     grown.blocks.insert(1, Block::Para(Para(0x3000_0001, 40)));
     grown.put(&s, &d);
     let inserted = caught_up(&s, &d, &mut client, &layout, "insert");
-    let undone = call(&s, "undo", json!({"doc": d.to_string()}), &CallContext::default());
-    assert!(undone.get("error").is_none(), "{undone}");
-    let back = caught_up(&s, &d, &mut client, &layout, "undo of the insert");
+    // (another editor's insert: their next version takes it out again)
+    doc.put(&s, &d);
+    let back = caught_up(&s, &d, &mut client, &layout, "the insert taken out");
     let pages_of = |c: &Changes| -> Vec<usize> { c.pages.as_ref().unwrap().changed.iter().map(|p| p.page).collect() };
     let count = back.pages.as_ref().unwrap().list.as_ref().map_or(usize::MAX, Vec::len);
     let expected: Vec<usize> = pages_of(&inserted).into_iter().filter(|p| *p <= count).collect();

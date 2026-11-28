@@ -265,6 +265,16 @@ pub(crate) fn edit_refusal(error: EditError, field: &str, call: TryCall) -> Tool
             ToolError::not_supported("an edit inside a text box read from its fallback", way_out)
                 .with_detail("text_box", serde_json::Value::from(refused.to_string()))
         }
+        // another editor's change of what the edit read came in meanwhile: not run again
+        // over it (co-authoring, phase 3 CF2)
+        EditError::Store(ooxml_store::StoreError::ForeignChange { step, editor, overlap }) => {
+            let changed: Vec<String> = overlap.keys().map_or_else(Vec::new, |keys| {
+                keys.iter()
+                    .filter_map(<ooxml_word_edit::WordDoc as ooxml_store::DocModel>::key_name)
+                    .collect()
+            });
+            ToolError::changed_meanwhile(ooxml_tools::Meanwhile::Edit, &editor, step.0, &changed)
+        }
         // the core's model and tree disagreeing is a bug, never the caller's refusal
         EditError::Internal(internal) => ToolError::internal(internal.to_string(), "word:edit"),
         other => ToolError::internal(other.to_string(), "word:edit"),

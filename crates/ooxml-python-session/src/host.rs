@@ -564,6 +564,27 @@ impl PyHostSession {
         crate::view::changes(py, &self.inner, (doc, since), pages)
     }
 
+    /// Take in another editor's version of `doc` (co-authoring refresh): `data`, their file,
+    /// made from the version `base` names (a token the changes feed gave), committed as one
+    /// step by `editor`. The answer as JSON text: `version`, `token` (the next base),
+    /// `changed`, `parts`, `blocks`, and `handed_back` -- this session's steps taken back
+    /// first because they touched what it changed (`step`, `caller`, `tool`, `context`,
+    /// `blocks`, `undo`). Made with the interpreter lock released.
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ViewRefused` for a refusal (`not_found` for a
+    /// base this session does not hold, `not_supported` for a format that takes none).
+    #[pyo3(signature = (doc, base, data, *, editor))]
+    fn refresh(&self, py: Python<'_>, doc: &str, base: &str, data: &[u8], editor: &str) -> PyResult<String> {
+        self.doc(doc)?;
+        let file: std::sync::Arc<[u8]> = data.into();
+        let session = &self.inner;
+        let answer = py
+            .detach(|| session.refresh(doc, base, file, editor))
+            .map_err(|e| crate::view::feed_raised(&e))?;
+        Ok(answer.to_string())
+    }
+
     /// Close `doc`: the addresses of its datasets, which stay, frozen.
     ///
     /// # Errors

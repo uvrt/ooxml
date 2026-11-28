@@ -18,17 +18,16 @@ use crate::WordVersion;
 use ooxml_base::Context;
 use ooxml_opc::Package;
 use ooxml_session::{
-    AnyVersion, BatchHold, Finished, Format, FormatDoc, FormatRun, Holds, LayoutCancel, OpenEnv, PartUpdate, Registry,
+    AnyVersion, BatchHold, Finished, Format, FormatDoc, FormatRun, Holds, LayoutCancel, OpenEnv, Registry,
     SessionError, StepBy, StoreClock, Stored, StoredDoc,
 };
-use ooxml_store::{Caller, Snapshot, Store};
+use ooxml_store::{Snapshot, Store};
 use ooxml_tools::{CallEnv, Outcome, Tool, ToolError, ToolResult};
 use ooxml_tools_word::{LayoutLimit, Made, MadeBy, RowsWritten, WordLayout};
 use ooxml_word_edit::validate::Delta;
-use ooxml_word_edit::{Change, EarlierIds, Editor, WordDoc};
+use ooxml_word_edit::{EarlierIds, Editor, WordDoc};
 use ooxml_word_model::ids::LoadedState;
 use ooxml_word_pages::layout_facts::sizes::Minimum;
-use ooxml_xml::Tree;
 use serde_json::Value;
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -168,28 +167,6 @@ impl Holds<WordDoc> for WordStore {
 
     fn package(doc: &WordDoc) -> &Package {
         doc.package()
-    }
-
-    fn put_tree(part: String, tree: Tree) -> Change {
-        Change::Received {
-            part: Arc::from(part),
-            tree,
-        }
-    }
-
-    fn put_bytes(part: String, bytes: Arc<[u8]>) -> Change {
-        Change::Bytes {
-            part: Arc::from(part),
-            bytes,
-        }
-    }
-
-    fn remove(part: String) -> Change {
-        Change::Remove { part: Arc::from(part) }
-    }
-
-    fn ledger(doc: &WordDoc, trees: &[&Tree]) -> Option<Change> {
-        ooxml_word_edit::ledger_of(doc, trees)
     }
 
     fn noted(
@@ -462,14 +439,8 @@ impl FormatDoc for Word {
         Ok(at.package().save()?)
     }
 
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        let (version, changed, attempts) = self.stored.update(caller, tool, update)?;
-        Ok((Self::any(version), changed, attempts))
+    fn refresh(&self, asked: &ooxml_session::RefreshAsk<'_>) -> Result<ooxml_session::FormatRefreshed, SessionError> {
+        crate::refresh::refreshed(self, asked)
     }
 
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {

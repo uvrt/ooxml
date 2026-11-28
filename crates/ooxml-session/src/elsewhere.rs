@@ -18,7 +18,6 @@ use crate::format::{AnyVersion, Finished, Format, FormatDoc, FormatRun, NewDocum
 use crate::history::{Direction, Numbers};
 use crate::owners::{Owners, StepOwner};
 use crate::problems::Problem;
-use crate::update::PartUpdate;
 use crate::{DocKind, Registry, SessionError};
 use ooxml_opc::Package;
 use ooxml_store::{AttemptState, Caller, LockTimes, OpTxn, StoreStats, TxnMark, TxnOwner};
@@ -192,6 +191,8 @@ impl crate::StoredDoc for HeldElsewhere {
 
     fn stepped(&self, _seq: u64, _number: u64, _owner: Option<StepOwner>) {}
 
+    fn arrived_step(&self, _seq: u64, _number: u64, _owner: StepOwner) {}
+
     fn history(&self, _steps: usize, _caller: Option<&str>, _direction: Direction) -> Result<usize, SessionError> {
         Err(self.session_error("undo or redo it"))
     }
@@ -263,15 +264,6 @@ impl FormatDoc for HeldElsewhere {
 
     fn save(&self, _at: &AnyVersion, _checked: bool) -> Result<Vec<u8>, SessionError> {
         Err(self.session_error("save it"))
-    }
-
-    fn update(
-        &self,
-        _caller: &Caller,
-        _tool: Option<&str>,
-        _update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        Err(self.session_error("change it"))
     }
 
     fn run(&self, _tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
@@ -354,15 +346,6 @@ impl FormatDoc for Answering {
 
     fn save(&self, at: &AnyVersion, checked: bool) -> Result<Vec<u8>, SessionError> {
         self.held.save(at, checked)
-    }
-
-    fn update(
-        &self,
-        caller: &Caller,
-        tool: Option<&str>,
-        update: &PartUpdate<'_>,
-    ) -> Result<(AnyVersion, bool, u32), SessionError> {
-        self.held.update(caller, tool, update)
     }
 
     fn run(&self, tool: &dyn Tool, run: &FormatRun<'_>) -> ToolResult<Value> {
