@@ -186,9 +186,8 @@ impl Reader<'_> {
         let mut column = spec.before;
         let all = cells(row);
         for (n, tc) in all.iter().enumerate() {
-            let span = spec.cells.get(n).map_or(1, |c| c.span);
             let at = column;
-            column += span;
+            column += spec.cells.get(n).map_or(1, |c| c.span);
             let Some(place) = view_row.cells.iter().position(|c| c.cell == n) else {
                 // removed (merged into a cell beside it, its text not kept, or gone), taken
                 // into the cell before it, or gone with its end
@@ -197,9 +196,17 @@ impl Reader<'_> {
                 }
                 continue;
             };
-            let Some(here) = view_row.cells.get(place).map(|c| c.columns.clone()) else {
+            let Some(placed) = view_row.cells.get(place) else {
                 continue;
             };
+            let here = placed.columns.clone();
+            // its grid columns, and those of the removed cells merged into it
+            let span = placed
+                .parts
+                .iter()
+                .filter(|p| **p == n || all.get(**p).is_some_and(|c| self.view.removes_cell(&c.element)))
+                .map(|p| spec.cells.get(*p).map_or(1, |c| c.span))
+                .fold(0usize, usize::saturating_add);
             let continued =
                 self.continues(&tc.element) && !grid.heads.contains_key(&(r, n)) && !layout.merge_broken(r, place);
             if let (true, Some(origin)) = (continued, grid.origins.get(&here.start).copied()) {

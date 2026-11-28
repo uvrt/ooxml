@@ -321,14 +321,28 @@ impl TableGrid<'_> {
             .filter(|c| c.len() > 1)
             .collect();
         out.moved = (0..width).map(|k| grid.moved_rows(k)).collect();
-        out.deleted = (0..out.grid_columns)
-            .filter(|c| {
-                grid.rows().iter().flatten().all(|row| {
-                    !row.cells.iter().any(|cell| cell.source.contains(c))
-                        && !row.source_before.contains(c)
-                        && !row.source_after.contains(c)
-                })
+        // a grid column only cells accepting removes with nothing kept cover, in every row
+        // (one merged into a cell beside it, or taken in, is that cell's)
+        let covered: Vec<Vec<Range<usize>>> = grid
+            .rows()
+            .iter()
+            .enumerate()
+            .filter_map(|(r, row)| {
+                let row = row.as_ref()?;
+                let cells = self.rows.get(r).map(|e| placed_cells(e)).unwrap_or_default();
+                let mut out: Vec<Range<usize>> = vec![row.source_before.clone(), row.source_after.clone()];
+                for cell in &row.cells {
+                    out.extend(
+                        cell.parts
+                            .iter()
+                            .filter_map(|p| cells.get(*p).map(|(_, s, n)| *s..s.saturating_add(*n))),
+                    );
+                }
+                Some(out)
             })
+            .collect();
+        out.deleted = (0..out.grid_columns)
+            .filter(|c| covered.iter().all(|row| !row.iter().any(|r| r.contains(c))))
             .collect();
         out.view = Some(grid);
         out
@@ -658,7 +672,7 @@ impl Accepted {
         let view = self.view.as_ref().and_then(|v| Some((v, v.row(row)?)));
         let mapped = view.and_then(|(v, r)| v.row_source(r, at)).flatten();
         let grid = mapped.unwrap_or(cell.source.start);
-        if !cell.in_place {
+        if !cell.in_place && usize::try_from(column).ok() != Some(grid) {
             let note = format!(
                 "col positions count row {} of {} as accepted: pending cell changes remove cells before it, and the \
                  cells after them move left; col {column} is grid column {grid} in that row",
