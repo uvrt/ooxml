@@ -934,3 +934,23 @@ case = "test_tracked_reshape_r55::test_the_final_view_reads_the_merge_over_a_del
 tool = "word_read"
 fields = ["result.changed", "result.checks", "result.created", "result.data", "result.error.code", "result.error.details.not_supported", "result.error.message", "result.error.valid_options", "result.next_cursor", "result.ok", "result.removed", "result.renamed", "result.summary", "result.total", "result.warnings"]
 cause = "Phase 3 RD1c (ooxml-word-model view, #455): the final view's cell ends follow Word's Accept All; a deleted cell is no cell end, so word_read reads this table where the recording refused it as not supported yet"
+
+# view-follows-word-2026-11-28 (lane fix-final-grid, #459): the final view's grid is the one Word's
+# Accept All writes -- grid columns no cell divides are one, the grid spans to the widest row.
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_grid_mismatch"
+case = "test_grid_mismatch::test_tracked_table_edits_accepted_or_rejected_fit_the_grid[split, then merge-steps3]#1"
+tool = "word_edit_table"
+at = 6
+fields = ["result.data.columns", "result.data.markdown"]
+cause = "Lane fix-final-grid (ooxml-word-model view grid, #459): as accepted no cell divides the first two grid columns, which Word's Accept All of this table (host 19830c99, measured) writes as one column with no colspans: 3 columns, not 4"
+
+[[difference]]
+decision = "view-follows-word-2026-11-28"
+stream = "docx/tests/test_tracked_reshape_r55"
+case = "test_tracked_reshape_r55::test_deleting_the_first_cell_of_a_pending_merge_is_refused_with_its_id[step0-column 0]#1"
+tool = "word_edit_table"
+at = 10
+fields = ["result.data.columns"]
+cause = "Lane fix-final-grid (ooxml-word-model view grid, #459): the grid now spans the widest row (4 cells on a w:tblGrid of 3), so columns is 4 where the recording said 3; both differ from Word's Accept All of this table (measured: 2), which moves the cells left of each deleted one before it rebuilds the grid -- follow-up lane fix-grid-moved-left"
