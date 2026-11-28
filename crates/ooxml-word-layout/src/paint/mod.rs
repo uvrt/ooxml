@@ -17,6 +17,7 @@ mod body_keys;
 mod cell_floats;
 mod decorate;
 pub mod drawings;
+pub mod feed;
 mod line_numbers;
 pub mod names;
 mod page_stories;

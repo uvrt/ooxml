@@ -689,6 +689,7 @@ dependencies = [
 name = "ooxml-session-word"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "ooxml-base",
  "ooxml-derive",
  "ooxml-fonts",
@@ -699,6 +700,7 @@ dependencies = [
  "ooxml-tools",
  "ooxml-tools-word",
  "ooxml-word-edit",
+ "ooxml-word-layout",
  "ooxml-word-model",
  "ooxml-word-pages",
  "ooxml-xml",
