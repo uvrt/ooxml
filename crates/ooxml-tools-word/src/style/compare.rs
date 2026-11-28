@@ -23,7 +23,7 @@ use ooxml_word_model::docx::formatting::{Cell, Formatting};
 use ooxml_word_model::docx::{style_name, Docx, StoryPart};
 use ooxml_word_model::ids::{Entry, W};
 use ooxml_word_model::markdown::read::{table_style, Placed, Reader};
-use ooxml_word_model::markdown::ViewName;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
@@ -86,7 +86,7 @@ impl<'d> Side<'d> {
     pub(crate) fn new(docx: &'d Docx) -> Self {
         Side {
             docx,
-            reader: Reader::new(docx, ViewName::Final),
+            reader: Reader::new(docx, View::Final),
         }
     }
 

@@ -14,9 +14,9 @@ use ooxml_word_model::docx::formatting::Cell;
 use ooxml_word_model::docx::{child_val, find_path, on, style_id, style_kind, style_name, Docx};
 use ooxml_word_model::ids::W;
 use ooxml_word_model::markdown::read::Reader;
-use ooxml_word_model::markdown::ViewName;
 use ooxml_word_model::model::Look;
 use ooxml_word_model::value::key;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -189,7 +189,7 @@ fn role(
 /// Every paragraph style in use, per role, in role order, most used first.
 pub(crate) fn styles(design: &Design<'_>, cancel: &dyn Cancel) -> Result<Vec<Value>, ToolError> {
     let names = Names::new(design.docx);
-    let mut reader = Reader::new(design.docx, ViewName::Final);
+    let mut reader = Reader::new(design.docx, View::Final);
     let mut found: Vec<Usage> = Vec::new();
     for part in &design.docx.parts {
         cancel.check().map_err(crate::describe::cancelled)?;

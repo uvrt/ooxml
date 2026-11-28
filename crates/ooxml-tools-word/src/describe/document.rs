@@ -11,10 +11,11 @@ use ooxml_word_model::docx::numbering::{membership, Lists};
 use ooxml_word_model::docx::outline::{body_blocks, headings};
 use ooxml_word_model::docx::sections::{section_story, sections, Section, KINDS};
 use ooxml_word_model::docx::tables::TableGrid;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::{fields::scan, revisions::records};
 use ooxml_word_model::docx::{find_path, style_name, Docx};
 use ooxml_word_model::ids::W;
+use ooxml_word_model::view::View;
 use serde_json::{json, Map, Value};
 
 /// One version's reading for `describe`.
@@ -108,7 +109,7 @@ impl<'a> Reading<'a> {
         headings(&blocks)
             .into_iter()
             .map(|h| {
-                let text = paragraph_text(&h.element, View::Current);
+                let text = paragraph_text(&h.element, View::Final);
                 let mut item = Map::new();
                 item.insert("id".into(), json!(h.id));
                 item.insert("level".into(), json!(h.level));

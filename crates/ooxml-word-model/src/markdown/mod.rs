@@ -18,19 +18,9 @@ pub mod stylemap;
 
 use crate::address::Address;
 use crate::docx::Docx;
+use crate::view::View;
 pub use select::RangeError;
 use std::sync::Arc;
-
-/// The view of the revisions a read shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ViewName {
-    /// Changes accepted.
-    Final,
-    /// Changes, comments and fields in place (CriticMarkup).
-    Markup,
-    /// Changes rejected.
-    Original,
-}
 
 /// Which stories a read covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,7 +38,7 @@ pub enum Stories {
 /// # Errors
 /// A [`RangeError`] when `range` names nothing or is malformed.
 pub fn to_plain_markdown(docx: &Docx, range: Option<&Address>) -> Result<String, RangeError> {
-    let blocks = read::project(docx, range, ViewName::Final, Stories::Body, false)?;
+    let blocks = read::project(docx, range, View::Final, Stories::Body, false)?;
     Ok(render::render(&blocks))
 }
 
@@ -59,7 +49,7 @@ pub fn to_plain_markdown(docx: &Docx, range: Option<&Address>) -> Result<String,
 pub fn to_markdown(
     docx: &Docx,
     range: Option<&Address>,
-    view: ViewName,
+    view: View,
     stories: Stories,
 ) -> Result<Arc<String>, RangeError> {
     let key = (range.map(|r| r.as_str().to_owned()), view, stories);

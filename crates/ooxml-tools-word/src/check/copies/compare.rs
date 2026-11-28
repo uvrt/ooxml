@@ -16,9 +16,10 @@ use crate::style::compare_paragraphs::paragraph_style;
 use crate::style::compare_tables::paragraph_pairs;
 use ooxml_tools::ToolError;
 use ooxml_word_edit::pairing::{by_text, collapse};
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::{casefold, find_path};
 use ooxml_word_model::ids::W;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -293,7 +294,7 @@ fn signature(side: &Side<'_>, element: &Element) -> (&'static str, Option<String
         let text = row.map_or_else(String::new, |row| {
             paragraphs_in(row, &[], true)
                 .iter()
-                .map(|(_, p)| paragraph_text(p, View::Current))
+                .map(|(_, p)| paragraph_text(p, View::Final))
                 .collect::<Vec<_>>()
                 .join(" | ")
         });
@@ -303,7 +304,7 @@ fn signature(side: &Side<'_>, element: &Element) -> (&'static str, Option<String
         return (
             "paragraph",
             paragraph_style(side, element),
-            normalised(&paragraph_text(element, View::Current)),
+            normalised(&paragraph_text(element, View::Final)),
         );
     }
     ("block", None, String::new())
@@ -469,7 +470,7 @@ fn example_units(reader: &Reader<'_, '_>, blocks: &[CopyBlock]) -> Vec<Unit> {
                     .position(|n| n.as_element().is_some_and(|e| e.name().is(Some(W), "tr")))
                     == Some(at);
             }
-            let text = paragraph_text(&paragraph, View::Current);
+            let text = paragraph_text(&paragraph, View::Final);
             for sentence in sentences(&text) {
                 let unit = normalised(sentence);
                 if unit.is_empty() || seen.contains(&unit) {
@@ -563,7 +564,7 @@ fn example_text(
     let mut out = Vec::new();
     for block in copy {
         for (path, paragraph) in block.paragraphs(true) {
-            let text = normalised(&paragraph_text(&paragraph, View::Current));
+            let text = normalised(&paragraph_text(&paragraph, View::Final));
             if text.is_empty() {
                 continue;
             }

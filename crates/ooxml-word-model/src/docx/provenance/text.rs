@@ -8,8 +8,9 @@
 
 use super::facts::{facts_after_edit, labels_after_edit};
 use super::{entries, entry_text, item, text_paragraph, TextEntry};
-use crate::docx::text::{paragraph_text, View};
+use crate::docx::text::paragraph_text;
 use crate::docx::Docx;
+use crate::view::View;
 use ooxml_opc::OpcError;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -49,7 +50,7 @@ pub fn text_records(docx: &Docx, aliases: &BTreeMap<String, String>) -> Result<T
         let Some((paragraph, id)) = text_paragraph(docx, aliases, key) else {
             continue;
         };
-        let now = paragraph_text(&paragraph, View::Current);
+        let now = paragraph_text(&paragraph, View::Final);
         add(
             &mut out.facts,
             &id,

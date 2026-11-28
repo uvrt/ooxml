@@ -1,12 +1,13 @@
-//! Owns: the final view of deleted paragraph marks (measured in Word's Accept All, every
-//! compatibility mode; docx2svg's `_join`, `_joined`, `_joined_into` and
-//! `_following_properties`): a paragraph whose mark is deleted joins the paragraph after it
-//! (a chain into the last), or the first paragraph of the table after it; one with nothing
-//! to join takes the properties of the paragraph after it in the story.
+//! Owns: the model's paragraphs joined in the final view (docx2svg's `_joined`,
+//! `_joined_into` and `_following_properties`), as [`crate::view::join_plan`] plans them: a
+//! paragraph whose mark is deleted made one with the paragraph after it, or with the first
+//! paragraph of the table after it; one with nothing to join takes the properties of the
+//! paragraph after it in the story.
 //!
 //! Must not: read XML.
 
 use crate::model::{Block, ParaProps, Paragraph, Table};
+use crate::view::{join_plan, Joined, Joining, View};
 use std::sync::Arc;
 
 /// Whether nothing of the paragraph is drawn but its mark.
@@ -76,34 +77,60 @@ pub(crate) fn joined_into(first: &Paragraph, table: &Table) -> Option<Table> {
     })
 }
 
-/// The final view of a container's blocks: each paragraph whose mark is deleted joined to
-/// the paragraph after it, or into the table after it; one with nothing after it stays.
+/// The final view of a container's blocks, joined as [`join_plan`] says: each paragraph
+/// whose mark is deleted joined to the paragraph after it (a chain into the last), or into
+/// the table after it. One that cannot join the table (its first cell holds no paragraph)
+/// stays, unless nothing of it is drawn.
 pub(crate) fn join(blocks: Vec<Block>) -> Vec<Block> {
-    let mut out: Vec<Block> = Vec::with_capacity(blocks.len());
-    for block in blocks.into_iter().rev() {
-        if let Block::Paragraph(p) = &block {
-            if p.mark_deleted {
-                match out.last_mut() {
-                    Some(Block::Paragraph(following)) => {
-                        *following = Arc::new(joined(p, following));
-                        continue;
-                    }
-                    Some(Block::Table(table)) if p.section.is_none() => {
-                        if let Some(made) = joined_into(p, table) {
-                            *table = Arc::new(made);
-                            continue;
-                        }
-                        if empty(p) {
-                            continue;
-                        }
-                    }
-                    _ => {}
-                }
+    let kinds: Vec<Joining> = blocks
+        .iter()
+        .map(|block| match block {
+            Block::Paragraph(p) => Joining::Paragraph {
+                removed: p.mark_deleted,
+                section: p.section.is_some(),
+                shown: false,
+            },
+            Block::Table(_) => Joining::Table,
+        })
+        .collect();
+    if !kinds
+        .iter()
+        .any(|k| matches!(k, Joining::Paragraph { removed: true, .. }))
+    {
+        return blocks;
+    }
+    let mut slots: Vec<Option<Block>> = blocks.into_iter().map(Some).collect();
+    let mut take = |k: usize| slots.get_mut(k).and_then(Option::take);
+    let mut out: Vec<Block> = Vec::new();
+    for group in join_plan(View::Final, &kinds) {
+        let (ks, mut tail) = match group {
+            Joined::Paragraph(mut ks) => {
+                let Some(Block::Paragraph(last)) = ks.pop().and_then(&mut take) else {
+                    continue;
+                };
+                (ks, vec![Block::Paragraph(last)])
+            }
+            Joined::Table { at, joins } => {
+                let Some(table) = take(at) else { continue };
+                (joins, vec![table])
+            }
+            Joined::Open { .. } | Joined::Close(_) => continue,
+        };
+        // `tail` holds the blocks after the paragraph being joined, the next one last
+        for k in ks.into_iter().rev() {
+            let Some(Block::Paragraph(p)) = take(k) else { continue };
+            match tail.last_mut() {
+                Some(Block::Paragraph(following)) => *following = Arc::new(joined(&p, following)),
+                Some(Block::Table(table)) => match joined_into(&p, table) {
+                    Some(made) => *table = Arc::new(made),
+                    None if empty(&p) => {}
+                    None => tail.push(Block::Paragraph(p)),
+                },
+                None => {}
             }
         }
-        out.push(block);
+        out.extend(tail.into_iter().rev());
     }
-    out.reverse();
     out
 }
 

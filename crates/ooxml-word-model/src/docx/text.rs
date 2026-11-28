@@ -1,11 +1,12 @@
-//! Owns: a paragraph's text in a view of its revisions, character for character as
-//! docx-agent's `edit/text.py` walks it: `current` (insertions in, deletions out),
-//! `original` (the reverse) and `markup` (both); a tab, a line or page break, a symbol and
-//! an object are one character each, a field's instruction is not text.
+//! Owns: a paragraph's text in a [`View`] of its revisions (what each view keeps is the
+//! view's), character for character as docx-agent's `edit/text.py` walks it: a tab, a line
+//! or page break, a symbol and an object are one character each, a field's instruction is
+//! not text.
 //!
 //! Must not: write text or read formatting.
 
 use crate::ids::{MC, W};
+use crate::view::View;
 use ooxml_xml::{Element, Node};
 
 /// Math (`m:oMath`, an inline object).
@@ -21,33 +22,6 @@ pub const OBJECT: char = '\u{fffc}';
 pub const NON_BREAKING_HYPHEN: char = '\u{2011}';
 /// `w:softHyphen`.
 pub const SOFT_HYPHEN: char = '\u{ad}';
-
-/// A view of a paragraph's revisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum View {
-    /// Insertions in, deletions out.
-    Current,
-    /// Deletions in, insertions out.
-    Original,
-    /// Both.
-    Markup,
-}
-
-impl View {
-    /// Whether a revision container's content shows in this view.
-    #[must_use]
-    pub fn shows(self, container: &Element) -> Option<bool> {
-        let local = container.name().local();
-        if container.name().namespace() != Some(W) {
-            return None;
-        }
-        match local {
-            "ins" | "moveTo" => Some(self != View::Original),
-            "del" | "moveFrom" => Some(self != View::Current),
-            _ => None,
-        }
-    }
-}
 
 /// The paragraph's text in `view`.
 #[must_use]
@@ -302,7 +276,7 @@ fn character(child: &Element, view: View) -> Option<Char> {
     }
     Some(match name.local() {
         "t" => Char::Text(leading_text(child)),
-        "delText" if view != View::Current => Char::Text(leading_text(child)),
+        "delText" if view.shows_deleted_text() => Char::Text(leading_text(child)),
         "br" => Char::One(match child.attribute(Some(W), "type") {
             Some("page" | "column") => PAGE_BREAK,
             _ => LINE_BREAK,

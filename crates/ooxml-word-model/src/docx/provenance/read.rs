@@ -8,7 +8,8 @@ use super::{entries, entry_text, item, kind_of, Kind};
 use crate::address::resolve::direct;
 use crate::docx::drawings::graphics;
 use crate::docx::{at_path, Docx};
-use crate::ids::{Entry, W};
+use crate::ids::Entry;
+use crate::view::View;
 use ooxml_opc::OpcError;
 use ooxml_provenance::{dumps, record};
 use ooxml_xml::Element;
@@ -92,19 +93,17 @@ fn accepted_target(docx: &Docx, key: &str) -> bool {
     }
 }
 
-/// Whether the row at `path` is deleted as a tracked change (`w:trPr/w:del`).
+/// Whether accepting removes the row at `path` ([`View::removes_row`]).
 fn row_deleted(root: &std::sync::Arc<Element>, path: &[u32]) -> bool {
-    at_path(root, path)
-        .and_then(|row| row.find(Some(W), "trPr"))
-        .is_some_and(|properties| properties.find(Some(W), "del").is_some())
+    at_path(root, path).is_some_and(|row| View::Final.removes_row(row))
 }
 
-/// Whether an element above the one at `path` is a tracked deletion or move away (`w:del`,
+/// Whether an element above the one at `path` is a revision accepting removes (`w:del`,
 /// `w:moveFrom`): what a drawing inside is gone with once the changes are accepted.
 fn inside_deletion(root: &std::sync::Arc<Element>, path: &[u32]) -> bool {
     (1..path.len()).any(|depth| {
         path.get(..depth)
             .and_then(|above| at_path(root, above))
-            .is_some_and(|e| e.name().is(Some(W), "del") || e.name().is(Some(W), "moveFrom"))
+            .is_some_and(|e| View::Final.shows(e) == Some(false))
     })
 }

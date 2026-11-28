@@ -33,7 +33,7 @@ use ooxml_tools::{Done, Refusal, ToolArgs, ToolError, TryCall, WayOut};
 use ooxml_word_model::address::Address;
 use ooxml_word_model::markdown::read::Reader;
 use ooxml_word_model::markdown::select::{select, Selected};
-use ooxml_word_model::markdown::ViewName;
+use ooxml_word_model::view::View;
 use serde_json::{json, Map, Value};
 
 /// `word_inspect`'s arguments.
@@ -61,7 +61,7 @@ pub fn word_inspect(args: &WordInspect, version: &Version<'_>, cancel: &dyn Canc
     if let Some(refusal) = not_supported(&docx, args) {
         return Err(refusal);
     }
-    let mut reader = Reader::new(&docx, ViewName::Final);
+    let mut reader = Reader::new(&docx, View::Final);
     let mut first = args.clone();
     first.target = "body".to_owned();
     let refuse = |e| address_refusal(e, "target", try_call(&first));

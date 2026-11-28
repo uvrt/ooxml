@@ -7,6 +7,12 @@
 //! refusal's code, its message, its error as JSON text) for a version or a mode not drawn yet,
 //! `TimeoutError` past the host's limit on laying out.
 //!
+//! The changes feed's Python side too (`HostSession.changes`): the host's answer as JSON
+//! text, the pictures new since `since` beside it as `(hash, mime, bytes)`, the call made with
+//! the interpreter lock released (readable from another thread while agents edit); a
+//! refusal raised as `ViewRefused` (`not_supported` for a format with no feed), `TimeoutError`
+//! past the host's limit on laying out.
+//!
 //! Must not: do the view's work (ooxml-session does), or hold a Python object while the
 //! version is laid out or painted.
 
@@ -112,4 +118,44 @@ pub(crate) fn page_svg(
         .detach(|| session.session().page_svg(&id, page, token, &*pages, text, &context))
         .map_err(|e| raised(&e))?;
     Ok((drawn.svg, drawn.warnings))
+}
+
+/// A host's refusal or failure of the changes feed as Python raises it.
+fn feed_raised(error: &ooxml_tools::ToolError) -> PyErr {
+    match error.code() {
+        ErrorCode::Failure(Failure::Timeout) => PyTimeoutError::new_err(error.message().to_owned()),
+        ErrorCode::Refusal(_) => ViewRefused::new_err((
+            error.code().as_str(),
+            error.message().to_owned(),
+            error.to_json().to_string(),
+        )),
+        ErrorCode::Failure(_) => PyRuntimeError::new_err(error.message().to_owned()),
+    }
+}
+
+/// A picture of the feed's: its address, media type and bytes.
+pub(crate) type PictureRow = (String, String, Py<pyo3::types::PyBytes>);
+
+/// `HostSession.changes`: see its docs there.
+pub(crate) fn changes(
+    py: Python<'_>,
+    session: &HostSession,
+    (doc, since): (&str, Option<&str>),
+    pages: bool,
+) -> PyResult<(String, Vec<PictureRow>)> {
+    let answer = py
+        .detach(|| session.changes(doc, since, pages))
+        .map_err(|e| feed_raised(&e))?;
+    let pictures = answer
+        .pictures
+        .iter()
+        .map(|p| {
+            (
+                p.hash.clone(),
+                p.mime.clone(),
+                pyo3::types::PyBytes::new(py, &p.bytes).unbind(),
+            )
+        })
+        .collect();
+    Ok((serde_json::Value::Object(answer.changes).to_string(), pictures))
 }

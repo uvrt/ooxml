@@ -7,11 +7,10 @@
 //! column is no part of it (as a tracked merge across a pending row deletion writes it:
 //! R137b, `MergeAcross`, `TrackedMergeAcross`).
 //!
-//! Must not: change a table, or decide which rows a view keeps (the caller says).
+//! Must not: change a table, or decide which rows a view keeps or a cell's merge in it (the
+//! caller says, from [`crate::view::View`]).
 
 use super::cells_at;
-use crate::docx::find_path;
-use crate::ids::W;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 
@@ -24,26 +23,6 @@ pub enum VMerge {
     Restart,
     /// A cell continuing the merge above it (`w:vMerge`, `w:val="continue"`).
     Continue,
-}
-
-/// A cell's part in a vertical merge; with `accepted`, a pending tracked one
-/// (`w:cellMerge`) as accepting leaves it.
-#[must_use]
-pub fn cell_merge(cell: &Element, accepted: bool) -> VMerge {
-    if accepted {
-        if let Some(tracked) = find_path(cell, &["tcPr", "cellMerge"]) {
-            return match tracked.attribute(Some(W), "vMerge") {
-                Some("rest") => VMerge::Restart,
-                Some("cont") => VMerge::Continue,
-                _ => VMerge::None,
-            };
-        }
-    }
-    match find_path(cell, &["tcPr", "vMerge"]).map(|m| m.attribute(Some(W), "val")) {
-        Some(None | Some("continue")) => VMerge::Continue,
-        Some(Some("restart")) => VMerge::Restart,
-        _ => VMerge::None,
-    }
 }
 
 /// The cells continuing a merge in kept rows that the view makes a merge's first cell
@@ -97,7 +76,8 @@ pub fn merge_heads(
 
 #[cfg(test)]
 mod tests {
-    use super::{cell_merge, merge_heads, VMerge};
+    use super::{merge_heads, VMerge};
+    use crate::view::View;
     use ooxml_base::XmlLimits;
     use ooxml_xml::Element;
 
@@ -116,7 +96,7 @@ mod tests {
         let tree = ooxml_xml::parse(doc.as_bytes(), &XmlLimits::default()).unwrap_or_else(|e| panic!("{e}"));
         let rows: Vec<&Element> = tree.root().child_elements().map(|r| &**r).collect();
         let kept = |r: &Element| r.find(Some(crate::ids::W), "trPr").is_none();
-        let found = merge_heads(&rows, &kept, &|c| cell_merge(c, true));
+        let found = merge_heads(&rows, &kept, &|c| View::Final.merge(c));
         (0..rows.len()).map(|r| found.get(&(r, 0)).copied()).collect()
     }
 

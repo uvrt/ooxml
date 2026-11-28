@@ -11,8 +11,9 @@ use ooxml_store::Txn;
 use ooxml_tools::{ArgEnum, Done, Refusal, ToolArgs, ToolError, ToolResult, TryCall, WayOut};
 use ooxml_word_edit::{hyperlink_span, AddBookmark, AddHyperlink, RemoveBookmark, RenameBookmark, WordDoc};
 use ooxml_word_model::address::marks::{bookmark_markers, bookmark_range, range_text};
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::ids::W;
+use ooxml_word_model::view::View;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -191,7 +192,7 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
         .take(100)
         .map(|b| {
             let text = bookmark_range(&docx, b)
-                .map(|r| range_text(b.part, &r, View::Current))
+                .map(|r| range_text(b.part, &r, View::Final))
                 .unwrap_or_default();
             json!({"name": b.name, "text": short(&text, 80)})
         })
@@ -204,7 +205,7 @@ fn listed(editing: &Editing<'_>) -> ToolResult<Value> {
             if links.is_empty() {
                 continue;
             }
-            let text: Vec<char> = paragraph_text(&paragraph.element, View::Current).chars().collect();
+            let text: Vec<char> = paragraph_text(&paragraph.element, View::Final).chars().collect();
             for (k, link) in links.into_iter().enumerate() {
                 if hyperlinks.len() == 100 {
                     break 'parts;

@@ -29,10 +29,11 @@ use crate::validate::Orders;
 use crate::work::{Id, Work};
 use ooxml_word_model::docx::numbering::{membership, Lists};
 use ooxml_word_model::docx::outline::OutlineLevels;
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::{style_name, Docx};
 use ooxml_word_model::ids::Entry;
 use ooxml_word_model::markdown::stylemap::WriteMap;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -156,7 +157,7 @@ pub(crate) fn donors(docx: &Docx, part: &str, replaced: &[String]) -> Vec<Donor>
             key,
             properties: element.find(Some(W), "pPr").map(Arc::clone),
             direct_list: member.as_ref().is_some_and(|m| !m.from_style),
-            empty: paragraph_text(element, View::Current).trim().is_empty(),
+            empty: paragraph_text(element, View::Final).trim().is_empty(),
         });
     }
     let full: HashSet<(Kind, i64)> = out.iter().filter(|d| !d.empty).map(|d| d.key).collect();

@@ -11,12 +11,13 @@ use super::Facts;
 use crate::line_text::TableRow;
 use ooxml_word_layout::facts::PageFacts;
 use ooxml_word_model::docx::cells::PartCells;
-use ooxml_word_model::docx::text::{shown_runs, View};
+use ooxml_word_model::docx::text::shown_runs;
 use ooxml_word_model::docx::{at_path, StoryPart};
 use ooxml_word_model::ids::{Anchor, BlockKey};
 use ooxml_word_model::model::{Block, Table};
 use ooxml_word_model::resolve::Sources;
 use ooxml_word_model::value::Value;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -345,7 +346,7 @@ fn all_bold(facts: &Facts<'_>, cells: &mut PartCells<'_>, row: &Arc<Element>, pl
     let mut found = None;
     for (paragraph, at) in tree::paragraphs_below(row, place) {
         let cell = cells.cell(&at);
-        for run in shown_runs(paragraph, View::Current).into_iter().filter(|r| r.inked) {
+        for run in shown_runs(paragraph, View::Final).into_iter().filter(|r| r.inked) {
             let Some(element) = at_path(paragraph, &run.path) else {
                 continue;
             };

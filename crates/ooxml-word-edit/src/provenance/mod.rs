@@ -40,8 +40,9 @@ use ooxml_store::{Command, Txn};
 use ooxml_word_model::docx::provenance::{
     self as records, entry_text, facts, kind_of, target_in_file, text_paragraph, Kind, TextEntry,
 };
-use ooxml_word_model::docx::text::{paragraph_text, View};
+use ooxml_word_model::docx::text::paragraph_text;
 use ooxml_word_model::docx::Docx;
+use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use std::collections::{BTreeMap, HashSet};
 
@@ -189,7 +190,7 @@ fn fate(versions: &Versions<'_>, entry: &Element) -> Fate {
 fn followed(versions: &Versions<'_>, key: &str, text: &str) -> Option<Fate> {
     let found = TextEntry::read(text)?;
     let (paragraph, name) = text_paragraph(versions.now, versions.aliases, key)?;
-    let now = paragraph_text(&paragraph, View::Current);
+    let now = paragraph_text(&paragraph, View::Final);
     if now == found.paragraph && name == key {
         return None;
     }

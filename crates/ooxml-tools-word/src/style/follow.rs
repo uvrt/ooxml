@@ -135,11 +135,12 @@ fn textless(docx: &Docx, difference: &Value) -> Option<Value> {
 
 /// Whether the paragraph `id` has text other than white space.
 fn has_text(docx: &Docx, id: &str) -> bool {
-    use ooxml_word_model::docx::text::{paragraph_text, View};
+    use ooxml_word_model::docx::text::paragraph_text;
     use ooxml_word_model::ids::Entry;
+    use ooxml_word_model::view::View;
     match ooxml_word_model::address::resolve(docx, id) {
         Ok((story, Entry::Paragraph(k))) => story.ids.paragraphs().get(k).is_some_and(|p| {
-            !paragraph_text(&p.element, View::Current)
+            !paragraph_text(&p.element, View::Final)
                 .trim_matches(crate::describe::py_space)
                 .is_empty()
         }),
