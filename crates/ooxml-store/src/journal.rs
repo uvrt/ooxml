@@ -146,6 +146,15 @@ impl<D: DocModel> Journal<D> {
         Some(self.entries.iter().skip(since))
     }
 
+    /// The versions published since `base`, in order; `None` when the versions right after
+    /// `base` are no longer kept.
+    pub(crate) fn seqs_since(&self, base: Seq) -> Option<Vec<Seq>> {
+        if !self.entries.iter().any(|entry| entry.0 > base) {
+            return Some(Vec::new());
+        }
+        Some(self.since_entries(base)?.map(|entry| entry.0).collect())
+    }
+
     /// `changes`, made on version `base`, moved past every change set published since, in
     /// order; `None` when one of them is no longer kept or a change cannot be moved past one
     /// of theirs. Asked only when something was published since `base`.
