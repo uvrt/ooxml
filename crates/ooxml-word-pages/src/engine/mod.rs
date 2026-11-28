@@ -46,6 +46,7 @@ use crate::version::{LaidVersion, PageView};
 use ooxml_base::{Cancel, DigestKey, Limits, Locale};
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_opc::Package;
+use ooxml_word_layout::paint::feed::{feed_page, FeedPage};
 use ooxml_word_layout::paint::names::PageNames;
 use ooxml_word_layout::paint::svg::{page_svg, Drawings, Pictures, SvgContext};
 use ooxml_word_layout::paint::{paint_page, GlyphSize, PagePaint, PaintContext};
@@ -872,6 +873,26 @@ impl PageEngine {
     /// drawn as docx2svg draws it (empty where nothing): the page's own reasons.
     pub fn page_svg(&mut self, version: &LaidVersion, page: usize) -> Option<(String, Vec<String>)> {
         let paint = self.paint(version, page)?;
+        self.written(version, &paint, page_svg)
+    }
+
+    /// Page `page` of `version` as the changes feed writes it
+    /// ([`ooxml_word_layout::paint::feed`]): its groups by their blocks' ids, each in its own
+    /// coordinates, with no paths. Painted to be read once (not kept painted: the feed keeps
+    /// what it wrote). Beside it, what is not drawn as docx2svg draws it, as
+    /// [`PageEngine::page_svg`] says.
+    pub fn feed_page(&mut self, version: &LaidVersion, page: usize) -> Option<(FeedPage, Vec<String>)> {
+        let paint = self.painted_page(version, page, false)?;
+        self.written(version, &paint, feed_page)
+    }
+
+    /// `paint` of `version` written by `write`, with what is not drawn as docx2svg draws it.
+    fn written<T>(
+        &self,
+        version: &LaidVersion,
+        paint: &PagePaint,
+        write: impl FnOnce(&PagePaint, &SvgContext<'_>) -> T,
+    ) -> Option<(T, Vec<String>)> {
         let mut missing: Vec<String> = paint.unpainted.iter().map(|_| support::UNPAINTED.to_owned()).collect();
         let none = ooxml_word_layout::paint::svg::NoPictures;
         let no_drawings = ooxml_word_layout::paint::svg::NoDrawings;
@@ -894,7 +915,7 @@ impl PageEngine {
             glyph_size: self.glyph_size,
             version: &version.layout.document.names,
         };
-        Some((page_svg(&paint, &cx), missing))
+        Some((write(paint, &cx), missing))
     }
 }
 

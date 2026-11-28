@@ -149,6 +149,7 @@ impl WordDrawings {
         let measurer = ooxml_render::table_measurer(&ooxml_render::WORD);
         let mut painter = Painter::new(ooxml_render::WORD, &measurer);
         painter.dpi = shapes::DPI;
+        painter.scope_ids(defs.scope());
         painter.resume_ids(defs.ids);
         let part = slot.story.as_ref().map(|(_, p)| p.to_string());
         let frames = PartFrames {
@@ -216,7 +217,7 @@ impl WordDrawings {
             pictures: &self.pictures,
             part: part.as_deref(),
         };
-        let (lines, pictures) = write::lines(&primitives, &source);
+        let (lines, pictures) = write::lines(&primitives, &source, defs);
         Painted {
             lines,
             warnings: messages(&said, &paths.path),

@@ -269,6 +269,8 @@ pub struct Word {
     pub(crate) pages: crate::pages::DocPages,
     /// The versions its live views were given, kept within the session's memory budget.
     pub(crate) views: crate::live_view::LiveViews,
+    /// Its changes feed, within the session's memory budget.
+    pub(crate) feed: crate::feed::Feed,
     /// What the session lays it out with by default ([`WordFormat::pages`]).
     pub(crate) default_pages: Option<crate::SessionPages>,
     /// The application's minimum text size for its checks ([`WordFormat::min_text_size`]).
@@ -401,6 +403,7 @@ impl Word {
             made_by: MadeBy::default(),
             pages: crate::pages::DocPages::default(),
             views: crate::live_view::LiveViews::new(Arc::clone(&context.budget)),
+            feed: crate::feed::Feed::new(Arc::clone(&context.budget)),
             default_pages: format.pages.clone(),
             min_text_size: format.min_text_size.clone(),
             as_given: format.as_given,

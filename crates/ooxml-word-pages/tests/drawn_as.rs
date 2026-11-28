@@ -3,9 +3,9 @@
 //! table rows inserted and deleted, a paragraph's text changed -- every page of a version the
 //! engine laid out again from the one before that keeps a page's drawing identity
 //! (`LaidPage::drawn_as`: a page copied after a join, moved only in its flow's places) is
-//! painted exactly as a fresh engine's layout of the version paints that page, and its
-//! summary (path-free: lines by their blocks' ids), taken as digested before, is the fresh
-//! layout's.
+//! painted exactly as a fresh engine's layout of the version paints that page, its summary
+//! (path-free: lines by their blocks' ids), taken as digested before, is the fresh layout's,
+//! and the changes feed writes it (no paths) as it wrote the page it kept the identity of.
 //! Fixed seeds here; `many_seeds` (ignored) runs more.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
@@ -244,6 +244,12 @@ fn run_seed(seed: u64, steps: usize) -> usize {
     let mut lazy = engine();
     let mut before = lazy.lay_out_bytes(doc.package()).unwrap().unwrap();
     let mut old = lazy.summary(&before).unwrap();
+    let feed = |engine: &mut PageEngine, v: &ooxml_word_pages::LaidVersion| -> Vec<String> {
+        (0..v.page_count())
+            .map(|k| engine.feed_page(v, k).unwrap().0.svg())
+            .collect()
+    };
+    let mut old_feed = feed(&mut lazy, &before);
     let mut kept = 0;
     for step in 0..steps {
         while !doc.edit(&mut rng) {}
@@ -272,7 +278,12 @@ fn run_seed(seed: u64, steps: usize) -> usize {
             assert_eq!(old.pages[j], from_scratch.pages[k], "{at}");
             let painted = lazy.paint(&version, k).unwrap();
             assert_eq!(*painted, *fresh.paint(&alone, k).unwrap(), "{at}");
+            // as the changes feed writes it (no paths): as the page it kept the identity of
+            let written = lazy.feed_page(&version, k).unwrap().0.svg();
+            assert_eq!(written, fresh.feed_page(&alone, k).unwrap().0.svg(), "{at}");
+            assert_eq!(old_feed[j], written, "{at}");
         }
+        old_feed = feed(&mut lazy, &version);
         before = version;
         old = summary;
     }

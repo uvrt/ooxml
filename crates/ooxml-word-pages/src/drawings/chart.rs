@@ -448,6 +448,7 @@ pub fn render(element: &Drawable, at: &PxBox, path: &str, painter: &mut Painter<
     let measurer = WordMeasurer(TableMeasurer { kerning: rules.kerning });
     let mut chart = Painter::new(rules, &measurer);
     chart.font_mapping = FontMapping::new(Vec::new());
+    chart.scope_ids(painter.id_scope());
     chart.resume_ids(painter.ids());
     let markup = render_element(element, &mut chart).to_svg();
     painter.resume_ids(chart.ids());

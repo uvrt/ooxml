@@ -39,6 +39,7 @@ pub fn paint(
     let measurer = ooxml_render::table_measurer(&ooxml_render::WORD);
     let mut painter = Painter::new(ooxml_render::WORD, &measurer);
     painter.dpi = super::shapes::DPI;
+    painter.scope_ids(defs.scope());
     painter.resume_ids(defs.ids);
     let mut out = match &fill {
         None => format!("fill=\"#{}\"", colour.unwrap_or("000000").to_ascii_uppercase()),

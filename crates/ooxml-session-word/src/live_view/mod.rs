@@ -415,7 +415,7 @@ fn spared(
 }
 
 /// `version`'s reading (the document's one chain), as a tool says it could not be read.
-fn read(version: &WordDoc) -> Result<Arc<ooxml_word_model::docx::Docx>, ToolError> {
+pub(crate) fn read(version: &WordDoc) -> Result<Arc<ooxml_word_model::docx::Docx>, ToolError> {
     version
         .docx()
         .map_err(|e| ToolError::internal(format!("the document could not be read: {e}"), "live_view:read"))
