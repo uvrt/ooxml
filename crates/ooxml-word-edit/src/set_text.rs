@@ -186,7 +186,6 @@ pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) 
             created: Vec::new(),
         });
     }
-    let found_written = sink.doc().id_written(&found.part, &found.path);
     let id = found.id.clone();
     let tree = sink
         .doc()
@@ -197,21 +196,22 @@ pub(crate) fn write_text(sink: &mut EditSink<'_, '_>, target: &str, text: &str) 
     sink.load_written(&found.part, Some(&found.path), &mut work);
     let wrote = sink.set_paragraph_text(&mut work, text)?;
     // a paragraph stamped before gets a new text id, drawn where the change is applied; an
-    // id given at open and not written counts as fresh (WordDoc::id_written)
-    // (kept where the commit's version has the part's ids still unwritten: DrawFrom::Renewed)
-    let written = found.state == IdState::Ok;
+    // id given at open and not written counts as fresh and is kept. Both decided where the
+    // change is applied (DrawFrom::Renewed, WordDoc::para_id_written), never on the version
+    // prepared on: a part written there may be unwritten where the commit lands (an undo
+    // of its first write committed meanwhile), and nothing this edit reads would see it.
+    let para_id = (found.state == IdState::Ok)
+        .then(|| found.element.attribute(Some(W14), "paraId"))
+        .flatten();
+    let written = para_id.is_some();
     let mut draws = Vec::new();
-    if written {
+    if let Some(para_id) = para_id {
         let prefix = w14_prefix(tree.root(), &found.path);
-        let seed = Arc::from(format!("{}\0text", found.part));
         draws.push(Draw {
-            from: if found_written {
-                DrawFrom::Seed(seed)
-            } else {
-                DrawFrom::Renewed {
-                    seed,
-                    part: Arc::from(found.part.as_str()),
-                }
+            from: DrawFrom::Renewed {
+                seed: Arc::from(format!("{}\0text", found.part)),
+                part: Arc::from(found.part.as_str()),
+                para_id: Arc::from(para_id),
             },
             node: 0,
             at: Vec::new(),
