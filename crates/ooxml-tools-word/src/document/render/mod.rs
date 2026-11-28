@@ -190,11 +190,17 @@ impl Drawer<'_> {
 
     /// The height over the width of the shortest page the version's sections declare
     /// (`w:pgSz`, read without laying out: docx-agent's `_shortest_ratio`), or `None` where
-    /// a section declares no size or a side of 0.
+    /// a section declares no size or a side of 0. `None` for a strict document: the tools'
+    /// sections miss its paragraphs' breaks (its paragraphs are not in the index), so a
+    /// shorter page there could be missed and the sheet refused wrongly; its laid pages are
+    /// fitted instead.
     ///
     /// # Errors
     /// `internal` where the version cannot be read.
     fn shortest_declared(&self) -> Result<Option<f64>, ToolError> {
+        if self.laying.owned.doc.strict() {
+            return Ok(None);
+        }
         let docx = self
             .laying
             .owned
