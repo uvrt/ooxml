@@ -31,9 +31,10 @@ impl Reader<'_> {
         }
         let bookmarks = std::mem::replace(&mut fields.bookmarks, outer).unwrap_or_default();
         let ppr = child(element, "pPr");
-        let section = ppr
-            .and_then(|p| child(p, "sectPr"))
-            .map(|s| Arc::new(super::section_props(s)));
+        let section = w::P::new(element)
+            .properties()
+            .and_then(w::PPr::section)
+            .map(|s| Arc::new(crate::docx::sections::section_props(s.element())));
         Paragraph {
             runs: Arc::from(runs),
             properties: self.para_props(ppr),
