@@ -303,6 +303,17 @@ pub trait FormatDoc: Send + Sync + 'static {
         None
     }
 
+    /// What changed in it after `ask`'s `since` (the changes feed, phase 3 changes-feed
+    /// design): `None` where its format keeps no feed (by default: pptx and xlsx until
+    /// Phase 4).
+    ///
+    /// # Errors
+    /// The format's refusal or failure (a version it does not lay out, past the limit).
+    fn changes(&self, ask: &crate::FeedAsk<'_>) -> Option<Result<crate::FeedAnswer, ToolError>> {
+        let _ = ask;
+        None
+    }
+
     /// Its bytes at the version `at`, untouched entries copied raw; `checked`: the save gate
     /// first, the save refused where the format finds problems the document did not open
     /// with ([`SessionError::NewProblems`]).

@@ -86,6 +86,11 @@ impl<'m> Painter<'m> {
         self.next_id = 0;
     }
 
+    /// The scope ids are minted in ([`Painter::scope_ids`]; empty: none).
+    pub fn id_scope(&self) -> &str {
+        &self.id_scope
+    }
+
     /// Declare a resource.
     pub fn add_def(&mut self, def: Element) {
         self.defs.push(def);

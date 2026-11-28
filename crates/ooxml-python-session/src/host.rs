@@ -542,6 +542,28 @@ impl PyHostSession {
         crate::view::page_svg(py, &self.inner, (doc, page, token), text)
     }
 
+    /// What changed in the document `doc` after `since` (a token an answer gave; `None`:
+    /// everything), with its pages where `pages` (`False` never lays out): the changes feed's
+    /// answer as JSON text (`version`, `state`, `session`, `token`, `since`, `full`,
+    /// `behind`, `parts`, `blocks`, `pages`), and the pictures new since `since` as `(hash,
+    /// mime, bytes)`. Made with the interpreter lock released: readable from another thread
+    /// while agents edit.
+    ///
+    /// # Errors
+    /// `KeyError` for a document not open; `ViewRefused` for a refusal (`not_supported` for a
+    /// format with no feed, a version not laid out yet); `TimeoutError` past the host's limit.
+    #[pyo3(signature = (doc, since = None, *, pages = true))]
+    fn changes(
+        &self,
+        py: Python<'_>,
+        doc: &str,
+        since: Option<&str>,
+        pages: bool,
+    ) -> PyResult<(String, Vec<crate::view::PictureRow>)> {
+        self.doc(doc)?;
+        crate::view::changes(py, &self.inner, (doc, since), pages)
+    }
+
     /// Close `doc`: the addresses of its datasets, which stay, frozen.
     ///
     /// # Errors

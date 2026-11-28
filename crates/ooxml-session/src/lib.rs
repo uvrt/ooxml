@@ -36,6 +36,7 @@ mod document;
 pub mod elsewhere;
 mod error;
 pub mod facts;
+mod feed;
 mod format;
 mod history;
 mod ids;
@@ -62,6 +63,7 @@ pub use context::{revision_date, CallCancel, CallContext, CancelToken, FormatHos
 pub use dispatch::{CallMade, InBatch};
 pub use document::{package_has_part, PackageFormat};
 pub use error::SessionError;
+pub use feed::{FeedAnswer, FeedAsk, FeedBytes, FeedError};
 pub use format::{
     no_source, AnyVersion, BatchHold, Deferred, Finished, Format, FormatDoc, FormatRun, Holding, LockSpent,
     NewDocument, OpenEnv, ReadTexts, ReadValues, ValueRead, WithState,
