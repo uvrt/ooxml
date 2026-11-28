@@ -14,10 +14,10 @@ use ooxml_base::Cancel;
 use ooxml_tools::ToolError;
 use ooxml_word_model::docx::cells::{model_path, TableFacts};
 use ooxml_word_model::docx::formatting::Cell;
+use ooxml_word_model::docx::tables::cell_conditions;
 use ooxml_word_model::docx::StoryPart;
 use ooxml_word_model::ids::W;
 use ooxml_word_model::model::{Block, Look, Table};
-use ooxml_word_model::read::cell_conditions;
 use ooxml_word_model::resolve::{
     banded, border_key, resolve_table_traced, second_wins, Origins, ResolvedTable, TableOrigins,
 };

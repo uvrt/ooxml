@@ -3,8 +3,8 @@
 //! leaves the values as the untraced resolution gives them.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use ooxml_word_model::docx::tables::cell_conditions;
 use ooxml_word_model::model::{Look, Table};
-use ooxml_word_model::read::cell_conditions;
 use ooxml_word_model::resolve::{
     resolve_paragraph, resolve_paragraph_traced, resolve_run, resolve_run_traced, resolve_table, resolve_table_traced,
     Holder, Level, Origins, ParagraphInput, RunInput, Sources,

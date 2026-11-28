@@ -5,15 +5,17 @@
 //! tracked changes keeps, and the columns (`accepted_columns`, the grid Word's Accept All
 //! rebuilds, [`crate::view::ViewGrid`]: a deleted cell merged into the cell beside it or gone
 //! with the cells after it moved left, columns between the cells' edges, the grid spanning
-//! to the widest row); a cell's text; a cell found by labels (`labels`).
+//! to the widest row); a cell's text; a cell found by labels (`labels`); and a table as the
+//! layout's model holds it in a view (`view_table`).
 //!
 //! Must not: change a table or resolve its formatting.
 
 use crate::docx::text::paragraph_text;
 
 use crate::docx::{at_path, StoryPart};
-use crate::ids::{TableId, W};
+use crate::ids::TableId;
 use crate::view::View;
+use crate::xmlread::Ns;
 use ooxml_xml::Element;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +27,7 @@ mod grid_reference_tests;
 mod labels;
 mod merge_heads;
 mod places;
+mod view_table;
 pub use accepted::{Accepted, Axis, ColumnRuns, Misplaced, MOVED_COLUMN};
 pub use grid::{
     grid_columns, grid_count, grid_span, grid_value, grid_widths, past_widest, placed_row_cells, row_cells,
@@ -34,6 +37,8 @@ pub use grid::{
 pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{merge_heads, VMerge};
 pub use places::{GridPlaces, PlaceRun, Spot};
+pub use view_table::{cell_conditions, leading_header_rows};
+pub(crate) use view_table::{table_blocks, CellReader};
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);
@@ -196,9 +201,9 @@ pub fn own_rows(table: &Element) -> Vec<(Arc<Element>, Vec<u32>)> {
         for (k, node) in element.children().iter().enumerate() {
             let Some(child) = node.as_element() else { continue };
             let place = [at, &[u32::try_from(k).unwrap_or(u32::MAX)]].concat();
-            if child.name().is(Some(W), "tr") {
+            if Ns::W.named(child, "tr") {
                 out.push((Arc::clone(child), place));
-            } else if !child.name().is(Some(W), "tbl") {
+            } else if !Ns::W.named(child, "tbl") {
                 walk(child, &place, out);
             }
         }

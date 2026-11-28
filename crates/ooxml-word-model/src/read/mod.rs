@@ -1,6 +1,7 @@
 //! Owns: reading a part's stories into the source model ([`Reader`]) as docx2svg's parser
 //! (`docx2svg.parse.document`) reads them -- runs and their marks, fields threaded through
-//! the part, bookmarks, tables, drawings' anchors, the section a paragraph ends (its
+//! the part, bookmarks, tables (their structure in the view is `crate::docx::tables`'s),
+//! drawings' anchors, the section a paragraph ends (its
 //! `w:sectPr` read by `crate::docx::sections`) -- in a view of tracked changes ([`View`];
 //! the layout reads the final view: what Accept All leaves, the repository's rule for the
 //! render).
@@ -14,12 +15,11 @@ mod join;
 mod paragraph;
 pub mod paths;
 mod runs;
-mod tables;
 pub mod vml;
 
 pub use blocks::{body_story, BodyElement};
 pub use fields::Fields;
-pub use tables::{cell_conditions, leading_header_rows};
+pub(crate) use join::joined;
 
 use crate::ids::BlockKey;
 use crate::model::{ParaProps, RunProps};

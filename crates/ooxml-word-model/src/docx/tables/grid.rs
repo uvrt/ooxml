@@ -31,7 +31,6 @@
 //! adapters), or decide what a view of the table keeps.
 
 use super::merge_heads::VMerge;
-use crate::ids::W;
 use ooxml_xml::Element;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -226,10 +225,10 @@ impl<'a> GridSource for Elements<'a> {
             .collect()
     }
     fn is_w(&self, node: &'a Element, local: &str) -> bool {
-        node.name().is(Some(W), local)
+        crate::xmlread::Ns::W.named(node, local)
     }
     fn w_val(&self, node: &'a Element) -> Option<&str> {
-        node.attribute(Some(W), "val")
+        crate::xmlread::attr_in(node, Some(crate::xmlread::Ns::W), "val")
     }
 }
 
@@ -474,23 +473,16 @@ impl Origins {
 /// The widths of `table`'s `w:tblGrid` columns, twips (0 for one with no valid width).
 #[must_use]
 pub fn grid_widths(table: &Element) -> Vec<i64> {
-    table
-        .find(Some(W), "tblGrid")
-        .map(|g| {
-            crate::w::TblGrid::new(g)
-                .columns()
-                .map(|c| c.w().unwrap_or(0))
-                .collect()
-        })
+    crate::w::Tbl::new(table)
+        .grid()
+        .map(|g| g.columns().map(|c| c.w().unwrap_or(0)).collect())
         .unwrap_or_default()
 }
 
 /// The number of `w:gridCol` in `table`'s `w:tblGrid`.
 #[must_use]
 pub fn grid_columns(table: &Element) -> usize {
-    table.find(Some(W), "tblGrid").map_or(0, |g| {
-        g.child_elements().filter(|c| c.name().is(Some(W), "gridCol")).count()
-    })
+    crate::w::Tbl::new(table).grid().map_or(0, |g| g.columns().count())
 }
 
 #[cfg(test)]
