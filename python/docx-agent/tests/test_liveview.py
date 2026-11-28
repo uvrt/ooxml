@@ -5,7 +5,11 @@ What each test holds: ``view`` lists every page with its blocks and the pages wh
 changed since a token; ``page_svg`` draws one page of the token's version, tagged with its
 ids (the footer's from its part), pictures by name or embedded, even after the document
 moved on; tokens of another session or none are stale or unknown; the refusals give the way
-out; and views read while another thread edits.  Made-up documents only."""
+out; and views read while another thread edits.  The changes feed (lane CF1b): a client that
+starts empty and applies each answer over random edits and undos rebuilds every page byte for
+byte; one letter sends one group; pictures by content address, their bytes once; a stale
+``since`` gets everything; parts without pages; readers during six writers.  Made-up
+documents only."""
 
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ import pytest
 
 import re
 
-from docx_agent.liveview import UnknownToken, embed_images, page_svg, view
+from docx_agent.liveview import FeedClient, UnknownToken, changes, embed_images, embed_pictures, page_svg, view
 
 from ooxml_edit.tools import ToolError
 
@@ -254,3 +258,147 @@ def test_views_are_read_while_another_thread_edits(opened):
     last = view(session, d1)
     page = next(p.number for p in last.pages if body[3] in p.blocks)
     assert "Round 3." in page_svg(session, d1, page, last.token).svg
+
+
+# -- the changes feed --------------------------------------------------------------------------
+
+
+def _fresh(session, doc) -> FeedClient:
+    """A client given everything now: what each page is."""
+    client = FeedClient()
+    client.apply(changes(session, doc))
+    return client
+
+
+def _same_pages(client: FeedClient, session, doc, at: str) -> None:
+    fresh = _fresh(session, doc)
+    assert client.page_count == fresh.page_count, at
+    for page in range(1, fresh.page_count + 1):
+        assert client.svg(page) == fresh.svg(page), f"page {page}, {at}"
+
+
+def test_a_client_that_applies_the_feed_rebuilds_every_page(opened):
+    """From empty, over random edits (text set, paragraphs inserted and deleted) and undos:
+    after each answer every page is the session's own writing of it, byte for byte."""
+    import random
+
+    box, session, d1 = opened
+    client = FeedClient()
+    first = client.update(session, d1)
+    assert first["full"] and client.page_count == len(first["pages"]["list"])
+    _same_pages(client, session, d1, "first")
+    rng = random.Random(7)
+    for step in range(8):
+        body = _paragraphs(view(session, d1))[1:]
+        target = rng.choice(body)
+        kind = step % 4
+        if kind == 0:
+            _set_text(box, session, d1, target, _text(step, 1 + rng.randrange(6)))
+        elif kind == 1:
+            result = box.dispatch(session, "word_insert_markdown",
+                                  {"doc": d1, "at": f"before:{target}", "markdown": _text(step + 50, 3)})
+            assert result.ok, result.error and result.error.to_json()
+        elif kind == 2:
+            result = box.dispatch(session, "word_delete", {"doc": d1, "target": target, "force": True})
+            assert result.ok, result.error and result.error.to_json()
+        else:
+            assert box.dispatch(session, "undo", {"doc": d1}).ok
+        answer = client.update(session, d1)
+        assert not answer["full"], step
+        _same_pages(client, session, d1, f"step {step}")
+
+
+def test_one_letter_sends_one_group(opened):
+    box, session, d1 = opened
+    client = FeedClient()
+    client.update(session, d1)
+    import word_docs
+
+    target, text = next((b, t) for b, t in word_docs.paragraphs(session, d1) if len(t) > 40)
+    at = next(k for k, c in enumerate(text) if c.islower())
+    _set_text(box, session, d1, target, text[:at] + ("a" if text[at] == "e" else "e") + text[at + 1:])
+    answer = client.update(session, d1)
+    [page] = answer["pages"]["changed"]
+    assert list(page["groups"]) == [target] and not page["moved"] and not page["removed"]
+    assert "list" not in answer["pages"] and answer["blocks"]["changed"] == [target]
+    assert answer["parts"] == ["word/document.xml"] and answer["pictures"] == {}
+
+
+def test_pictures_go_by_address_their_bytes_once(opened):
+    box, session, d1 = opened
+    client = FeedClient()
+    first = client.update(session, d1)
+    [(address, (mime, data))] = first["pictures"].items()
+    assert len(address) == 32 and mime == "image/png" and data.startswith(b"\x89PNG")
+    assert f'href="picture:{address}"' in client.svg(1) and "base64," not in client.svg(1)
+    assert "data:image/png;base64," in client.svg(1, embed=True)
+    with pytest.raises(KeyError):
+        embed_pictures(client.svg(1), {})
+    _set_text(box, session, d1, _paragraphs(view(session, d1))[1], "The picture stays.")
+    assert client.update(session, d1)["pictures"] == {}
+
+
+def test_a_stale_since_gets_everything_and_parts_need_no_pages(opened):
+    box, session, d1 = opened
+    first = changes(session, d1)
+    count = len(first["pages"]["list"])
+    for stale in ("0000000000000000-1", f"{first['session']}-{first['version'] + 9}", "nonsense"):
+        again = changes(session, d1, since=stale)
+        assert again["full"] and len(again["pages"]["changed"]) == count, stale
+    assert changes(session, d1, since=first["token"])["pages"]["changed"] == []
+    _set_text(box, session, d1, _paragraphs(view(session, d1))[2], "Parts only.")
+    parts = changes(session, d1, since=first["token"], pages=False)
+    assert "pages" not in parts and parts["parts"] == ["word/document.xml"] and not parts["full"]
+    from ooxml_edit.chunks import file_changes
+
+    found = file_changes(session, d1, since=first["token"])
+    assert found.parts == ("word/document.xml",) and found.token == parts["token"] and not found.full
+
+
+def test_feed_readers_during_six_writers_each_read_one_version(opened):
+    """Six writers and two feed readers at once (on 3.15t too: the call lets the interpreter
+    lock go): each answer's version never goes back, one ``behind`` is past it, and once the
+    writers are done every reader's pages are the session's."""
+    box, session, d1 = opened
+    body = _paragraphs(view(session, d1))[1:]
+    errors: list = []
+    done = threading.Event()
+
+    def writer(w: int):
+        def write():
+            for k in range(3):
+                _set_text(box, session, d1, body[(w * 3) % len(body)], f"Writer {w}, round {k}.")
+        return write
+
+    readers = [FeedClient() for _ in range(2)]
+
+    def reader(client: FeedClient):
+        def read():
+            last = -1
+            while not done.is_set():
+                answer = client.update(session, d1)
+                assert answer["version"] >= last, "an answer of an earlier version"
+                assert answer.get("behind", answer["version"] + 1) > answer["version"]
+                last = answer["version"]
+        return read
+
+    def run(job):
+        try:
+            job()
+        except BaseException as error:  # noqa: BLE001 -- reported below
+            errors.append(error)
+
+    writers = [threading.Thread(target=run, args=(writer(w),), daemon=True) for w in range(6)]
+    reading = [threading.Thread(target=run, args=(reader(c),), daemon=True) for c in readers]
+    for thread in writers + reading:
+        thread.start()
+    for thread in writers:
+        thread.join(DEADLINE)
+    done.set()
+    for thread in reading:
+        thread.join(DEADLINE)
+    assert not any(t.is_alive() for t in writers + reading), "deadlock"
+    assert not errors, errors
+    for client in readers:
+        client.update(session, d1)
+        _same_pages(client, session, d1, "after the writers")

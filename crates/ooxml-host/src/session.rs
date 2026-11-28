@@ -18,9 +18,11 @@ use ooxml_session::blobs::{BlobLimits, BlobStore, LimitError};
 use ooxml_session::datasets::{DatasetLimits, DatasetStore};
 use ooxml_session::numbers::NumberRules;
 use ooxml_session::outputs::{ImageBudgets, OutputStore};
-use ooxml_session::{DocId, DocKind, Format, RefTable, Registry, Session, SessionConfig, SessionError};
+use ooxml_session::{
+    DocId, DocKind, FeedAnswer, FeedError, Format, RefTable, Registry, Session, SessionConfig, SessionError,
+};
 use ooxml_tools::roles::{HostFacts, RoleSet};
-use ooxml_tools::Limits;
+use ooxml_tools::{Failure, Limits, ToolError, WayOut};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -304,6 +306,32 @@ impl HostSession {
             ..crate::Opening::default()
         };
         self.open_with(bytes, name, &how)
+    }
+
+    /// What changed in the document `doc` after `since` (the changes feed, phase 3
+    /// changes-feed design section 2: `since` a token an answer gave, `<session nonce>-<seq>`;
+    /// `None`: everything), with its pages where `pages` (`false` never lays out): the
+    /// changes in their wire shape, the pictures new since `since` beside them.
+    ///
+    /// # Errors
+    /// A failure naming the document where none `doc` is open; `not_supported` naming the
+    /// format where it keeps no feed (pptx and xlsx until Phase 4); the format's refusal (a
+    /// version it does not lay out yet) or failure (`timeout` past the limit on laying out).
+    pub fn changes(&self, doc: &str, since: Option<&str>, pages: bool) -> Result<FeedAnswer, ToolError> {
+        let id = DocId::parse(doc)
+            .ok_or_else(|| ToolError::failure(Failure::Internal, format!("no open document {doc}")).at("doc"))?;
+        let context = self.application_context();
+        self.session
+            .feed(&id, since, pages, &context)
+            .map_err(|error| match error {
+                FeedError::Session(error) => error.to_tool_error().at("doc"),
+                FeedError::NoFeed(kind) => ToolError::not_supported(
+                    &format!("the changes feed of a {kind} document"),
+                    WayOut::one(Value::from("docx")),
+                )
+                .at("doc"),
+                FeedError::Format(error) => error,
+            })
     }
 
     /// Register an input and return its handle (`b1`).
