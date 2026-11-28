@@ -325,3 +325,46 @@ fn the_final_markdown_counts_spans_in_the_view_grid() {
     assert!(!markdown.contains("colspan"), "{markdown}");
     assert!(markdown.contains("| A | C |"), "{markdown}");
 }
+
+/// The original view of a cell with a pending properties change takes its old properties,
+/// clean, and the grid is rebuilt from them (user decision original-clean-grid-2026-11-28):
+/// a span the change made is gone; a vertical merge either side has stays.
+#[test]
+fn the_original_view_takes_a_changed_cells_old_properties() {
+    use ooxml_word_model::markdown::{to_markdown, Stories};
+    use ooxml_word_model::view::View;
+    let change = |old: &str| format!(r#"<w:tcPrChange w:id="4" {AUTHOR}><w:tcPr>{old}</w:tcPr></w:tcPrChange>"#);
+    let body = table(&[
+        row(
+            &[
+                cell(
+                    &text("A"),
+                    &format!(r#"<w:gridSpan w:val="2"/><w:vMerge w:val="restart"/>{}"#, change("")),
+                ),
+                plain("C"),
+            ],
+            "",
+        ),
+        row(
+            &[
+                cell(&text(""), &format!(r#"<w:vMerge/>{}"#, change(""))),
+                plain("E"),
+                plain("F"),
+            ],
+            "",
+        ),
+    ]);
+    let docx = Docx::open(
+        &package(&Parts {
+            body,
+            ..Parts::default()
+        }),
+        std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX)),
+    )
+    .unwrap();
+    let original = to_markdown(&docx, None, View::Original, Stories::Body).unwrap();
+    assert!(original.contains("rowspan=\"2\""), "{original}");
+    assert!(!original.contains("colspan"), "{original}");
+    let markup = to_markdown(&docx, None, View::Markup, Stories::Body).unwrap();
+    assert!(markup.contains("colspan=\"2\""), "{markup}");
+}

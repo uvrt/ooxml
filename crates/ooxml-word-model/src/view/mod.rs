@@ -9,8 +9,9 @@
 //! - a row's record (`w:trPr`), a cell's (`w:cellDel`, `w:cellIns`) and a pending vertical
 //!   merge (`w:cellMerge`); a deleted cell whose content stays, and the cells whose end Accept
 //!   All takes away ([`cells`]);
-//! - a table's grid as Word rebuilds it from the cells the view leaves ([`ViewGrid`]), and a
-//!   vertical merge under a cell's properties change (`w:tcPrChange`, [`View::merge_element`]).
+//! - a cell's properties change (`w:tcPrChange`, [`View::cell_properties`],
+//!   [`View::merge_element`]) and a table's grid as Word rebuilds it from the cells the view
+//!   leaves ([`ViewGrid`]).
 //!
 //! Every reading asks here: the layout's reader (`read`), the tools' text, tables, facts and
 //! Markdown readings, and the change grouping. Names are WordprocessingML's in either

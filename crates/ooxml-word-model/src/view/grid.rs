@@ -11,8 +11,10 @@
 //!   (`UncoveredColumn`); but a row reaching past the widest a table is fitted to
 //!   ([`past_widest`]: 63 columns) widens nothing, Word re-griding it a way of its own, so the
 //!   grid then stays `w:tblGrid` and a span past it counts its columns as written;
-//! - a vertical merge either side of a pending properties change (`w:tcPrChange`) has stays,
-//!   in the final view ([`View::merge_element`]).
+//! - each cell spans as its own side of a pending properties change (`w:tcPrChange`) has it,
+//!   the original view's the old properties clean ([`View::cell_properties`], user decision
+//!   original-clean-grid-2026-11-28), and a vertical merge either side has stays
+//!   ([`View::merge_element`]).
 //!
 //! Positions here are the table's source grid columns (`w:tblGrid`), which ids and the
 //! document's grid keep; a [`ViewGrid`] says which of them make each column of the view.
@@ -275,31 +277,48 @@ impl ViewGrid {
 }
 
 impl View {
-    /// A cell's `w:gridSpan` (at least 1). The original view reads it as written too: Word's
-    /// Reject All of a pending properties change (`w:tcPrChange`) restores the changed cell's
-    /// old properties but takes the other cells' widths in its row away (Word 16.106, lane
-    /// fix-final-grid: the screen's Original view draws them 18 pt wide), which no view
-    /// here follows yet.
+    /// The cell properties (`w:tcPr`) this view shows: in the original view the `w:tcPr` a
+    /// `w:tcPrChange` holds -- the old properties, clean (user decision
+    /// original-clean-grid-2026-11-28: Word's Reject All and its Review > Original also take
+    /// the widths of the row's other cells away, drawing them 18 pt wide, which no view here
+    /// follows); otherwise `properties` itself.
+    #[must_use]
+    pub fn cell_properties(self, properties: &Element) -> &Element {
+        if self == View::Original {
+            if let Some(old) = child_in(properties, Ns::W, "tcPrChange").and_then(|c| child_in(c, Ns::W, "tcPr")) {
+                return old;
+            }
+        }
+        properties
+    }
+
+    /// A cell's `w:gridSpan` in this view (at least 1), from [`View::cell_properties`].
     #[must_use]
     pub fn span(self, cell: &Element) -> usize {
         let raw = child_in(cell, Ns::W, "tcPr")
+            .map(|p| self.cell_properties(p))
             .and_then(|p| child_in(p, Ns::W, "gridSpan"))
             .and_then(|g| attr_in(g, Some(Ns::W), "val"));
         grid_span(raw)
     }
 
-    /// A cell's `w:vMerge` in this view: its own; in the final view, where it has none, that
-    /// of the properties a pending change (`w:tcPrChange`) recorded -- Word's Accept All keeps
-    /// a vertical merge either side has (Word 16.106, lane fix-final-grid, `VMergeBack`).
+    /// A cell's `w:vMerge` in this view: its own side's of a pending properties change
+    /// ([`View::cell_properties`]), else the other side's -- Word keeps a vertical merge
+    /// either side has (Accept All of a change that ends a merge keeps it, Reject All of one
+    /// that makes it keeps it; Word 16.106, lane fix-final-grid, `VMerge`, `VMergeBack`).
     #[must_use]
     pub fn merge_element(self, cell: &Element) -> Option<&Element> {
         let properties = child_in(cell, Ns::W, "tcPr")?;
-        child_in(properties, Ns::W, "vMerge").or_else(|| {
-            (self == View::Final)
-                .then(|| child_in(properties, Ns::W, "tcPrChange").and_then(|c| child_in(c, Ns::W, "tcPr")))
-                .flatten()
-                .and_then(|old| child_in(old, Ns::W, "vMerge"))
-        })
+        let old = child_in(properties, Ns::W, "tcPrChange").and_then(|c| child_in(c, Ns::W, "tcPr"));
+        let (own, other) = match self {
+            View::Final => (Some(properties), old),
+            View::Original => (old.or(Some(properties)), old.map(|_| properties)),
+            View::Markup => (Some(properties), None),
+        };
+        [own, other]
+            .into_iter()
+            .flatten()
+            .find_map(|p| child_in(p, Ns::W, "vMerge"))
     }
 }
 

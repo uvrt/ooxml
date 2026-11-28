@@ -7,3 +7,6 @@
     their columns (the outline's table `columns`), and a grid column past every row goes.
   - A vertical merge that only the recorded side of a pending cell properties change has
     stays merged in the final view, as it does in Word.
+  - The original view (`view: original`) gives a cell with a pending properties change its old
+    properties (span, width and vertical merge) and rebuilds the grid from them. Where Word's
+    Review > Original shows the row's unchanged cells as slivers, this view does not follow it.

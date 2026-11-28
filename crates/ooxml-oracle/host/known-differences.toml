@@ -20,7 +20,9 @@
 # "limits-in-details-2026-11-25" (round 60, R142: a limit refusal says its limit and what the
 # call gave in details), "view-follows-word-2026-11-28" (the final view follows Word's Accept All:
 # the user's standing rule that Word is the oracle, render final = Accept All, applied by main's
-# RD1c ruling) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
+# RD1c ruling), "original-clean-grid-2026-11-28" (the user's decision: the original view of a cell with
+# a pending tcPrChange shows its old properties, clean, with the grid rebuilt, where Word's Review >
+# Original draws the row's unchanged cells 18 pt wide) or "stamp-on-open-2026-11-26" (every block of a document has a durable id
 # from the first read: the streams' ids by place are re-targeted by
 # the re-target tool (lane ph3-st1, removed in ST2), and what the map cannot say -- the renames stamping
 # made, `volatile` -- is an entry) -- and its `cause`, citing the pull request that changed the answer.  An entry

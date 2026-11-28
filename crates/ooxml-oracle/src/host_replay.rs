@@ -82,14 +82,15 @@ pub struct Known {
     pub rule: Option<i64>,
     /// The user decision it is, where it is one (`structured-problems-2026-11-25`,
     /// `optimistic-batches-2026-11-25`, `limits-in-details-2026-11-25`,
-    /// `stamp-on-open-2026-11-26`, `view-follows-word-2026-11-28`).
+    /// `stamp-on-open-2026-11-26`, `view-follows-word-2026-11-28`,
+    /// `original-clean-grid-2026-11-28`).
     pub decision: Option<String>,
     /// Why.
     pub cause: String,
 }
 
 /// The user decisions an entry may give instead of a rule.
-pub const DECISIONS: [&str; 5] = [
+pub const DECISIONS: [&str; 6] = [
     "structured-problems-2026-11-25",
     "optimistic-batches-2026-11-25",
     "limits-in-details-2026-11-25",
@@ -97,6 +98,10 @@ pub const DECISIONS: [&str; 5] = [
     // the user's standing rule that Word is the oracle (render final = Accept All), applied by
     // main's RD1c ruling: the final view follows Word's Accept All (one View module)
     "view-follows-word-2026-11-28",
+    // the user's decision (2026-11-28, lane fix-final-grid): the original view of a cell with a
+    // pending w:tcPrChange shows its old properties, clean, with the grid rebuilt; Word's Review >
+    // Original draws the row's unchanged cells 18 pt wide, which it does not follow
+    "original-clean-grid-2026-11-28",
 ];
 
 /// The known differences in `text` (the TOML subset the file uses: `[[difference]]` tables

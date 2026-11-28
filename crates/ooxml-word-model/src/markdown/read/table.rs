@@ -182,10 +182,14 @@ impl Reader<'_> {
         let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
         let spec = RowSpec::of(&row.element);
         let mut column = spec.before;
+        // where each cell is in the view: its own side's span of a pending properties change
+        // (View::span); ids and addresses keep the document's grid (`column`)
+        let mut at = spec.before;
         let all = cells(row);
         for (n, tc) in all.iter().enumerate() {
             let span = spec.cells.get(n).map_or(1, |c| c.span);
-            let here = column..column + span;
+            let here = at..at.saturating_add(self.view.span(&tc.element));
+            at = here.end;
             if self.view.removes_cell(&tc.element) {
                 // one whose content is not deleted widens the cell before it, as Word's
                 // Accept All does (round 54, R110)
@@ -197,7 +201,7 @@ impl Reader<'_> {
                 }
             } else if let (true, Some(origin)) = (
                 self.continues(&tc.element) && !grid.heads.contains_key(&(r, n)),
-                grid.origins.get(&column).copied(),
+                grid.origins.get(&here.start).copied(),
             ) {
                 if let Some(cell) = grid.rows.get_mut(origin.0).and_then(|l| l.get_mut(origin.1)) {
                     cell.row_span += 1;
