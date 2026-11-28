@@ -13,8 +13,9 @@ use ooxml_store::{Batch, Command, Txn};
 use ooxml_store::{Caller, Seq, Snapshot};
 use ooxml_word_edit::find::Literal;
 use ooxml_word_edit::{
-    CellWrite, DeleteBlock, DeleteText, EditError, InsertMarkdown, InsertParagraph, InsertText, Keep, MarkdownOptions,
-    ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking, WordDoc, WriteMap,
+    CellWrite, DeleteBlock, DeleteText, EditError, Editor, InsertMarkdown, InsertParagraph, InsertText, Keep,
+    MarkdownOptions, ReplaceText, RevisionPolicy, SetCells, SetParagraphStyle, SetStyledText, SetText, Tracking,
+    WordDoc, WriteMap,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
@@ -291,26 +292,7 @@ fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, mix: Mix) ->
     std::thread::scope(|scope| {
         let foreign = {
             let (shared, targets) = (&shared, &targets);
-            scope.spawn(move || {
-                let mut rng = Rng(seed ^ 0x00C0_FFEE);
-                (0..mix.foreign)
-                    .filter_map(|_| {
-                        std::thread::yield_now();
-                        let base = shared.store().snapshot();
-                        let file = their_file(&base, &mut rng, targets);
-                        let arrived = shared.receive("Ada", base.seq(), opened_file(&file)).unwrap();
-                        let back = arrived.handed_back.iter().map(|h| (h.step.step, h.undo)).collect();
-                        arrived.previous.is_some().then(|| {
-                            let made = Made::Foreign {
-                                base: base.seq(),
-                                file,
-                                back,
-                            };
-                            (arrived.version.seq(), made, arrived.version)
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
+            scope.spawn(move || another_editor(shared, targets, seed, mix.foreign))
         };
         let handles: Vec<_> = (0..writers)
             .map(|w| {
@@ -348,14 +330,7 @@ fn run_with(name: &str, seed: u64, writers: u64, per_writer: usize, mix: Mix) ->
     records.sort_by_key(|r| r.0);
     replay_serially(&bytes, &records, seed);
     if mix.foreign > 0 {
-        let (versions, back) = records.iter().fold((0, 0), |(v, b), r| match &r.1 {
-            Made::Foreign { back, .. } => (v + 1, b + back.len()),
-            Made::Edit(_) => (v, b),
-        });
-        let refused = refused.load(Ordering::Relaxed);
-        println!(
-            "seed {seed}: another editor's {versions} versions, {back} steps handed back, {refused} edits refused"
-        );
+        report(seed, &records, refused.load(Ordering::Relaxed));
     }
     let stats = shared.store().stats();
     ((stats.conflicts, stats.exclusive), stats.rebased)
@@ -379,6 +354,38 @@ fn concurrent_batches_beside_writers_equal_their_serial_order() {
     }
     run_with("wordto/sample-with-table.docx", 43, 4, 4, BATCHES);
     assert!(rebased > 0, "batches beside writers should rebase");
+}
+
+/// Another editor's versions, `count` of them, each made from the head as it is and taken in:
+/// the commits they made.
+fn another_editor(shared: &Editor, targets: &[String], seed: u64, count: usize) -> Vec<(Seq, Made, Snapshot<WordDoc>)> {
+    let mut rng = Rng(seed ^ 0x00C0_FFEE);
+    (0..count)
+        .filter_map(|_| {
+            std::thread::yield_now();
+            let base = shared.store().snapshot();
+            let file = their_file(&base, &mut rng, targets);
+            let arrived = shared.receive("Ada", base.seq(), opened_file(&file)).unwrap();
+            let back = arrived.handed_back.iter().map(|h| (h.step.step, h.undo)).collect();
+            arrived.previous.is_some().then(|| {
+                let made = Made::Foreign {
+                    base: base.seq(),
+                    file,
+                    back,
+                };
+                (arrived.version.seq(), made, arrived.version)
+            })
+        })
+        .collect()
+}
+
+/// What another editor's versions did in a run.
+fn report(seed: u64, records: &[(Seq, Made, Snapshot<WordDoc>)], refused: u64) {
+    let (versions, back) = records.iter().fold((0, 0), |(v, b), r| match &r.1 {
+        Made::Foreign { back, .. } => (v + 1, b + back.len()),
+        Made::Edit(_) => (v, b),
+    });
+    println!("seed {seed}: another editor's {versions} versions, {back} steps handed back, {refused} edits refused");
 }
 
 /// `records`, in commit order, replayed on the document as opened (`bytes`): every version
