@@ -593,18 +593,39 @@ impl ViewGrid {
     }
 
     /// Where column `column` of the view is no one source column in every row
-    /// ([`ViewGrid::source_column`]), the source rows whose cell over it the view moved or
-    /// merged (not where its source columns are); none where it is one.
+    /// ([`ViewGrid::source_column`]), the source rows whose cell over it is at another grid
+    /// column than most rows' cells there (a tie going to the rows whose cells did not
+    /// move), or at none one for one; none where it is one.
     #[must_use]
     pub fn moved_rows(&self, column: usize) -> Vec<usize> {
         if self.source_column(column).is_some() {
             return Vec::new();
         }
-        self.rows
+        let at: Vec<(usize, Option<usize>, bool)> = self
+            .rows
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.as_ref().and_then(|r| r.at(column)).is_some_and(|c| !c.in_place))
-            .map(|(k, _)| k)
+            .filter_map(|(k, r)| {
+                let r = r.as_ref()?;
+                Some((k, self.row_source(r, column)?, r.at(column)?.in_place))
+            })
+            .collect();
+        // per grid column: how many rows have their cell there, and whether one did not move
+        let mut votes: std::collections::BTreeMap<usize, (usize, bool)> = std::collections::BTreeMap::new();
+        for (_, source, in_place) in &at {
+            if let Some(source) = source {
+                let vote = votes.entry(*source).or_default();
+                vote.0 += 1;
+                vote.1 |= *in_place;
+            }
+        }
+        let most = votes
+            .iter()
+            .max_by_key(|(s, v)| (v.0, v.1, std::cmp::Reverse(**s)))
+            .map(|(s, _)| *s);
+        at.into_iter()
+            .filter(|(_, source, _)| source.is_none() || *source != most)
+            .map(|(k, _, _)| k)
             .collect()
     }
 

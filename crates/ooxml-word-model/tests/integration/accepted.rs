@@ -136,7 +136,7 @@ fn a_column_whose_cells_move_left_in_some_rows_is_mapped_by_row_and_refused_whol
         whole
             .error
             .message
-            .starts_with("table: cols 0 to 2 of t:X as accepted is not one grid column in every row: in row(s) 0, 1"),
+            .starts_with("table: cols 0 to 2 of t:X as accepted is not one grid column in every row: in row(s) 0, 2"),
         "{}",
         whole.error.message
     );
