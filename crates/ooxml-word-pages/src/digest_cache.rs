@@ -32,49 +32,16 @@ pub(crate) struct PageKey {
     pub(crate) items: Vec<FlowItem>,
 }
 
-/// A flow item, held weakly.
-#[derive(Clone)]
-enum WeakItem {
-    Para(Weak<ooxml_word_layout::flow::ParaItem>),
-    Table(Weak<ooxml_word_layout::flow::TableItem>),
-    Stop(Weak<ooxml_word_layout::flow::StopItem>),
-}
-
-impl WeakItem {
-    fn of(item: &FlowItem) -> WeakItem {
-        match item {
-            FlowItem::Para(p) => WeakItem::Para(Arc::downgrade(p)),
-            FlowItem::Table(t) => WeakItem::Table(Arc::downgrade(t)),
-            FlowItem::Stop(s) => WeakItem::Stop(Arc::downgrade(s)),
-        }
-    }
-
-    /// Whether it is `item` (a weak reference keeps its allocation: its address is never
-    /// another item's).
-    fn is(&self, item: &FlowItem) -> bool {
-        match (self, item) {
-            (WeakItem::Para(w), FlowItem::Para(a)) => std::ptr::eq(w.as_ptr(), Arc::as_ptr(a)),
-            (WeakItem::Table(w), FlowItem::Table(a)) => std::ptr::eq(w.as_ptr(), Arc::as_ptr(a)),
-            (WeakItem::Stop(w), FlowItem::Stop(a)) => std::ptr::eq(w.as_ptr(), Arc::as_ptr(a)),
-            _ => false,
-        }
-    }
-}
-
-/// A page as laid out, held weakly: its laid page, what it is drawn as and the flow items
-/// it draws, by identity.
+/// A page as laid out, held weakly: what it is drawn as ([`DrawnAs`]), by identity -- the
+/// token its laid page and every page copied from it moved only in its flow's places hold.
 #[derive(Clone)]
 pub(crate) struct PageRef {
-    page: Weak<LaidPage>,
     drawn: Weak<DrawnAs>,
-    items: Arc<[WeakItem]>,
 }
 
 impl std::fmt::Debug for PageRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PageRef")
-            .field("items", &self.items.len())
-            .finish_non_exhaustive()
+        f.debug_struct("PageRef").finish_non_exhaustive()
     }
 }
 
@@ -82,22 +49,14 @@ impl PageRef {
     /// `key`'s page, held weakly.
     pub(crate) fn of(key: &PageKey) -> PageRef {
         PageRef {
-            page: Arc::downgrade(&key.page),
             drawn: Arc::downgrade(&key.page.drawn_as),
-            items: key.items.iter().map(WeakItem::of).collect(),
         }
-    }
-
-    /// Whether it is `key`'s page: the very laid page drawing the very items.
-    pub(crate) fn is(&self, key: &PageKey) -> bool {
-        std::ptr::eq(self.page.as_ptr(), Arc::as_ptr(&key.page))
-            && self.items.len() == key.items.len()
-            && self.items.iter().zip(&key.items).all(|(w, item)| w.is(item))
     }
 
     /// Whether it draws as `key`'s page does: drawn as the same laid page -- the very one,
     /// or one copied from it moved only in its flow's places, which draws the flow items it
-    /// drew, moved with it ([`DrawnAs`]).
+    /// drew, moved with it ([`DrawnAs`]). The weak reference keeps the token's allocation, so
+    /// its address is never another token's.
     pub(crate) fn drawn_as(&self, key: &PageKey) -> bool {
         std::ptr::eq(self.drawn.as_ptr(), Arc::as_ptr(&key.page.drawn_as))
     }
@@ -107,18 +66,15 @@ impl PageRef {
         std::ptr::eq(self.drawn.as_ptr(), other.drawn.as_ptr())
     }
 
-    /// Whether a version still holds its laid page.
+    /// Whether a version still holds a page drawn as it.
     pub(crate) fn alive(&self) -> bool {
-        self.page.strong_count() > 0
+        self.drawn.strong_count() > 0
     }
 
     /// What it holds besides itself: a weak reference holds its value's allocation (not
     /// what the value holds).
     pub(crate) fn weight(&self) -> usize {
-        std::mem::size_of::<LaidPage>()
-            + std::mem::size_of::<DrawnAs>()
-            + self.items.len()
-                * (std::mem::size_of::<WeakItem>() + std::mem::size_of::<ooxml_word_layout::flow::ParaItem>())
+        std::mem::size_of::<DrawnAs>()
     }
 }
 

@@ -10,6 +10,7 @@ use ooxml_opc::Package;
 use ooxml_text::{Advance, FaceKey, Glyphs, ScriptMetrics};
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{Faces, WordLayout};
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::{Model, WordDocument};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
@@ -139,9 +140,46 @@ pub fn package_with(body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> P
     Package::open(Arc::from(w.finish(b"").unwrap()), &Limits::default()).unwrap()
 }
 
-/// A fresh model.
-pub fn model() -> Model {
-    Model::new(Arc::new(Unlimited), DigestKey::new(1, 2))
+/// A document's model and its chain of readings: each version opened is read from the one
+/// opened before, as a document's versions are.
+pub struct Versions {
+    model: Model,
+    last: Option<Arc<Docx>>,
+}
+
+impl std::ops::Deref for Versions {
+    type Target = Model;
+
+    fn deref(&self) -> &Model {
+        &self.model
+    }
+}
+
+impl std::ops::DerefMut for Versions {
+    fn deref_mut(&mut self) -> &mut Model {
+        &mut self.model
+    }
+}
+
+impl Versions {
+    /// `package` read after the version opened before (else first) and projected.
+    pub fn open(&mut self, package: Package) -> WordDocument {
+        let package = ooxml_word_model::WordPackage::open(package).0;
+        let reading = Arc::new(match &self.last {
+            Some(before) => Docx::open_after(&package, before).unwrap(),
+            None => Docx::open(&package, Arc::new(Unlimited)).unwrap(),
+        });
+        self.last = Some(Arc::clone(&reading));
+        self.model.project(&reading, None).unwrap()
+    }
+}
+
+/// A fresh model of a new document.
+pub fn model() -> Versions {
+    Versions {
+        model: Model::new(Arc::new(Unlimited), DigestKey::new(1, 2)),
+        last: None,
+    }
 }
 
 /// A layout engine over [`Mono`].
@@ -157,17 +195,13 @@ pub fn engine() -> WordLayout {
 }
 
 /// Open `body` in `model`.
-pub fn open(model: &mut Model, body: &str, settings: Option<&str>) -> WordDocument {
-    model
-        .open(&ooxml_word_model::WordPackage::open(package(body, settings)).0)
-        .unwrap()
+pub fn open(model: &mut Versions, body: &str, settings: Option<&str>) -> WordDocument {
+    model.open(package(body, settings))
 }
 
 /// Open `body` with `parts` in `model`.
-pub fn open_with(model: &mut Model, body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> WordDocument {
-    model
-        .open(&ooxml_word_model::WordPackage::open(package_with(body, settings, parts)).0)
-        .unwrap()
+pub fn open_with(model: &mut Versions, body: &str, settings: Option<&str>, parts: &[Part<'_>]) -> WordDocument {
+    model.open(package_with(body, settings, parts))
 }
 
 /// A floating drawing `cx` x `cy` twips at the column's and paragraph's offsets `x`, `y`

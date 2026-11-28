@@ -442,9 +442,10 @@ impl Feed {
         let cancel = CallCancel::new(ask.context, &*ask.ports.cancel, &*ask.ports.clock);
         let laying = cancel.layout();
         let limit = laying.as_ref().map(crate::word::limit);
-        let package = (head.doc().package(), &*ask.doc.to_string());
         let layout = ask.layout.ok_or_else(|| ViewError::NotDrawn(not_drawn()))?;
-        let laid = laid_to_draw(WHO, layout, limit, package, &cancel).map_err(ViewError::NotDrawn)?;
+        let reading = crate::live_view::read(head.doc()).map_err(ViewError::NotDrawn)?;
+        let laid = laid_to_draw(WHO, layout, limit, (&reading, &*ask.doc.to_string()), &cancel)
+            .map_err(ViewError::NotDrawn)?;
         // the next advance compares with it: digested before the engine stops painting it
         lock(layout).watch(&laid);
         let seq = head.seq().0;

@@ -11,7 +11,6 @@ use super::fields::{keyword, merge_format, Fields, Open, Part};
 use super::{Reader, Steps};
 use crate::model::{Anchor, Bookmark, Field, InlineObject, Run, RunProps};
 use crate::value::{text, Text};
-use crate::view::View;
 use crate::w;
 use crate::xmlread::{attr, child, children, elements, local, text as element_text};
 use ooxml_xml::Element;
@@ -21,7 +20,7 @@ use std::sync::Arc;
 const RUN_MARKS: &[&str] = &["tab", "br", "cr", "noBreakHyphen", "softHyphen"];
 pub(super) const RUN_OBJECTS: &[&str] = &["drawing", "pict", "object", "AlternateContent"];
 /// The run-level containers a paragraph's runs are read through, besides the revisions whose
-/// content the final view shows ([`View::shows`]).
+/// content the final view shows ([`crate::view::View::shows`]).
 const RUN_CONTAINERS: &[&str] = &["hyperlink", "smartTag", "customXml", "sdt", "dir", "bdo"];
 
 /// The run being gathered: text and marks since the last flush.
@@ -349,7 +348,7 @@ impl Reader<'_> {
                     steps.step(node);
                     Self::bookmark(node, fields, runs.len());
                 }
-                _ if RUN_CONTAINERS.contains(&name) || View::Final.shows(node) == Some(true) => {
+                _ if RUN_CONTAINERS.contains(&name) || self.view().shows(node) == Some(true) => {
                     let here = steps.step(node);
                     if name == "sdt" {
                         if let Some(content) = child(node, "sdtContent") {

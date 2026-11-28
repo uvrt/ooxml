@@ -114,7 +114,6 @@ pub fn render(args: &Render, version: &Version<'_>, cancel: &dyn Cancel) -> Resu
         layout,
         laying: Laying {
             owned,
-            package: version.package,
             cancel,
             laid: std::cell::OnceCell::new(),
         },
@@ -165,7 +164,6 @@ pub(super) struct Drawer<'a> {
 /// The version a call lays out, and its layout once made.
 struct Laying<'a> {
     owned: crate::Owned<'a>,
-    package: &'a ooxml_word_model::WordPackage,
     cancel: &'a dyn Cancel,
     laid: std::cell::OnceCell<std::sync::Arc<LaidVersion>>,
 }
@@ -181,7 +179,12 @@ impl Drawer<'_> {
         if let Some(laid) = laying.laid.get() {
             return Ok(laid);
         }
-        let laid = draw::laid(self.layout, &laying.owned, laying.package, self.doc, laying.cancel)?;
+        let reading = laying
+            .owned
+            .doc
+            .docx()
+            .map_err(|e| ToolError::internal(format!("the document could not be read: {e}"), "render.laid"))?;
+        let laid = draw::laid(self.layout, &laying.owned, &reading, self.doc, laying.cancel)?;
         Ok(laying.laid.get_or_init(|| laid))
     }
 

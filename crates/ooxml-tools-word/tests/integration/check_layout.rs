@@ -6,7 +6,7 @@
 //! `crates/ooxml-oracle/python/word_reads_diff.py check`'s.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
-use crate::check::{checked, limited, versions, Past};
+use crate::check::{checked, checked_head, limited, versions, Past};
 use crate::common::engine;
 use ooxml_tools_word::{EnginePages, LastCheck, LayoutLimit, WordLayout, CHECK_NO_LAYOUT};
 use serde_json::json;
@@ -247,18 +247,43 @@ fn pages_outside_the_ranges_read_no_facts_and_say_so() {
 
 #[test]
 fn a_check_after_a_local_edit_reads_only_what_changed_and_reports_as_a_cold_check() {
-    // The fixture with its first text made long: several pages.
+    // The fixture with its first text made long: several pages, edited in one editor (the
+    // document's one chain of readings, as a session's).
     let (_, first) = versions();
-    let xml = String::from_utf8(first.read("word/document.xml").unwrap().unwrap().to_vec()).unwrap();
-    // The last text of the body made longer: an edit on the last page.
-    let at = xml.rfind("</w:t>").unwrap();
-    let edited = format!("{} and a few more words{}", &xml[..at], &xml[at..]);
-    let second = first.with_bytes("word/document.xml", std::sync::Arc::from(edited.into_bytes()));
+    let editor = ooxml_word_edit::Editor::open(
+        first,
+        ooxml_store::StoreConfig::default(),
+        std::sync::Arc::new(crate::common::Still),
+        std::sync::Arc::new(crate::common::Unlimited),
+    )
+    .unwrap();
     let asked = json!({"doc": "d1", "include": ["layout"]});
     let warm = EnginePages::of(engine());
-    let _ = checked(&first, 1, asked.clone(), &LastCheck::default(), Some(&warm));
+    let _ = checked_head(&editor, 1, asked.clone(), &LastCheck::default(), Some(&warm), None);
+    // A short paragraph after the body's last: an edit on the last page.
+    let last = {
+        let docx = editor.store().snapshot().doc().docx().unwrap();
+        let body = docx.body().unwrap();
+        let top: Vec<String> = body
+            .ids
+            .paragraphs()
+            .iter()
+            .filter(|p| p.path.len() == 2)
+            .map(|p| p.id.clone())
+            .collect();
+        top.last().unwrap().clone()
+    };
+    let command = ooxml_word_edit::InsertParagraph {
+        anchor: last,
+        after: true,
+        text: "And a few more words.".to_owned(),
+        style: None,
+        policy: ooxml_word_edit::RevisionPolicy::Untracked,
+    };
+    editor.run(&ooxml_store::Caller::anonymous(), &command).unwrap();
+    let second = editor.store().snapshot().doc().package().package().clone();
     let before = warm.engine().lock().unwrap().stats().pages_read;
-    let ours = checked(&second, 2, asked.clone(), &LastCheck::default(), Some(&warm));
+    let ours = checked_head(&editor, 2, asked.clone(), &LastCheck::default(), Some(&warm), None);
     let after = warm.engine().lock().unwrap().stats().pages_read;
     let cold = EnginePages::of(engine());
     let theirs = checked(&second, 2, asked, &LastCheck::default(), Some(&cold));

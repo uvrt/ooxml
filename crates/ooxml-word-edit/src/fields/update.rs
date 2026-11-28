@@ -191,7 +191,7 @@ fn pass(sink: &mut EditSink<'_, '_>, held: &[Known], inputs: Inputs<'_>) -> Resu
                 "a field update that needs the layout".to_owned(),
             ))
         }
-        (true, Some(layout)) => Some(layout.lay_out(sink.doc().package())?),
+        (true, Some(layout)) => Some(layout.lay_out(sink.doc())?),
     };
     let pass = Pass { laid, today, locale };
     let mut unknown = Vec::new();

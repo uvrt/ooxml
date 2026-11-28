@@ -11,6 +11,7 @@ use super::join::{following_properties, join};
 use super::{At, Reader, Steps};
 use crate::model::Block;
 use crate::value::Text;
+use crate::view::View;
 use crate::xmlread::local;
 use ooxml_xml::Element;
 use std::sync::Arc;
@@ -86,9 +87,9 @@ impl Reader<'_> {
         }
     }
 
-    /// A story's blocks (a part's, a note's, a text box's) in the final view.
+    /// A story's blocks (a part's, a note's, a text box's) in the reader's view.
     pub(crate) fn story(&self, parent: &Element, at: &At<'_>, fields: &mut Fields) -> Vec<Block> {
-        following_properties(join(self.block_list(parent, None, at, fields)), None).0
+        following_properties(join(self.view(), self.block_list(parent, None, at, fields)), None).0
     }
 
     /// A text box's blocks: the part's fields, but no cross reference or `STYLEREF`
@@ -103,7 +104,7 @@ impl Reader<'_> {
     }
 }
 
-/// The final view of the body from its top-level elements' blocks.
-pub fn body_story(elements: impl IntoIterator<Item = Block>) -> Vec<Block> {
-    following_properties(join(elements.into_iter().collect()), None).0
+/// The body in `view` from its top-level elements' blocks.
+pub fn body_story(view: View, elements: impl IntoIterator<Item = Block>) -> Vec<Block> {
+    following_properties(join(view, elements.into_iter().collect()), None).0
 }

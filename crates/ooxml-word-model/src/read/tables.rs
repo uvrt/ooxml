@@ -24,14 +24,14 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-/// Whether the final view removes a cell.
-fn removed(cell: &Element) -> bool {
-    View::Final.removes_cell(cell)
+/// Whether `view` removes a cell.
+fn removed(view: View, cell: &Element) -> bool {
+    view.removes_cell(cell)
 }
 
-/// Whether a cell the final view removes widens the cell before it (its content stays).
-fn widens(cell: &Element) -> bool {
-    removed(cell) && content_kept(cell)
+/// Whether a cell `view` removes widens the cell before it (its content stays).
+fn widens(view: View, cell: &Element) -> bool {
+    removed(view, cell) && content_kept(cell)
 }
 
 /// `parent`'s `w:tr` or `w:tc` children, also those inside row- and cell-level content
@@ -107,13 +107,18 @@ fn absorb(previous: &mut Props, deleted: &Props) {
     }
 }
 
+/// A cell's properties in the reader's view: its side of a pending properties change
+/// (`View::cell_properties`), in the final view a pending tracked merge as accepting leaves
+/// it, and a vertical merge only the other side has (`View::merge_element`).
 fn accepted_cell_properties(reader: &Reader<'_>, cell: &Element) -> Props {
+    let view = reader.view();
     let props = child(cell, "tcPr");
-    let mut out = table_properties(props, reader.colours());
-    match props
+    let mut out = table_properties(props.map(|p| view.cell_properties(p)), reader.colours());
+    let tracked = props
+        .filter(|_| view == View::Final)
         .and_then(|p| w::TcPr::new(p).merge())
-        .and_then(w::CellMerge::v_merge)
-    {
+        .and_then(w::CellMerge::v_merge);
+    match tracked {
         Some("rest") => {
             out.insert(Key::Borrowed("vMerge"), Value::Str(text("restart")));
         }
@@ -121,8 +126,7 @@ fn accepted_cell_properties(reader: &Reader<'_>, cell: &Element) -> Props {
             out.insert(Key::Borrowed("vMerge"), Value::Str(text("continue")));
         }
         _ if !out.contains_key("vMerge") => {
-            // a merge the other side of a pending properties change has (View::merge_element)
-            if let Some(merge) = View::Final.merge_element(cell) {
+            if let Some(merge) = view.merge_element(cell) {
                 let value = attr(merge, "val").filter(|v| !v.is_empty()).unwrap_or("continue");
                 out.insert(Key::Borrowed("vMerge"), Value::Str(text(value)));
             }
@@ -305,7 +309,10 @@ impl Reader<'_> {
         at: &At<'_>,
         fields: &mut Fields,
     ) -> Vec<Block> {
-        join(self.block_list(cell, Some((style, conditions)), at, fields))
+        join(
+            self.view(),
+            self.block_list(cell, Some((style, conditions)), at, fields),
+        )
     }
 
     /// A row's cells kept, by their place among its cells, with their properties (a deleted
@@ -325,7 +332,7 @@ impl Reader<'_> {
         let mut column = spec.before;
         let mut ranges: Vec<Vec<Range<usize>>> = Vec::new();
         for (j, cell) in all.iter().enumerate() {
-            let columns = column..column.saturating_add(View::Final.span(cell));
+            let columns = column..column.saturating_add(self.view().span(cell));
             column = columns.end;
             if kept.contains(&std::ptr::from_ref(*cell)) {
                 cells.push((j, cell));
@@ -333,7 +340,7 @@ impl Reader<'_> {
                 headed(&mut props, shape.heads.get(&(plan.index, j)));
                 props_of.push(props);
                 ranges.push(vec![columns]);
-            } else if let Some(last) = props_of.last_mut().filter(|_| widens(cell)) {
+            } else if let Some(last) = props_of.last_mut().filter(|_| widens(self.view(), cell)) {
                 absorb(last, &table_properties(child(cell, "tcPr"), self.colours()));
                 if let Some(parts) = ranges.last_mut() {
                     parts.push(columns);
@@ -416,17 +423,17 @@ impl Reader<'_> {
         built.cell_places.push(Arc::from(places));
     }
 
-    /// A `w:tbl`'s blocks in the final view: the table, or its parts with the blocks moved
+    /// A `w:tbl`'s blocks in the reader's view: the table, or its parts with the blocks moved
     /// out between them.
     pub(crate) fn table_blocks(&self, element: &Element, at: &At<'_>, fields: &mut Fields) -> Vec<Block> {
         let props_element = child(element, "tblPr");
         let tbl_pr = props_element.map(w::TblPr::new);
         let style = text(tbl_pr.and_then(w::TblPr::style).and_then(w::Val::val).unwrap_or(""));
         let look = table_look(tbl_pr.and_then(w::TblPr::look).map(w::TblLook::element));
-        let kept = |row: &Element| !View::Final.removes_row(row);
+        let kept = |row: &Element| !self.view().removes_row(row);
         let placed_rows = level_placed(element, "tr");
         let all_rows: Vec<&Element> = placed_rows.iter().map(|(_, r)| *r).collect();
-        let heads = merge_heads(&all_rows, &kept, &|cell| View::Final.merge(cell));
+        let heads = merge_heads(&all_rows, &kept, &|cell| self.view().merge(cell));
         let row_elements: Vec<(usize, &Element)> = all_rows
             .iter()
             .copied()
@@ -439,7 +446,10 @@ impl Reader<'_> {
         let mut plans = Vec::new();
         for (index, row) in &row_elements {
             let rel = placed_rows.get(*index).map(|(r, _)| r.clone()).unwrap_or_default();
-            let shown: Vec<&Element> = level_of(row, "tc").into_iter().filter(|c| !removed(c)).collect();
+            let shown: Vec<&Element> = level_of(row, "tc")
+                .into_iter()
+                .filter(|c| !removed(self.view(), c))
+                .collect();
             let CellEnds { groups, .. } = cell_ends(&shown);
             plans.push(Plan {
                 index: *index,
@@ -465,7 +475,7 @@ impl Reader<'_> {
         }
         let grid_of = |start: usize, end: usize| -> ViewGrid {
             let rows: Vec<&Element> = rows_only.get(start..end).unwrap_or_default().to_vec();
-            ViewGrid::of(View::Final, &rows, grid_nodes.len())
+            ViewGrid::of(self.view(), &rows, grid_nodes.len())
         };
         let whole = grid_of(0, plans.len());
         let (key, unkeyed) = at.name();

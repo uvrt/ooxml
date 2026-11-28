@@ -8,7 +8,7 @@ use crate::support;
 use ooxml_word_model::labels::Counters;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::value::Value;
-use support::{model, open, p, package, stamped, Parts};
+use support::{model, open, p, stamped, Parts};
 
 fn first_paragraph(d: &ooxml_word_model::WordDocument, k: usize) -> std::sync::Arc<ooxml_word_model::model::Paragraph> {
     match &d.body[k] {
@@ -163,7 +163,7 @@ fn incremental_labels_equal_labels_from_scratch_after_every_edit() {
         let mut items: Vec<(i64, i64)> = (0..40).map(|_| (rng.next(4) as i64, rng.next(3) as i64)).collect();
         let mut m = model();
         for step in 0..30 {
-            let d = m.open(&package(&list(&items))).unwrap();
+            let d = m.open(&list(&items));
             assert_eq!(
                 d.body_labels(),
                 scratch(&items, &d.context.numbering),
@@ -188,10 +188,10 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
     // a part without paraIds is stamped when it is opened (the same ids for the same
     // places): its blocks' keys are durable, so only the changed block is read again
     let mut m = model();
-    let first = m.open(&package(&unstamped)).unwrap();
+    let first = m.open(&unstamped);
     let mut edited = unstamped.clone();
     edited.body = edited.body.replacen(">item<", ">edited<", 1);
-    let reread = m.open(&package(&edited)).unwrap();
+    let reread = m.open(&edited);
     let shared = first
         .body
         .iter()
@@ -209,10 +209,10 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
         ..unstamped
     };
     let mut m = model();
-    m.open(&package(&parts)).unwrap();
+    m.open(&parts);
     let mut changed = parts.clone();
     changed.body = changed.body.replacen(">item<", ">edited<", 1);
-    let reopened = m.open(&package(&changed)).unwrap();
+    let reopened = m.open(&changed);
     let stats = m.stats();
     assert_eq!((stats.elements, stats.elements_read, stats.label_blocks), (30, 1, 0));
     let (_, fresh) = open(&changed);
@@ -223,7 +223,7 @@ fn a_reopened_version_reads_only_the_changed_block_and_equals_a_fresh_open() {
     // the item's content (its paragraph's stamp stays)
     let content = |num| item(num, 0).replacen("<w:p>", "", 1);
     listed.body = listed.body.replacen(&content(1), &content(2), 1);
-    let again = m.open(&package(&listed)).unwrap();
+    let again = m.open(&listed);
     assert_eq!((m.stats().elements_read, m.stats().label_blocks), (1, 1));
     assert_eq!(again.body_labels(), open(&listed).1.body_labels());
 }
@@ -241,10 +241,10 @@ fn a_content_controls_paragraphs_keep_their_paths_when_it_is_taken_as_it_was() {
         ..Parts::default()
     };
     let mut m = model();
-    m.open(&package(&parts)).unwrap();
+    m.open(&parts);
     let mut changed = parts.clone();
     changed.body = changed.body.replacen(">before<", ">edited<", 1);
-    let reopened = m.open(&package(&changed)).unwrap();
+    let reopened = m.open(&changed);
     assert_eq!(m.stats().elements_read, 1);
     let Block::Paragraph(inside) = &reopened.body[1] else {
         panic!("not a paragraph")

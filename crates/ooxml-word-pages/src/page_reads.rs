@@ -1,8 +1,9 @@
 //! Owns: the page tier of the caching policy ([`ReadMemo`]; ADR-008): each page's entry
 //! ([`crate::page_entry::PageEntry`]: what a check read of it, and its facts'
 //! contributions made from that read), kept across a generation's versions by what the
-//! read depends on: the page as laid out (its `LaidPage` and the flow
-//! items it draws, by identity), its context ([`crate::page_context`]: its number,
+//! read depends on: what the page is drawn as (its `LaidPage`'s [`DrawnAs`], by identity: the
+//! very laid page, or one copied from it moved only in its flow's places -- an insert before
+//! it -- which draws the flow items it drew, moved with them), its context ([`crate::page_context`]: its number,
 //! counts, section, header and footer texts, line numbers), the stories' epoch and the
 //! model's context it was painted in, and the keys of the blocks it draws (a read names
 //! what it read by key: [`crate::line_text::ItemPlace`]; [`PageBlocks`]). A page another
@@ -31,16 +32,19 @@ use crate::page_read::PageRead;
 use ooxml_base::Digest;
 use ooxml_derive::{CacheBudget, Memo, Weigh};
 use ooxml_word_layout::flow::FlowItem;
+#[cfg(doc)]
+use ooxml_word_layout::paginate::DrawnAs;
 use ooxml_word_layout::DocumentLayout;
 use ooxml_word_model::ids::BlockKey;
 use ooxml_word_model::model::{Block, Table};
 use std::sync::{Arc, Weak};
 
-/// A page's key: its laid page by address, its context, the stories' epoch and the
+/// A page's key: what its laid page is drawn as, by address (taken only where the page is
+/// drawn as the very same, [`PageRef::drawn_as`]), its context, the stories' epoch and the
 /// model's context it was painted in.
 type ReadKey = (usize, Digest, u64, u64);
 
-/// What a page read depends on beyond its key's address: the page as laid out, and the
+/// What a page read depends on beyond its key's address: what the page is drawn as, and the
 /// keys of the blocks it draws.
 pub(crate) struct ReadOf<'k> {
     pub(crate) page: &'k PageKey,
@@ -53,7 +57,7 @@ pub(crate) struct ReadOf<'k> {
 impl ReadOf<'_> {
     fn key(&self) -> ReadKey {
         (
-            Arc::as_ptr(&self.page.page) as usize,
+            Arc::as_ptr(&self.page.page.drawn_as) as usize,
             self.context.body,
             self.epoch,
             self.model,
@@ -171,7 +175,7 @@ impl ReadMemo {
     /// body part, where its stories showed other values.
     pub(crate) fn get(&mut self, of: &ReadOf<'_>) -> Option<Found> {
         let found = self.memo.get(&of.key())?;
-        if !(found.page.is(of.page) && found.blocks == of.blocks) {
+        if !(found.page.drawn_as(of.page) && found.blocks == of.blocks) {
             return None;
         }
         if found.stories == of.context.stories {

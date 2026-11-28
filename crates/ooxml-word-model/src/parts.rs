@@ -87,11 +87,13 @@ pub fn relationships(package: &Package, source: &str) -> Result<Vec<Relationship
     Ok(PartRelationships::read(package, source)?.items)
 }
 
-/// The internal targets of `source`'s relationships of type `rel_type`, in order.
+/// The internal targets of `source`'s relationships of type `rel_type`, in order: of that
+/// type as written, or as a strict document writes it ([`rel_type_is`], the one rule the
+/// tools and the layout find a package's parts by).
 pub fn related_parts(package: &Package, source: &str, rel_type: &str) -> Result<Vec<String>, OpcError> {
     Ok(relationships(package, source)?
         .into_iter()
-        .filter(|r| r.rel_type == rel_type)
+        .filter(|r| rel_type_is(&r.rel_type, rel_type))
         .filter_map(|r| r.target_part)
         .collect())
 }
@@ -120,7 +122,7 @@ const REL_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationship
 
 /// Whether `written`, a relationship's type, is `transitional` (a transitional type), or
 /// the type a strict document writes for it (`.../relationships/styles` written under
-/// `purl.oclc.org`): what the layout finds a strict document's parts by.
+/// `purl.oclc.org`): what every reader finds a package's parts by ([`related_parts`]).
 #[must_use]
 pub fn rel_type_is(written: &str, transitional: &str) -> bool {
     written == transitional

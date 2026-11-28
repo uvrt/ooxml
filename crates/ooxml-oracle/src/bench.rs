@@ -12,6 +12,7 @@
 use crate::export::{document_json, Unlimited, KEY};
 use ooxml_base::Limits;
 use ooxml_opc::Package;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::model::Block;
 use ooxml_word_model::{Model, OpenStats, WordDocument};
 use serde_json::json;
@@ -112,14 +113,16 @@ pub fn run(args: &[String]) -> Result<(), String> {
             ooxml_word_model::WordPackage::open_after(package.with_bytes(main, Arc::from(changed)), Some(&package)).0;
         let mut model = Model::new(Arc::new(Unlimited), KEY);
         let start = Instant::now();
-        let opened = model.open(&package).map_err(|e| e.to_string())?;
+        let reading = Docx::open(&package, Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+        let opened = model.project(&reading, None).map_err(|e| e.to_string())?;
         open_best = open_best.min(start.elapsed().as_secs_f64());
         first = model.stats();
         let start = Instant::now();
         resolved = resolve_all(&mut model, &opened);
         resolve_best = resolve_best.min(start.elapsed().as_secs_f64());
         let start = Instant::now();
-        let reopened = model.open(&next).map_err(|e| e.to_string())?;
+        let next_reading = Docx::open_after(&next, &reading).map_err(|e| e.to_string())?;
+        let reopened = model.project(&next_reading, None).map_err(|e| e.to_string())?;
         reopen_best = reopen_best.min(start.elapsed().as_secs_f64());
         second = model.stats();
         let start = Instant::now();
@@ -128,7 +131,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if check {
             let reused = document_json(&mut model, &reopened);
             let mut fresh_model = Model::new(Arc::new(Unlimited), KEY);
-            let fresh = fresh_model.open(&next).map_err(|e| e.to_string())?;
+            let fresh_reading = Docx::open(&next, Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+            let fresh = fresh_model.project(&fresh_reading, None).map_err(|e| e.to_string())?;
             if reused != document_json(&mut fresh_model, &fresh) {
                 return Err("the reopened version differs from a fresh open of it".into());
             }

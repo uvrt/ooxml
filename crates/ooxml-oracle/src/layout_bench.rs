@@ -15,6 +15,7 @@ use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
 use ooxml_word_layout::tables::WordTables;
 use ooxml_word_layout::{WordGlyphs, WordLayout};
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::Model;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -60,13 +61,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
     for _ in 0..rounds.max(1) {
         let mut model = Model::new(Arc::new(Unlimited), KEY);
         let started = Instant::now();
-        let document = model.open(&package).map_err(|e| e.to_string())?;
+        let reading = Docx::open(&package, Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+        let document = model.project(&reading, None).map_err(|e| e.to_string())?;
         open_best = open_best.min(started.elapsed().as_secs_f64());
         let mut layout = engine(&fonts, &bytes)?;
         let started = Instant::now();
         let whole = layout.lay_out(&mut model, &document);
         full_best = full_best.min(started.elapsed().as_secs_f64());
-        let edited_version = model.open(&next).map_err(|e| e.to_string())?;
+        let next_reading = Docx::open_after(&next, &reading).map_err(|e| e.to_string())?;
+        let edited_version = model.project(&next_reading, None).map_err(|e| e.to_string())?;
         let started = Instant::now();
         let again = layout.relayout(&mut model, &edited_version, &whole);
         relayout_best = relayout_best.min(started.elapsed().as_secs_f64());
@@ -79,7 +82,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
         facts_best = facts_best.min(started.elapsed().as_secs_f64());
         let equal = if check {
             let mut fresh_model = Model::new(Arc::new(Unlimited), KEY);
-            let fresh = fresh_model.open(&next).map_err(|e| e.to_string())?;
+            let fresh_reading = Docx::open(&next, Arc::new(Unlimited)).map_err(|e| e.to_string())?;
+            let fresh = fresh_model.project(&fresh_reading, None).map_err(|e| e.to_string())?;
             let reference = engine(&fonts, &bytes)?.lay_out(&mut fresh_model, &fresh);
             Some(reference.pagination == again.pagination && reference.fields == again.fields)
         } else {

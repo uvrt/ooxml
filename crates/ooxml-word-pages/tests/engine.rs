@@ -10,6 +10,7 @@
 
 use ooxml_derive::CacheBudget;
 use ooxml_fonts::{Folder, Location, WordFontOptions};
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::{
     DocumentId, PartsDelta, StoryChange, StoryDelta, StoryIx, Sub, VersionDelta, VersionRef, VersionSpan,
 };
@@ -290,12 +291,13 @@ fn a_layout_stopped_lays_nothing_out_and_the_next_is_laid_out_from_the_one_befor
         )
         .0
     };
+    let mut chain = Chain::default();
     let mut kept = engine();
     let first = kept
-        .lay_out(&opened(package(&paragraphs(120, None))), None)
+        .lay_out(&chain.read(&opened(package(&paragraphs(120, None)))), None)
         .unwrap()
         .unwrap();
-    let edited = opened(package(&paragraphs(120, Some(60))));
+    let edited = chain.read(&opened(package(&paragraphs(120, Some(60)))));
     for n in [0, 1] {
         // stopped before its first block, and after it
         let stopped = kept.lay_out_until(&edited, &after(n));
@@ -360,7 +362,10 @@ fn a_delta_is_taken_for_the_change_only_from_the_version_given_last() {
         .0
     };
     let (document, other) = (DocumentId::fresh(), DocumentId::fresh());
-    let versions: Vec<_> = (0..6).map(|k| opened(package(&paragraphs(60, Some(10 + k))))).collect();
+    let mut chain = Chain::default();
+    let versions: Vec<_> = (0..6)
+        .map(|k| chain.read(&opened(package(&paragraphs(60, Some(10 + k))))))
+        .collect();
     let mut kept = engine();
     kept.lay_out(&versions[0], None).unwrap().unwrap();
     // the version given last was named by no delta: the packages are compared
@@ -406,12 +411,13 @@ fn a_trial_is_laid_out_from_the_version_checked_and_kept_nowhere() {
         )
         .0
     };
+    let mut chain = Chain::default();
     let mut kept = engine();
     let first = kept
-        .lay_out(&opened(package(&paragraphs(120, None))), None)
+        .lay_out(&chain.read(&opened(package(&paragraphs(120, None)))), None)
         .unwrap()
         .unwrap();
-    let edited = opened(package(&paragraphs(120, Some(60))));
+    let edited = chain.read(&opened(package(&paragraphs(120, Some(60)))));
     let trial = kept.trial(&edited, &first, &after(usize::MAX)).unwrap().unwrap();
     assert!(
         Arc::ptr_eq(kept.last().unwrap(), &first),
@@ -443,18 +449,20 @@ fn a_version_with_the_last_ones_parts_is_the_last_version() {
     let bytes: Arc<[u8]> = Arc::from(package(&paragraphs(40, None)));
     let opened =
         ooxml_word_model::WordPackage::open(ooxml_opc::Package::open(bytes, &ooxml_base::Limits::default()).unwrap()).0;
-    let first = kept.lay_out(&opened, None).unwrap().unwrap();
-    let again = kept.lay_out(&opened.clone(), None).unwrap().unwrap();
+    let mut chain = Chain::default();
+    let reading = chain.read(&opened);
+    let first = kept.lay_out(&reading, None).unwrap().unwrap();
+    let again = kept.lay_out(&chain.read(&opened.clone()), None).unwrap().unwrap();
     assert!(Arc::ptr_eq(&first, &again));
     let stats = kept.stats();
     assert_eq!((stats.kept, stats.full, stats.relaid), (1, 1, 0), "{stats:?}");
     let touched: Arc<[u8]> = Arc::from(document_xml(&paragraphs(40, Some(3))).into_bytes());
     let edited = read_after(opened.with_bytes("word/document.xml", touched), &opened);
-    let next = kept.lay_out(&edited, None).unwrap().unwrap();
+    let next = kept.lay_out(&chain.read(&edited), None).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&first, &next));
     assert_eq!(kept.stats().kept, 1);
     // The version before is no longer the last: it is laid out again, not kept.
-    let back = kept.lay_out(&opened, None).unwrap().unwrap();
+    let back = kept.lay_out(&chain.read(&opened), None).unwrap().unwrap();
     assert!(!Arc::ptr_eq(&first, &back));
     assert_eq!(back.facts(), first.facts());
 }
@@ -1049,6 +1057,23 @@ fn the_layouts_compared_read_their_text_boxes_lines_and_the_summary_does_not() {
     );
 }
 
+/// A document's versions as its editor reads them: each from the one read before (the
+/// document's one chain of readings, which keys its blocks by its stories).
+#[derive(Default)]
+struct Chain(Option<Arc<Docx>>);
+
+impl Chain {
+    /// `package`'s reading, from the version read before.
+    fn read(&mut self, package: &ooxml_word_model::WordPackage) -> Arc<Docx> {
+        let made = Arc::new(match &self.0 {
+            Some(before) => Docx::open_after(package, before).unwrap(),
+            None => Docx::open(package, Arc::new(Unlimited)).unwrap(),
+        });
+        self.0 = Some(Arc::clone(&made));
+        made
+    }
+}
+
 /// `package`, a version made from `before`, read as a session reads it: a part it shares
 /// with `before` stamped as there.
 fn read_after(package: ooxml_opc::Package, before: &ooxml_word_model::WordPackage) -> ooxml_word_model::WordPackage {
@@ -1074,6 +1099,8 @@ fn a_version_given_as_a_package_says_which_part_it_changed() {
         first.with_bytes("word/styles.xml", Arc::from(styles.into_bytes())),
         &first,
     );
+    let mut chain = Chain::default();
+    let (first, edited) = (chain.read(&first), chain.read(&edited));
     let mut kept = engine();
     kept.lay_out(&first, None).unwrap().unwrap();
     let again = kept.lay_out(&edited, None).unwrap().unwrap();
@@ -1099,6 +1126,8 @@ fn a_version_given_as_a_package_after_another_part_changed_says_what_a_fresh_lay
             .with_bytes("word/_rels/document.xml.rels", Arc::from(rels.as_bytes())),
         &first,
     );
+    let mut chain = Chain::default();
+    let (first, edited) = (chain.read(&first), chain.read(&edited));
     let mut kept = engine();
     let before = kept.lay_out(&first, None).unwrap().unwrap();
     assert!(!before.said().warnings.is_empty());

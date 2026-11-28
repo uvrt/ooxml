@@ -5,6 +5,7 @@
 use ooxml_base::{DigestKey, Limits};
 use ooxml_derive::CacheBudget;
 use ooxml_opc::Package;
+use ooxml_word_model::docx::Docx;
 use ooxml_word_model::{Model, WordDocument, WordPackage};
 use ooxml_zip::{Method, NewEntry, Writer};
 use std::sync::Arc;
@@ -110,15 +111,63 @@ pub fn raw_package(parts: &Parts) -> Package {
     Package::open(Arc::from(package_bytes(parts)), &Limits::default()).unwrap()
 }
 
-/// A fresh model.
-pub fn model() -> Model {
-    Model::new(Arc::new(Unlimited), DigestKey::new(1, 2))
+/// A document's model and its versions as read so far: each version's parts share every
+/// subtree they have alike with the version before's (as an edit's do), and its reading is
+/// made from the one before (the document's one chain of readings).
+pub struct Versions {
+    model: Model,
+    last: Option<(Package, WordPackage, Arc<Docx>)>,
+}
+
+impl std::ops::Deref for Versions {
+    type Target = Model;
+
+    fn deref(&self) -> &Model {
+        &self.model
+    }
+}
+
+impl std::ops::DerefMut for Versions {
+    fn deref_mut(&mut self) -> &mut Model {
+        &mut self.model
+    }
+}
+
+impl Versions {
+    /// The version `parts` make, read after the one opened before and projected.
+    pub fn open(&mut self, parts: &Parts) -> WordDocument {
+        let mut raw = raw_package(parts);
+        if let Some((before, _, _)) = &self.last {
+            for name in raw.part_names() {
+                let (Ok(Some(old)), Ok(Some(new))) = (before.tree(&name), raw.tree(&name)) else {
+                    continue;
+                };
+                raw = raw.with_new_tree(&name, ooxml_xml::shared_with(Some(old), new));
+            }
+        }
+        let (package, _) = WordPackage::open_after(raw.clone(), self.last.as_ref().map(|(_, p, _)| p));
+        let reading = Arc::new(match &self.last {
+            Some((_, _, before)) => Docx::open_after(&package, before).unwrap(),
+            None => Docx::open(&package, Arc::new(Unlimited)).unwrap(),
+        });
+        let document = self.model.project(&reading, None).unwrap();
+        self.last = Some((raw, package, reading));
+        document
+    }
+}
+
+/// A fresh model of a new document.
+pub fn model() -> Versions {
+    Versions {
+        model: Model::new(Arc::new(Unlimited), DigestKey::new(1, 2)),
+        last: None,
+    }
 }
 
 /// The document opened in a fresh model.
-pub fn open(parts: &Parts) -> (Model, WordDocument) {
+pub fn open(parts: &Parts) -> (Versions, WordDocument) {
     let mut m = model();
-    let d = m.open(&package(parts)).unwrap();
+    let d = m.open(parts);
     (m, d)
 }
 

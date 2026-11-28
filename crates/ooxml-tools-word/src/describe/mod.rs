@@ -89,7 +89,7 @@ pub fn describe(_args: &Describe, version: &Version<'_>, cancel: &dyn Cancel) ->
     data.insert("name".into(), Value::from(name));
     let laid = version
         .owned
-        .and_then(|owned| crate::laid_reads::laid(&owned, package, cancel));
+        .and_then(|owned| crate::laid_reads::laid(&owned, &docx, cancel));
     if let Some(laid) = laid {
         cancel.check().map_err(cancelled)?;
         let pages = laid.map_or_else(Value::from, |laid| Value::from(laid.pages()));
