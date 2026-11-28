@@ -151,18 +151,19 @@ impl Shared {
         })
     }
 
-    /// What the layout model reads of the table `table` of `part`, read once.
-    pub fn table_facts(&self, part: &str, table: &TableId) -> Arc<TableFacts> {
+    /// What the layout model reads of the table `table` of `part` of `docx`, read once
+    /// (`None` where the part has no index).
+    pub fn table_facts(&self, docx: &Docx, part: &str, table: &TableId) -> Option<Arc<TableFacts>> {
         let key = (part.to_owned(), table.path.clone());
         if let Some(found) = self.tables.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
-            return Arc::clone(found);
+            return Some(Arc::clone(found));
         }
-        let made = Arc::new(TableFacts::read(&self.formatting, &table.element));
+        let made = Arc::new(TableFacts::of(docx, part, &table.path)?);
         self.tables
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(key, Arc::clone(&made));
-        made
+        Some(made)
     }
 
     /// What formatting resolves against.

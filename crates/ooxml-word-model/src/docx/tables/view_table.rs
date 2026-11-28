@@ -582,3 +582,39 @@ fn split(table: Table, moved: Vec<(usize, Vec<Block>)>, grid_of: PartGrid<'_>) -
     out.push(Block::Table(Arc::new(part_of(&table, start, end, grid_of(start, end)))));
     out
 }
+
+/// A [`CellReader`] that reads no cell: the table's structure alone ([`table_shape`]).
+struct NoCells<'c> {
+    view: View,
+    colours: &'c ThemeColours,
+}
+
+impl CellReader for NoCells<'_> {
+    fn view(&self) -> View {
+        self.view
+    }
+
+    fn colours(&self) -> &ThemeColours {
+        self.colours
+    }
+
+    fn cell_blocks(&mut self, _: &Element, _: (u32, u32), _: &[usize], _: &Text, _: &Arc<[Text]>) -> Vec<Block> {
+        Vec::new()
+    }
+}
+
+/// The `w:tbl` `element`'s structure in `view` -- its rows and cells kept, their
+/// properties, the view's grid, the style's regions -- read by [`table_blocks`] with no cell
+/// read: for a table in no reading (one an edit is writing), whose cells' resolved
+/// properties are asked. Its cells hold no blocks, so content moved out of it parts nothing
+/// (the first part, where the view parts it, is all of it). Crate-private: it is no model
+/// of the table's content.
+pub(crate) fn table_shape(view: View, colours: &ThemeColours, element: &Element) -> Option<Table> {
+    let mut cells = NoCells { view, colours };
+    table_blocks(element, (None, None), &mut cells)
+        .into_iter()
+        .find_map(|b| match b {
+            Block::Table(t) => Some(Arc::unwrap_or_clone(t)),
+            Block::Paragraph(_) => None,
+        })
+}

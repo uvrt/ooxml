@@ -140,7 +140,7 @@ fn line_after(facts: &Facts<'_>, table: &Block<'_>, after: &Block<'_>, pages: us
         return None;
     }
     let story = facts.docx().body()?;
-    let rows = row_keeps(facts.formatting(), story, &table.place)?;
+    let rows = row_keeps(facts.docx(), facts.formatting(), story, &table.place)?;
     let final_row = rows.last().filter(|r| !r.keeps)?;
     let fix = if pages == 1 {
         Some(AfterFix::Table {

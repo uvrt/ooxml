@@ -35,7 +35,7 @@ pub(crate) fn row_keeps(docx: &Docx, found: &Found) -> Result<Vec<RowKeep>> {
 /// Per row of the table at `path` in `part`, its keep.
 fn rows_at(docx: &Docx, part: &str, path: &[u32]) -> Result<Vec<RowKeep>> {
     let story = docx.part(part).ok_or_else(|| EditError::no_part(part.to_owned()))?;
-    row_keeps_in(&Formatting::read(docx), story, path)
+    row_keeps_in(docx, &Formatting::read(docx), story, path)
         .map(|rows| rows.to_vec())
         .ok_or_else(|| EditError::no_element(part.to_owned()))
 }
@@ -268,7 +268,7 @@ pub fn loose_paragraph_after(doc: &WordDoc, table: &str) -> Result<Option<(Strin
         return Ok(None);
     }
     let formatting = Formatting::read(&docx);
-    let mut look = Keeps::new(&formatting, story);
+    let mut look = Keeps::new(&docx, &formatting, story);
     if look.effective(paragraph, p_at, true).keep_with_next {
         return Ok(None);
     }

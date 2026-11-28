@@ -8,7 +8,7 @@
 //! Must not: key by a path or an id (a row's deciding paragraph is named by its steps below
 //! the table), or keep a table's rows' keeps alive past the versions holding its element.
 
-use super::cells::{held_roots, same_roots, HeldRoots};
+use super::block_facts::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use super::keeps::RowKeep;
 use ooxml_derive::{AddressHash, CacheBudget, Memo, MemoStats, Weigh};

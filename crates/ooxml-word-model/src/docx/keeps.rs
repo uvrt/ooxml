@@ -11,7 +11,7 @@
 
 use crate::docx::cells::PartCells;
 use crate::docx::formatting::{Cell, EffectiveParagraph, Formatting};
-use crate::docx::{at_path, StoryPart};
+use crate::docx::{at_path, Docx, StoryPart};
 use crate::ids::W;
 use ooxml_xml::{Children, Element, Node};
 use std::sync::Arc;
@@ -117,12 +117,13 @@ pub struct Keeps<'a> {
 }
 
 impl<'a> Keeps<'a> {
-    /// The keeps of `story`'s paragraphs under `formatting`.
+    /// The keeps of `story`'s paragraphs (`story` a story part of `docx`) under
+    /// `formatting`.
     #[must_use]
-    pub fn new(formatting: &'a Formatting, story: &'a StoryPart) -> Keeps<'a> {
+    pub fn new(docx: &'a Docx, formatting: &'a Formatting, story: &'a StoryPart) -> Keeps<'a> {
         Keeps {
             formatting,
-            cells: PartCells::of(formatting, story),
+            cells: PartCells::of(docx, story),
         }
     }
 
@@ -202,25 +203,31 @@ impl TableKeeps {
     }
 }
 
-/// Per row of the table at `path` in `story`, its keep under `formatting` (docx-agent's
+/// Per row of the table at `path` in `story` (of `docx`), its keep under `formatting` (docx-agent's
 /// `row_keeps`); `None` where `path` holds nothing. Kept across the document's versions by
 /// the table element, the outermost table holding it and the formatting parts
 /// ([`super::Kept`]).
 #[must_use]
-pub fn row_keeps(formatting: &Formatting, story: &StoryPart, path: &[u32]) -> Option<Arc<[RowKeep]>> {
+pub fn row_keeps(docx: &Docx, formatting: &Formatting, story: &StoryPart, path: &[u32]) -> Option<Arc<[RowKeep]>> {
     let table = at_path(story.root(), path)?;
     let outer = (1..=path.len())
         .filter_map(|d| at_path(story.root(), path.get(..d)?))
         .find(|e| is_w(e, "tbl"))
         .unwrap_or(table);
     Some(story.kept.rows(formatting, table, outer, || {
-        read_row_keeps(formatting, story, table, path)
+        read_row_keeps(docx, formatting, story, table, path)
     }))
 }
 
 /// Per row of `table` (at `path` in `story`), its keep under `formatting`, read.
-fn read_row_keeps(formatting: &Formatting, story: &StoryPart, table: &Element, path: &[u32]) -> Vec<RowKeep> {
-    let mut look = Keeps::new(formatting, story);
+fn read_row_keeps(
+    docx: &Docx,
+    formatting: &Formatting,
+    story: &StoryPart,
+    table: &Element,
+    path: &[u32],
+) -> Vec<RowKeep> {
+    let mut look = Keeps::new(docx, formatting, story);
     let mut out = Vec::new();
     for lead in row_leads(table, path) {
         let paragraph = lead.as_ref().and_then(|l| Some((l, at_path(story.root(), l)?)));

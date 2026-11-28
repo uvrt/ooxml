@@ -14,7 +14,6 @@
 //! own part's first-reading gate while reading.
 
 use super::block_facts::BlockFacts;
-use super::cells::TableMemo;
 use super::facts::PartFacts;
 use super::keeps::RowKeep;
 use super::kept_rows::RowsMemo;
@@ -83,9 +82,6 @@ impl<T> Latest<T> {
 pub struct Kept {
     texts: Latest<PartTexts>,
     facts: Latest<PartFacts>,
-    /// Each table's reading (its paragraphs' cells), by the table element and the parts
-    /// it was read with, across the versions that share them.
-    tables: TableMemo,
     /// Each table's rows' keeps, by the table element, the outermost table holding it and
     /// the parts they were read with, across the versions that share them.
     rows: RowsMemo,
@@ -100,13 +96,12 @@ pub struct Kept {
 }
 
 impl Kept {
-    /// Nothing kept yet; the tables' readings counted on `budget` (the document's account).
+    /// Nothing kept yet; the readings counted on `budget` (the document's account).
     #[must_use]
     pub fn new(budget: Arc<dyn ooxml_derive::CacheBudget>) -> Kept {
         Kept {
             texts: Latest::default(),
             facts: Latest::default(),
-            tables: TableMemo::new(Arc::clone(&budget)),
             rows: RowsMemo::new(Arc::clone(&budget)),
             blocks: BlockFacts::new(Arc::clone(&budget)),
             stories: Mutex::new(StoryTable::new()),
@@ -114,10 +109,11 @@ impl Kept {
         }
     }
 
-    /// What the tables' readings hold: entries and bytes.
+    /// What the blocks' projections hold (the block tier: a table's cells are read from
+    /// it, [`super::cells::TableFacts`]): entries and bytes.
     #[must_use]
-    pub fn table_readings(&self) -> (usize, usize) {
-        let stats = self.tables.stats();
+    pub fn block_readings(&self) -> (usize, usize) {
+        let stats = self.projections.stats();
         (stats.entries, stats.bytes)
     }
 
@@ -158,11 +154,6 @@ impl Kept {
     /// The blocks' facts kept across the versions.
     pub(crate) fn blocks(&self) -> &BlockFacts {
         &self.blocks
-    }
-
-    /// The tables' readings kept across the versions.
-    pub(crate) fn tables(&self) -> &TableMemo {
-        &self.tables
     }
 
     /// The rows' keeps of `table` (in `outer`, the outermost table holding it) with

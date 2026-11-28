@@ -38,7 +38,7 @@ pub use labels::{collapse_space, no_cell_text};
 pub use merge_heads::{merge_heads, VMerge};
 pub use places::{GridPlaces, PlaceRun, Spot};
 pub use view_table::{cell_conditions, leading_header_rows};
-pub(crate) use view_table::{table_blocks, CellReader};
+pub(crate) use view_table::{table_blocks, table_shape, CellReader};
 
 /// A cell element with its place in its part.
 type Placed = (Arc<Element>, Box<[u32]>);

@@ -15,10 +15,10 @@
 //! find an element by its address (equal subtrees share one node): rows and cells are found
 //! by their places.
 
-use ooxml_word_model::docx::cells::{model_path, TableFacts};
+use ooxml_word_model::docx::cells::TableFacts;
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::tables::placed_row_cells;
-use ooxml_word_model::docx::{at_path, find_path, Docx};
+use ooxml_word_model::docx::{at_path, find_path, Docx, StoryPart};
 use ooxml_word_model::ids::{TableId, W};
 use ooxml_word_model::markdown::read::Shared;
 use ooxml_xml::Element;
@@ -232,7 +232,8 @@ type RowLooks = Vec<((usize, usize), Option<TextLook>)>;
 /// text looks like (read once per cell).
 struct Scan<'a> {
     formatting: &'a Formatting,
-    facts: Arc<TableFacts>,
+    facts: Option<Arc<TableFacts>>,
+    story: &'a StoryPart,
     table: &'a TableId,
     /// Each own row with its place (`None`: not found).
     rows: Vec<Option<(Arc<Element>, Vec<u32>)>>,
@@ -293,8 +294,7 @@ impl Scan<'_> {
             let Some(run) = first_text_run(&paragraph) else {
                 continue;
             };
-            let below = path.get(self.table.path.len()..).unwrap_or_default();
-            let where_ = model_path(&self.table.element, below).and_then(|p| self.facts.cell(&p).cloned());
+            let where_ = self.facts.as_ref().and_then(|f| f.cell_at(self.story, &path));
             let got = self
                 .formatting
                 .run(&paragraph, Some(&run), first_char(&run), where_.as_ref());
@@ -405,7 +405,8 @@ pub fn rows_unlike(docx: &Docx, part: &str, table: &TableId, marked: &[bool]) ->
     let shared = Shared::of(docx);
     let mut scan = Scan {
         formatting: shared.formatting(),
-        facts: shared.table_facts(part, table),
+        facts: shared.table_facts(docx, part, table),
+        story,
         table,
         rows: table
             .rows

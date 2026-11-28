@@ -8,7 +8,7 @@
 
 use crate::text::atoms;
 use crate::work::Work;
-use ooxml_word_model::docx::cells::{model_path, TableFacts};
+use ooxml_word_model::docx::cells::TableFacts;
 use ooxml_word_model::docx::formatting::{Cell, Formatting};
 use ooxml_word_model::docx::Docx;
 use ooxml_xml::Element;
@@ -61,12 +61,7 @@ impl<'d> Sizes<'d> {
     /// its outermost table.
     fn cell(&self, part: &str, path: &[u32]) -> Option<Cell> {
         let story = self.docx.part(part)?;
-        let (table, at) = (1..path.len()).find_map(|n| {
-            let prefix = path.get(..n)?;
-            story.ids.table_at(prefix).map(|t| (t, n))
-        })?;
-        let facts = TableFacts::read(&self.formatting, &table.element);
-        let below = path.get(at..)?;
-        model_path(&table.element, below).and_then(|p| facts.cell(&p).cloned())
+        let table = (1..path.len()).find_map(|n| story.ids.table_at(path.get(..n)?))?;
+        TableFacts::of(self.docx, part, &table.path)?.cell_at(story, path)
     }
 }

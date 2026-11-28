@@ -5,7 +5,7 @@
 //!
 //! Must not: read records itself (the Markdown reader makes them), or lay out.
 
-use ooxml_word_model::docx::cells::model_path;
+use ooxml_word_model::docx::cells::key_at;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun};
 use ooxml_word_model::docx::Docx;
 use ooxml_word_model::ids::W;
@@ -474,16 +474,14 @@ fn effective(base: &EffectiveRun, para: &EffectiveParagraph) -> Value {
 /// The layout model's resolved properties of a cell (none for one in a text box).
 fn resolved_cell(reader: &Reader<'_>, table: &TableRecord, cell: &CellRecord) -> Option<Props> {
     let part = reader.docx.part(&table.part)?;
-    let (top, at) = (1..=cell.path.len()).find_map(|n| {
-        let prefix = cell.path.get(..n)?;
-        part.ids.table_at(prefix).map(|t| (t, n))
-    })?;
+    let top = (1..=cell.path.len()).find_map(|n| part.ids.table_at(cell.path.get(..n)?))?;
     if in_text_box(part.root(), &cell.path) {
         return None;
     }
-    let facts = reader.shared().table_facts(&table.part, &top);
-    let path = model_path(&top.element, cell.path.get(at..)?)?;
-    facts.cell_properties(&path).cloned()
+    let facts = reader.shared().table_facts(reader.docx, &table.part, &top)?;
+    let own = facts.table_keyed(key_at(part, &table.path)?)?;
+    let (row, place) = (u32::try_from(cell.row).ok()?, u32::try_from(cell.cell).ok()?);
+    own.cell_properties(&reader.shared().formatting().sources(), row, place)
 }
 
 fn in_text_box(root: &Arc<Element>, path: &[u32]) -> bool {

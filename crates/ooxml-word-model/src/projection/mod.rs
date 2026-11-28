@@ -15,7 +15,10 @@
 //! Must not: resolve properties or count list labels (`crate::Model` does), lay out, or key
 //! a memo by a block's key or path (keys name blocks; memos are kept by content, ADR-008).
 
+mod block;
 pub(crate) mod memo;
+
+pub use block::{block_place, Assumed, BlockAlone, TableAlone};
 
 pub(crate) use memo::Projections;
 
@@ -102,6 +105,37 @@ impl Projection {
             },
         );
         Ok((document, stats))
+    }
+}
+
+impl Projection {
+    /// The blocks of the story part `part` (the main part's body, a header's or footer's)
+    /// projected in `view` in their story's context, as [`Projection::of`] projects them
+    /// (a header or footer no section names too). `None` for a part that is no such story
+    /// part or has no tree.
+    ///
+    /// # Errors
+    /// [`WordError::NoMainPart`] where the version has no main part's tree; a part not XML.
+    pub fn story(version: &Docx, part: &str, view: View) -> Result<Option<Story>, WordError> {
+        if part == version.main {
+            return Ok(Some(Projection::of(version, None, view)?.body));
+        }
+        let story = version.part(part).map(|p| p.story.as_str());
+        if !story.is_some_and(|s| s.starts_with("header") || s.starts_with("footer")) {
+            return Ok(None);
+        }
+        let mut projecting = Projecting::new(version, None, view)?;
+        let Some(tree) = version.package.tree(part)? else {
+            return Ok(None);
+        };
+        let p = &projecting.parts;
+        let context = version.kept().projections().context([
+            p.theme.as_ref(),
+            p.settings.as_ref(),
+            p.styles.as_ref(),
+            p.numbering.as_ref().map(|(_, t)| t),
+        ]);
+        Ok(Some(projecting.story(part, &tree, &context).0))
     }
 }
 

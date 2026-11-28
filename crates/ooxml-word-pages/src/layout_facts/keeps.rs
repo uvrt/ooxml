@@ -105,7 +105,7 @@ pub fn kept_tables(facts: &Facts<'_>) -> KeptTables {
         let tables = story.ids.tables();
         for placed in tables.placed() {
             // A table's id is named (and its pages found) only where it is kept together.
-            let Some(rows) = row_keeps(facts.formatting(), story, &placed.path) else {
+            let Some(rows) = row_keeps(facts.docx(), facts.formatting(), story, &placed.path) else {
                 continue;
             };
             if !TableKeeps::of(&rows).together {
@@ -247,7 +247,7 @@ fn table_end_at_foot(facts: &Facts<'_>, key: BlockKey, number: usize) -> Option<
     if block.kind != BlockKind::Table {
         return None;
     }
-    let rows = row_keeps(facts.formatting(), facts.docx().body()?, &block.place)?;
+    let rows = row_keeps(facts.docx(), facts.formatting(), facts.docx().body()?, &block.place)?;
     let last = rows.last()?;
     if row + 1 != rows.len() || last.lead.is_none() || !last.keeps {
         return None;

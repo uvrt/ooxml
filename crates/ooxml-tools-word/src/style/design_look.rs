@@ -54,11 +54,6 @@ impl<'d> Design<'d> {
         self.shared.formatting()
     }
 
-    /// The document-wide lookups of the version.
-    pub(crate) fn shared(&self) -> &Shared {
-        &self.shared
-    }
-
     /// The styles as the resolver reads them.
     pub(crate) fn sheet(&self) -> Option<&StyleSheet> {
         self.formatting().context().styles.as_deref()

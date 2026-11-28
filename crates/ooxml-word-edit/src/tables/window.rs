@@ -17,10 +17,10 @@ use crate::review::xml::{insert_in_order, make};
 use crate::validate::Orders;
 use crate::work::{Id, Work};
 use crate::{EditError, Result, WordDoc};
-use ooxml_word_model::docx::cells::TableFacts;
+use ooxml_word_model::docx::cells::{resolved_shape, TableFacts};
 use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::{at_path, Docx};
-use ooxml_word_model::resolve::{border_twips, resolve_table, ResolvedCell};
+use ooxml_word_model::resolve::{border_twips, ResolvedCell};
 use ooxml_word_model::styles::StyleKind;
 use ooxml_word_model::value::Value;
 use ooxml_xml::Element;
@@ -51,18 +51,15 @@ fn right_offset(cell: &ResolvedCell) -> i64 {
     cell.margins[3].max(inner_part(cell.right_edge.0.as_ref()))
 }
 
-/// The layout model's reading of the `w:tbl` `table`, resolved.
+/// The layout model's reading of the `w:tbl` at `place` of `part`, resolved.
 fn resolved(
+    docx: &Docx,
     formatting: &Formatting,
-    table: &Element,
-) -> Option<(
-    Arc<ooxml_word_model::model::Table>,
-    ooxml_word_model::resolve::ResolvedTable,
-)> {
-    let facts = TableFacts::read(formatting, table);
-    let model = Arc::clone(facts.tables().first()?);
-    let resolved = resolve_table(&formatting.sources(), &model);
-    Some((model, resolved))
+    part: &str,
+    place: &[u32],
+) -> Option<ooxml_word_model::resolve::ResolvedTable> {
+    let facts = TableFacts::of(docx, part, place)?;
+    Some(facts.table()?.resolved(&formatting.sources()))
 }
 
 /// The steps from `root` down to `node` in `work`.
@@ -100,7 +97,7 @@ pub(crate) fn window_room(doc: &WordDoc, docx: &Docx, found: &Found, room: i64) 
         let twips = outer.and_then(|outer| {
             let element = at(outer)?;
             let formatting = Formatting::read(docx);
-            let (_, resolved) = resolved(&formatting, element)?;
+            let resolved = resolved(docx, &formatting, &found.part, found.path.get(..outer)?)?;
             let below = found.path.get(outer..cell)?;
             let work = Work::of(element, Vec::new());
             let grid = grid_widths(&work, work.root());
@@ -172,11 +169,16 @@ fn fiftieths(whole: i64, part: i64, total: i64) -> i64 {
 }
 
 /// What a table's style chain indents it by (the last of its styles stating `w:tblInd`).
-fn style_indents(formatting: &Formatting, model: &ooxml_word_model::model::Table) -> bool {
+fn style_indents(formatting: &Formatting, table: &Element) -> bool {
     let sources = formatting.sources();
+    let style = ooxml_word_model::w::Tbl::new(table)
+        .properties()
+        .and_then(ooxml_word_model::w::TblPr::style)
+        .and_then(ooxml_word_model::w::Val::val)
+        .filter(|s| !s.is_empty());
     let chain = sources
         .styles
-        .map(|s| s.chain(model.style_id.as_deref(), StyleKind::Table))
+        .map(|s| s.chain(style, StyleKind::Table))
         .unwrap_or_default();
     let mut indent = 0;
     for style in &chain {
@@ -204,7 +206,8 @@ pub(crate) fn write(
 ) -> Result<()> {
     let refused = || EditError::Refused("the table has no grid of columns to fit".to_owned());
     let element = work.build_element(table).ok_or_else(refused)?;
-    let (model, resolved) = resolved(formatting, &element).ok_or_else(refused)?;
+    // the table as this call has written it so far: in no version's reading
+    let resolved = resolved_shape(formatting, &element).ok_or_else(refused)?;
     let mut weights = grid_widths(work, table);
     if weights.is_empty() {
         return Err(refused());
@@ -253,7 +256,7 @@ pub(crate) fn write(
             Some(width)
         })
         .collect();
-    let style_indent = style_indents(formatting, &model);
+    let style_indent = style_indents(formatting, &element);
     let properties = ensure(work, table, "tblPr", orders);
     drop_all(work, properties, "tblW");
     let width = pct.to_string();

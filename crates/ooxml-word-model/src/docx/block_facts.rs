@@ -13,13 +13,30 @@
 //! sweep, or hold a fact that reads anything but its block, the outermost table holding it
 //! and the formatting parts (a fact reading its neighbours or its place does not fit here).
 
-use super::cells::{held_roots, same_roots, HeldRoots};
 use super::formatting::Formatting;
 use crate::ids::W;
 use ooxml_derive::{AddressHash, CacheBudget, Memo, MemoStats, Weigh};
 use ooxml_xml::Element;
 use std::any::{Any, TypeId};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
+
+/// The theme's, settings', styles' and numbering's root elements a reading was made with,
+/// held weakly.
+pub(crate) type HeldRoots = [Option<Weak<Element>>; 4];
+
+/// `formatting`'s root elements, held weakly.
+pub(crate) fn held_roots(formatting: &Formatting) -> HeldRoots {
+    formatting.roots().clone().map(|r| r.as_ref().map(Arc::downgrade))
+}
+
+/// Whether `roots` are `formatting`'s root elements, by identity.
+pub(crate) fn same_roots(roots: &HeldRoots, formatting: &Formatting) -> bool {
+    roots.iter().zip(formatting.roots()).all(|pair| match pair {
+        (Some(kept), Some(now)) => std::ptr::eq(kept.as_ptr(), Arc::as_ptr(now)),
+        (None, None) => true,
+        _ => false,
+    })
+}
 
 /// A fact of one block: a pure function of the block's element, the outermost table holding
 /// it and the formatting parts.

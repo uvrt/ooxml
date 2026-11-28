@@ -15,7 +15,7 @@ use ooxml_word_model::docx::block_facts::BlockFact;
 use ooxml_word_model::docx::formatting::{Cell, EffectiveParagraph, EffectiveRun, Formatting};
 use ooxml_word_model::docx::keeps::{row_keeps, Keeps, TableKeeps};
 use ooxml_word_model::docx::text::text_runs;
-use ooxml_word_model::docx::{at_path, StoryPart};
+use ooxml_word_model::docx::{at_path, Docx, StoryPart};
 use ooxml_word_model::view::View;
 use ooxml_xml::Element;
 use std::collections::{HashMap, HashSet};
@@ -83,8 +83,8 @@ pub fn direct_formatting(doc: &WordDoc) -> Result<Vec<DirectFormatting>> {
         if story.story == "comments" {
             continue;
         }
-        let mut look = Keeps::new(&formatting, story);
-        let kept = kept_leads(&formatting, story);
+        let mut look = Keeps::new(&docx, &formatting, story);
+        let kept = kept_leads(&docx, &formatting, story);
         // Each paragraph found by its element and place; its id named only for an entry.
         for (ordinal, element, place) in story.ids.paragraphs().placed() {
             if separator(story, &place) {
@@ -127,10 +127,10 @@ fn separator(story: &StoryPart, path: &[u32]) -> bool {
 
 /// The places of the paragraphs each row of a table kept together keeps with the next by
 /// (each table's rows' keeps as the document keeps them, `row_keeps`).
-fn kept_leads(formatting: &Formatting, story: &StoryPart) -> HashSet<Vec<u32>> {
+fn kept_leads(docx: &Docx, formatting: &Formatting, story: &StoryPart) -> HashSet<Vec<u32>> {
     let mut out = HashSet::new();
     for table in story.ids.tables().placed() {
-        let Some(rows) = row_keeps(formatting, story, &table.path) else {
+        let Some(rows) = row_keeps(docx, formatting, story, &table.path) else {
             continue;
         };
         if !TableKeeps::of(&rows).together {

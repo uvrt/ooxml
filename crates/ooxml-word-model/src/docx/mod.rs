@@ -241,10 +241,11 @@ impl Docx {
         self.kept.stories()
     }
 
-    /// What its versions keep of its tables' readings: entries and bytes.
+    /// What its versions keep of its blocks' projections (the block tier, a table's cells
+    /// read from it): entries and bytes.
     #[must_use]
-    pub fn table_readings(&self) -> (usize, usize) {
-        self.kept.table_readings()
+    pub fn block_readings(&self) -> (usize, usize) {
+        self.kept.block_readings()
     }
 
     /// What its versions keep of its blocks' facts: entries and bytes.

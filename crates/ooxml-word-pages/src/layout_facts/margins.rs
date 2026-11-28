@@ -356,7 +356,7 @@ fn allowances(facts: &Facts<'_>) -> HashMap<BlockKey, (Px, Px)> {
 /// (docx-agent's `body_lines`): those of the nearest paragraph before it among its
 /// siblings, else after it, else the default paragraph style's.
 fn body_indents(facts: &Facts<'_>, story: &StoryPart, place: &[u32]) -> (f64, f64) {
-    let mut look = Keeps::new(facts.formatting(), story);
+    let mut look = Keeps::new(facts.docx(), facts.formatting(), story);
     let effective = match around(story.root(), place).and_then(|p| Some((at_path(story.root(), &p)?, p))) {
         Some((element, at)) => look.effective(element, &at, true),
         None => {

@@ -359,15 +359,6 @@ impl Table {
             None => self.unkeyed.as_deref().map(str::to_owned),
         }
     }
-
-    /// The path of the final view's cell `cell` of row `row`, where no story's index holds
-    /// the table: its own path and the cell's place as written (`w:tr[r]/w:tc[c]`).
-    #[must_use]
-    pub fn unkeyed_cell_path(&self, row: usize, cell: usize) -> Option<String> {
-        let table = self.unkeyed_cells.as_ref()?;
-        let &(r, c) = self.cell_places.get(row)?.get(cell)?;
-        Some(cell_path(table, r, c))
-    }
 }
 
 /// The path of the cell at `(row, cell)` (its place as written) of the table at `table`.

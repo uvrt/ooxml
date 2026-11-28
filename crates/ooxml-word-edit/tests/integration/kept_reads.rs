@@ -1,5 +1,5 @@
 //! What a document's checks keep across its versions read as a cold read does: each
-//! table's cells (`PartCells::of`, kept by the table element) and its rows' keeps
+//! table's cells (`PartCells::of`, the block tier's, kept by the block element) and its rows' keeps
 //! (`row_keeps`, kept by the table element and the outermost table) after an edit inside a
 //! table, and the texts' languages (`Detections`) after a paragraph's language changed --
 //! also where a budget of a few bytes lets what they keep go at once.
@@ -15,16 +15,18 @@ use ooxml_word_model::docx::formatting::Formatting;
 use ooxml_word_model::docx::keeps::{row_keeps, RowKeep};
 use ooxml_word_model::docx::Docx;
 
-/// Every body paragraph's place, and the cell each is in as `cells` reads it.
+/// Every body paragraph's place, and the cell each is in as `cells` reads it: through the
+/// block tier the document's versions share (`kept`), or a document opened afresh.
 fn cells_of(doc: &WordDoc, kept: bool) -> Vec<(Vec<u32>, Option<ooxml_word_model::docx::formatting::Cell>)> {
-    let docx = doc.docx().unwrap();
-    let body = docx.body().unwrap();
-    let formatting = Formatting::read(&docx);
-    let mut cells = if kept {
-        PartCells::of(&formatting, body)
+    let docx = if kept {
+        doc.docx().unwrap()
     } else {
-        PartCells::new(&formatting, body.root())
+        std::sync::Arc::new(
+            Docx::open(doc.package(), std::sync::Arc::new(ooxml_derive::Limit::new(usize::MAX))).unwrap(),
+        )
     };
+    let body = docx.body().unwrap();
+    let mut cells = PartCells::of(&docx, body);
     body.ids
         .paragraphs()
         .iter()
@@ -49,7 +51,7 @@ fn tables_readings_let_go_for_the_budget_are_read_as_cold() {
     )
     .unwrap();
     cells_kept_and_cold(&editor);
-    let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().table_readings();
+    let (_, bytes) = editor.store().snapshot().doc().docx().unwrap().block_readings();
     assert!(bytes <= 512, "{bytes}");
 }
 
@@ -98,7 +100,7 @@ fn rows_of(docx: &Docx) -> TablesRows {
                 .ids
                 .tables()
                 .iter()
-                .map(move |t| row_keeps(formatting, story, &t.path).map(|r| r.to_vec()))
+                .map(move |t| row_keeps(docx, formatting, story, &t.path).map(|r| r.to_vec()))
         })
         .collect()
 }

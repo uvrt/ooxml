@@ -171,7 +171,7 @@ pub(crate) fn keep_plan(doc: &WordDoc, docx: &Docx, address: &Address, on: bool)
     };
     let body = docx.body().ok_or_else(|| EditError::no_part(docx.main.clone()))?;
     let formatting = Formatting::read(docx);
-    let mut look = Keeps::new(&formatting, body);
+    let mut look = Keeps::new(docx, &formatting, body);
     let mut plan = KeepPlan {
         first: first.clone(),
         ..KeepPlan::default()

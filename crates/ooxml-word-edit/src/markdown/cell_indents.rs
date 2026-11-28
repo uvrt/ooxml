@@ -8,9 +8,10 @@
 //! Must not: write anything; read anything but the tables given and the styles they use.
 
 use crate::names::W;
-use ooxml_word_model::docx::cells::{model_path, TableFacts};
+use ooxml_word_model::docx::cells::TableFacts;
 use ooxml_word_model::docx::formatting::Formatting;
-use ooxml_word_model::resolve::{resolve_table, Origins};
+use ooxml_word_model::docx::{at_path, Docx, StoryPart};
+use ooxml_word_model::resolve::Origins;
 use ooxml_word_model::styles::{StyleKind, StyleSheet};
 use ooxml_xml::Element;
 use std::collections::HashSet;
@@ -19,11 +20,18 @@ use std::sync::Arc;
 /// A cell's side margin, pt, where the table cannot be resolved: Word's Normal Table's.
 const DEFAULT_CELL_MARGIN: f64 = 5.4;
 
-/// The warnings of `tables` (each a `w:tbl` the edit wrote, with its grid shares in twips).
-pub(crate) fn cell_indent_warnings(formatting: &Formatting, tables: &[(Arc<Element>, Vec<i64>)]) -> Vec<String> {
+/// The warnings of `tables` (each a `w:tbl` the edit wrote, by its place in `part` of the
+/// version the edit lands on, with its grid shares in twips).
+pub(crate) fn cell_indent_warnings(docx: &Docx, part: &str, tables: &[(Vec<u32>, Vec<i64>)]) -> Vec<String> {
     let mut out = Vec::new();
-    for (table, shares) in tables {
-        table_warnings(formatting, table, shares, &mut out);
+    let Some(story) = docx.part(part) else { return out };
+    let formatting = Formatting::read(docx);
+    for (place, shares) in tables {
+        let Some(table) = at_path(story.root(), place) else {
+            continue;
+        };
+        let facts = TableFacts::of(docx, part, place);
+        table_warnings(&formatting, (story, place, table), facts.as_ref(), shares, &mut out);
     }
     out
 }
@@ -32,12 +40,16 @@ pub(crate) fn cell_indent_warnings(formatting: &Formatting, tables: &[(Arc<Eleme
 /// and what the warning says of it.
 type Problem = (&'static str, String);
 
-fn table_warnings(formatting: &Formatting, table: &Arc<Element>, shares: &[i64], out: &mut Vec<String>) {
-    let facts = TableFacts::read(formatting, table);
+fn table_warnings(
+    formatting: &Formatting,
+    (story, at, table): (&StoryPart, &[u32], &Arc<Element>),
+    facts: Option<&TableFacts>,
+    shares: &[i64],
+    out: &mut Vec<String>,
+) {
     let resolved = facts
-        .tables()
-        .first()
-        .map(|model| resolve_table(&formatting.sources(), model));
+        .and_then(TableFacts::table)
+        .map(|t| t.resolved(&formatting.sources()));
     let sheet = formatting.sources().styles;
     let mut seen: HashSet<(Option<String>, &'static str)> = HashSet::new();
     for (r, (row_at, row)) in children(table, "tr").enumerate() {
@@ -54,8 +66,9 @@ fn table_warnings(formatting: &Formatting, table: &Arc<Element>, shares: &[i64],
             let mut paragraphs = Vec::new();
             paragraphs_below(cell, vec![row_at, cell_at], &mut paragraphs);
             for (place, paragraph) in paragraphs {
-                let at = model_path(table, &place).and_then(|path| facts.cell(&path).cloned());
-                let (look, origins) = formatting.paragraph_traced(paragraph, at.as_ref());
+                let place = [at, &place[..]].concat();
+                let cell = facts.and_then(|f| f.cell_at(story, &place));
+                let (look, origins) = formatting.paragraph_traced(paragraph, cell.as_ref());
                 let first = (look.first_line - look.hanging).max(0.0);
                 let mut problems: Vec<Problem> = Vec::new();
                 for (side, value, margin, key) in [

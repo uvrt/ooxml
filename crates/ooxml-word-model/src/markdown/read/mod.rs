@@ -419,13 +419,11 @@ impl<'a> Reader<'a> {
     /// reads its outermost table (`style`, its innermost table's, where the model has none).
     pub fn cell_of(&self, part: &str, element: &Placed, style: &str) -> Option<Cell> {
         let story = self.docx.part(part)?;
-        let (table, at) = (1..element.path.len()).find_map(|n| {
-            let prefix = element.path.get(..n)?;
-            story.ids.table_at(prefix).map(|t| (t, n))
-        })?;
-        let facts = self.shared.table_facts(part, &table);
-        let below = element.path.get(at..)?;
-        let found = crate::docx::cells::model_path(&table.element, below).and_then(|p| facts.cell(&p).cloned());
+        let table = (1..element.path.len()).find_map(|n| story.ids.table_at(element.path.get(..n)?))?;
+        let found = self
+            .shared
+            .table_facts(self.docx, part, &table)
+            .and_then(|facts| facts.cell_at(story, &element.path));
         Some(found.unwrap_or_else(|| Cell {
             style: crate::value::text(style),
             conditions: Arc::from(Vec::new()),

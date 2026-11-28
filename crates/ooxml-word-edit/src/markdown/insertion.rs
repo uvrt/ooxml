@@ -163,14 +163,16 @@ pub(crate) fn insert(
         sink.forget_aliases(std::slice::from_ref(id))?;
     }
     close_tables(sink, work, &mut writer, &mut elements)?;
-    let cell_warnings = cell_indents(sink, work, &writer)?;
     let starts_paragraph = elements.first().is_some_and(|e| work.is(*e, W, "p"));
     let stamped = stamp(sink, work, &place, &elements, continued.filter(|_| starts_paragraph))?;
     let wrote = sink.track(work, |work, stamp, orders| {
         track(work, &elements, stamp, orders, old_mark);
         Vec::new()
     })?;
+    // the tables' first rows' ids, now stamped: the tables found again where the edit lands
+    let written_tables = table_ids(work, &writer);
     crate::placing::commit(sink, &stretch, &place, &stamped.0, &wrote, false)?;
+    let cell_warnings = cell_indents(sink, &part, &written_tables)?;
     let (created, top) = stamped;
     let kept = said(&stretch.work, kept);
     let per_block: Vec<Vec<String>> = top.iter().map(|id| vec![id.clone()]).collect();
@@ -224,21 +226,39 @@ fn said(work: &Work, kept: Vec<super::keep::Kept>) -> Vec<KeptSettings> {
         .collect()
 }
 
-/// The tables the writer made whose cell styles' indents do not fit their cells
-/// ([`super::cell_indents`]), read with the styles as the edit leaves them.
-fn cell_indents(sink: &EditSink<'_, '_>, work: &Work, writer: &Writer<'_>) -> Result<Vec<String>> {
-    let tables: Vec<(Arc<Element>, Vec<i64>)> = writer
+/// The tables the writer made and kept, each by its id (`t:` and its first row's
+/// `w14:paraId`, stamped) with its grid shares.
+fn table_ids(work: &Work, writer: &Writer<'_>) -> Vec<(String, Vec<i64>)> {
+    writer
         .tables
         .iter()
         .filter(|(node, _)| work.parent(*node).is_some())
-        .filter_map(|(node, shares)| Some((work.build_element(*node)?, shares.clone())))
-        .collect();
+        .filter_map(|(node, shares)| {
+            let row = work.find(*node, W, "tr")?;
+            Some((format!("t:{}", work.get(row, Some(W14), "paraId")?), shares.clone()))
+        })
+        .collect()
+}
+
+/// The tables the writer made whose cell styles' indents do not fit their cells
+/// ([`super::cell_indents`]), read on the version the edit lands on (its transaction's
+/// document as the edit leaves it: under a rebase, the document as committed).
+fn cell_indents(sink: &EditSink<'_, '_>, part: &str, tables: &[(String, Vec<i64>)]) -> Result<Vec<String>> {
     if tables.is_empty() {
         return Ok(Vec::new());
     }
     let docx = sink.docx()?;
-    let formatting = Formatting::read(&docx);
-    Ok(super::cell_indents::cell_indent_warnings(&formatting, &tables))
+    let Some(story) = docx.part(part) else {
+        return Ok(Vec::new());
+    };
+    let placed: Vec<(Vec<u32>, Vec<i64>)> = tables
+        .iter()
+        .filter_map(|(id, shares)| {
+            let table = story.ids.tables().iter().find(|t| &t.id == id)?;
+            Some((table.path.to_vec(), shares.clone()))
+        })
+        .collect();
+    Ok(super::cell_indents::cell_indent_warnings(&docx, part, &placed))
 }
 
 /// The position of the paragraph `node`, where the new blocks go before one (its first line

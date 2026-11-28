@@ -133,7 +133,7 @@ pub fn body_lines(doc: &WordDoc, table: &str) -> Result<BodyLines> {
         .part(&found.part)
         .ok_or_else(|| EditError::no_part(found.part.clone()))?;
     let formatting = Formatting::read(&docx);
-    let mut look = Keeps::new(&formatting, story);
+    let mut look = Keeps::new(&docx, &formatting, story);
     let placed = around(story.root(), &found.path).and_then(|place| Some((at_path(story.root(), &place)?, place)));
     let (effective, paragraph) = match placed {
         Some((element, place)) => (

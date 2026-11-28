@@ -312,7 +312,7 @@ pub fn header_look(
             }
         }
     }
-    let mut cells = PartCells::of(facts.formatting(), story);
+    let mut cells = PartCells::of(facts.docx(), story);
     let mut bold = own.iter().take(2).map(|(k, row)| {
         let mut at = place.to_vec();
         at.push(u32::try_from(*k).unwrap_or(u32::MAX));

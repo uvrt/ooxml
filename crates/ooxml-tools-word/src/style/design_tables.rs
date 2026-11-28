@@ -7,23 +7,23 @@
 //! declared table style ([`places`]).
 //!
 //! Must not: change a document, or read tables other than as the layout model reads them
-//! ([`TableFacts`]).
+//! (`Projection::story`).
 
 use super::design_look::{border_text, fill, Design};
 use ooxml_base::Cancel;
 use ooxml_tools::ToolError;
-use ooxml_word_model::docx::cells::{model_path, TableFacts};
 use ooxml_word_model::docx::formatting::Cell;
 use ooxml_word_model::docx::tables::cell_conditions;
 use ooxml_word_model::docx::StoryPart;
-use ooxml_word_model::ids::W;
 use ooxml_word_model::model::{Block, Look, Table};
 use ooxml_word_model::resolve::{
     banded, border_key, resolve_table_traced, second_wins, Origins, ResolvedTable, TableOrigins,
 };
 use ooxml_word_model::styles::StyleKind;
 use ooxml_word_model::value::{key, Props, Text};
-use ooxml_xml::{Element, Node};
+use ooxml_word_model::view::View;
+use ooxml_word_model::Projection;
+use ooxml_xml::Element;
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
@@ -70,37 +70,6 @@ struct Group {
     ids: Vec<String>,
 }
 
-/// The block-level tables of a story part's root (through content controls and custom
-/// XML, as the layout model reads blocks), by place.
-fn block_tables(container: &Element, path: &mut Vec<u32>, out: &mut Vec<Vec<u32>>) {
-    for (k, node) in container.children().iter().enumerate() {
-        let Node::Element(child) = node else { continue };
-        if child.name().namespace() != Some(W) {
-            continue;
-        }
-        path.push(u32::try_from(k).unwrap_or(u32::MAX));
-        match child.name().local() {
-            "tbl" => out.push(path.clone()),
-            "body" | "customXml" | "sdtContent" => block_tables(child, path, out),
-            "sdt" => {
-                if let Some(j) = child
-                    .children()
-                    .iter()
-                    .position(|n| matches!(n, Node::Element(c) if c.name().is(Some(W), "sdtContent")))
-                {
-                    path.push(u32::try_from(j).unwrap_or(u32::MAX));
-                    if let Some(content) = child.children().get(j).and_then(Node::as_element) {
-                        block_tables(content, path, out);
-                    }
-                    path.pop();
-                }
-            }
-            _ => {}
-        }
-        path.pop();
-    }
-}
-
 /// The element at `path` below `root`.
 pub(crate) fn element_at(root: &Arc<Element>, path: &[u32]) -> Option<Arc<Element>> {
     let mut node = Arc::clone(root);
@@ -110,36 +79,34 @@ pub(crate) fn element_at(root: &Arc<Element>, path: &[u32]) -> Option<Arc<Elemen
     Some(node)
 }
 
-/// The tables of one top-level table of `part` at `path` as the layout model reads them,
-/// each with its id where the part's index has it.
-fn model_tables(
-    design: &Design<'_>,
-    part: &StoryPart,
-    indexed: &[(Box<[u32]>, String)],
-    path: &[u32],
-) -> Vec<(Arc<Table>, Option<String>)> {
-    let Some(element) = element_at(part.root(), path) else {
+/// The tables of a story part as the layout model reads them, in its story's context
+/// (`Projection::story`): its block-level tables, each followed by the tables nested in its
+/// cells, each with its id where the part's index has it.
+fn model_tables(design: &Design<'_>, part: &StoryPart) -> Vec<(Arc<Table>, Option<String>)> {
+    fn walk(blocks: &[Block], out: &mut Vec<Arc<Table>>) {
+        for block in blocks {
+            if let Block::Table(table) = block {
+                out.push(Arc::clone(table));
+                for cell in table.rows.iter().flat_map(|r| r.iter()) {
+                    walk(cell, out);
+                }
+            }
+        }
+    }
+    let Ok(Some(story)) = Projection::story(design.docx, &part.part, View::Final) else {
         return Vec::new();
     };
-    let facts = match part.ids.table_at(path) {
-        Some(id) => design.shared().table_facts(&part.part, &id),
-        None => Arc::new(TableFacts::read(design.formatting(), &element)),
-    };
-    let ids: Vec<(String, String)> = indexed
-        .iter()
-        .filter(|(p, _)| p.starts_with(path))
-        .filter_map(|(p, id)| Some((model_path(&element, p.get(path.len()..)?)?, id.clone())))
-        .collect();
-    facts
-        .tables()
-        .iter()
+    let mut tables = Vec::new();
+    walk(&story, &mut tables);
+    tables
+        .into_iter()
         .map(|table| {
-            // a table read on its own is named by its path
-            let id = ids
-                .iter()
-                .find(|(p, _)| Some(&**p) == table.unkeyed.as_deref())
-                .map(|(_, id)| id.clone());
-            (Arc::clone(table), id)
+            let id = table
+                .key
+                .and_then(|key| part.ids.place_of(key))
+                .and_then(|place| part.ids.table_at(&place))
+                .map(|t| t.id);
+            (table, id)
         })
         .collect()
 }
@@ -154,41 +121,35 @@ pub(crate) fn table_styles(design: &Design<'_>, cancel: &dyn Cancel) -> Result<V
             continue;
         }
         cancel.check().map_err(crate::describe::cancelled)?;
-        let mut found = Vec::new();
-        block_tables(part.root(), &mut Vec::new(), &mut found);
-        // each indexed table's place and id, read once for the part
-        let indexed: Vec<(Box<[u32]>, String)> = part.ids.tables().iter().map(|t| (t.path, t.id)).collect();
-        for path in found {
-            for (table, id) in model_tables(design, part, &indexed, &path) {
-                let style = sources.table_style_of(&table);
-                let k = match groups.iter().position(|g| g.style == style) {
-                    Some(k) => k,
-                    None => {
-                        groups.push(Group {
-                            style: style.clone(),
-                            tables: 0,
-                            looks: Tally::new(),
-                            cells: Tally::new(),
-                            ids: Vec::new(),
-                        });
-                        groups.len() - 1
-                    }
-                };
-                let Some(group) = groups.get_mut(k) else { continue };
-                group.tables += 1;
-                group.looks.add(table.look);
-                for row in table.rows.iter() {
-                    for cell in row.iter() {
-                        for block in cell.iter() {
-                            if let Block::Paragraph(p) = block {
-                                group.cells.add(p.properties.as_ref().and_then(|p| p.style_id.clone()));
-                            }
+        for (table, id) in model_tables(design, part) {
+            let style = sources.table_style_of(&table);
+            let k = match groups.iter().position(|g| g.style == style) {
+                Some(k) => k,
+                None => {
+                    groups.push(Group {
+                        style: style.clone(),
+                        tables: 0,
+                        looks: Tally::new(),
+                        cells: Tally::new(),
+                        ids: Vec::new(),
+                    });
+                    groups.len() - 1
+                }
+            };
+            let Some(group) = groups.get_mut(k) else { continue };
+            group.tables += 1;
+            group.looks.add(table.look);
+            for row in table.rows.iter() {
+                for cell in row.iter() {
+                    for block in cell.iter() {
+                        if let Block::Paragraph(p) = block {
+                            group.cells.add(p.properties.as_ref().and_then(|p| p.style_id.clone()));
                         }
                     }
                 }
-                if let Some(id) = id.filter(|_| group.ids.len() < EXAMPLES) {
-                    group.ids.push(id);
-                }
+            }
+            if let Some(id) = id.filter(|_| group.ids.len() < EXAMPLES) {
+                group.ids.push(id);
             }
         }
     }
