@@ -106,15 +106,22 @@ pub fn refreshed(
     parts: Vec<(String, Option<Arc<[u8]>>)>,
     context: &ooxml_session::CallContext,
 ) -> Result<ooxml_session::Refreshed, ooxml_session::SessionError> {
-    let head = session.snapshot(doc)?;
-    let mut package = head.package().clone();
-    for (name, bytes) in parts {
-        package = match bytes {
-            Some(bytes) => package.with_bytes(&name, bytes),
-            None => package.without(&name)?,
-        };
+    loop {
+        let head = session.snapshot(doc)?;
+        let mut package = head.package().clone();
+        for (name, bytes) in &parts {
+            package = match bytes {
+                Some(bytes) => package.with_bytes(name, Arc::clone(bytes)),
+                None => package.without(name)?,
+            };
+        }
+        let file: Arc<[u8]> = package.save()?.into();
+        let base = format!("{}-{}", session.nonce(), head.version());
+        match session.refresh(doc, &base, file, "test editor", context) {
+            // the head it was made from let go meanwhile (writers beside it): their next save,
+            // made from the head now, as the way out says
+            Err(ooxml_session::SessionError::RefreshBase(_)) => {}
+            other => return other,
+        }
     }
-    let file: Arc<[u8]> = package.save()?.into();
-    let base = format!("{}-{}", session.nonce(), head.version());
-    session.refresh(doc, &base, file, "test editor", context)
 }

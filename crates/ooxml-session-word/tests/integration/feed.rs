@@ -352,7 +352,7 @@ fn replay(seed: u64, steps: usize) {
     let mut before: Vec<Doc> = Vec::new();
     for step in 0..steps {
         let at = format!("seed {seed} step {step}");
-        match before.pop().filter(|_| step % 5 == 4) {
+        match (step % 5 == 4).then(|| before.pop()).flatten() {
             Some(earlier) => doc = earlier,
             None => {
                 before.push(doc.clone());
